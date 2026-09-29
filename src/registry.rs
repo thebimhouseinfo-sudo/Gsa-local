@@ -1547,9 +1547,7 @@ impl Registry {
         let Some((state_change_set, state_status)) = workflow_state else {
             bail!("verification target has no code workflow state");
         };
-        if state_status != "REVIEW_PASS"
-            || state_change_set.as_deref() != Some(change_set_id)
-        {
+        if state_status != "REVIEW_PASS" || state_change_set.as_deref() != Some(change_set_id) {
             bail!(
                 "verification requires exact REVIEW_PASS on change set {}; found status={} change_set={:?}",
                 change_set_id,
