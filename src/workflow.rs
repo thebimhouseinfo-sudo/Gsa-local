@@ -552,115 +552,37 @@ impl<'a> CodingWorkflow<'a> {
         active_work: &ActiveWork,
         tool_runtime: &mut ProjectToolRuntime,
     ) -> Result<CodingOutcome> {
-        let resume_state = self.registry.code_workflow_state()?.filter(|state| {
-            state.graph_version == active_work.graph_version
-                && state.jobpack_id == active_work.jobpack_id
-                && state.status == "INTERNAL_FIX"
-        });
+        self.registry.begin_code_workflow(
+            self.project_root,
+            self.lease_owner,
+            active_work.graph_version,
+            &active_work.jobpack_id,
+        )?;
         tool_runtime.clear_journal();
 
-        let (
-            mut coder_attempts,
-            mut reviewer_attempts,
-            mut tasks,
-            mut checkpoint,
-            mut change_set_id,
-        ) = if let Some(state) = resume_state {
-            let previous_change_set_id = state
-                .change_set_id
-                .clone()
-                .context("INTERNAL_FIX state is missing the failed change set")?;
-            if state.coder_attempts >= self.max_attempts {
-                return self.pause(
-                    active_work,
-                    Some(previous_change_set_id),
-                    state.coder_attempts,
-                    state.reviewer_attempts,
-                    "Internal Fix attempt limit exhausted",
-                );
-            }
-            let findings = self.registry.latest_post_review_failure_findings(
-                active_work.graph_version,
-                &active_work.jobpack_id,
-                &previous_change_set_id,
-            )?;
-            let coder_attempts = state.coder_attempts + 1;
-            let reviewer_attempts = state.reviewer_attempts;
-            let tasks = self
-                .registry
-                .jobpack_code_tasks(active_work.graph_version, &active_work.jobpack_id)?;
-            let checkpoint = self
-                .invoke_code_agent(
-                    AgentId::InternalFix,
-                    requirement,
-                    active_work,
-                    &tasks,
-                    &findings,
-                    None,
-                    tool_runtime,
-                )
-                .await?;
-            let change_set_id = self.persist_code_checkpoint(
+        let mut coder_attempts = 1u32;
+        let mut reviewer_attempts = 0u32;
+        let mut tasks = self
+            .registry
+            .jobpack_code_tasks(active_work.graph_version, &active_work.jobpack_id)?;
+        let mut checkpoint = self
+            .invoke_code_agent(
+                AgentId::Coder,
+                requirement,
                 active_work,
-                &checkpoint,
+                &tasks,
+                &[],
+                None,
                 tool_runtime,
-                coder_attempts,
-                reviewer_attempts,
-            )?;
-            if tool_runtime.journal().is_empty() || change_set_id == previous_change_set_id {
-                return self.pause(
-                    active_work,
-                    Some(previous_change_set_id),
-                    coder_attempts,
-                    reviewer_attempts,
-                    "Internal Fix produced no new source mutation/change set",
-                );
-            }
-            (
-                coder_attempts,
-                reviewer_attempts,
-                tasks,
-                checkpoint,
-                change_set_id,
             )
-        } else {
-            self.registry.begin_code_workflow(
-                self.project_root,
-                self.lease_owner,
-                active_work.graph_version,
-                &active_work.jobpack_id,
-            )?;
-            let coder_attempts = 1u32;
-            let reviewer_attempts = 0u32;
-            let tasks = self
-                .registry
-                .jobpack_code_tasks(active_work.graph_version, &active_work.jobpack_id)?;
-            let checkpoint = self
-                .invoke_code_agent(
-                    AgentId::Coder,
-                    requirement,
-                    active_work,
-                    &tasks,
-                    &[],
-                    None,
-                    tool_runtime,
-                )
-                .await?;
-            let change_set_id = self.persist_code_checkpoint(
-                active_work,
-                &checkpoint,
-                tool_runtime,
-                coder_attempts,
-                reviewer_attempts,
-            )?;
-            (
-                coder_attempts,
-                reviewer_attempts,
-                tasks,
-                checkpoint,
-                change_set_id,
-            )
-        };
+            .await?;
+        let mut change_set_id = self.persist_code_checkpoint(
+            active_work,
+            &checkpoint,
+            tool_runtime,
+            coder_attempts,
+            reviewer_attempts,
+        )?;
 
         loop {
             if reviewer_attempts >= self.max_attempts {
