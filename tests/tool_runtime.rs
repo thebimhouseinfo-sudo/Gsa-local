@@ -314,3 +314,29 @@ fn list_and_search_are_bounded_to_project_and_skip_generated_dirs() {
     assert_eq!(matches.len(), 1);
     assert_eq!(matches[0]["path"], "src/a.txt");
 }
+
+#[test]
+fn mutation_journal_rejects_external_source_change() {
+    let dir = tempdir().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "one").unwrap();
+    let mut runtime = ProjectToolRuntime::new(dir.path()).unwrap();
+
+    let read = runtime
+        .execute(AgentId::Coder, "project_read", &json!({"path":"a.txt"}))
+        .unwrap();
+    runtime
+        .execute(
+            AgentId::Coder,
+            "project_write",
+            &json!({
+                "path":"a.txt",
+                "content":"two",
+                "expected_sha256":read["sha256"]
+            }),
+        )
+        .unwrap();
+
+    runtime.verify_journal_current().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "external edit").unwrap();
+    assert!(runtime.verify_journal_current().is_err());
+}
