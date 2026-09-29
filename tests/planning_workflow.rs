@@ -137,7 +137,9 @@ fn latest_reviewer_revise_invalidates_older_reviewer_pass() {
     let dir = tempdir().unwrap();
     let registry = Registry::open_at(&dir.path().join("state.db")).unwrap();
     registry.begin_plan_workflow().unwrap();
-    let plan = registry.persist_plan_revision(&sample("latest reviewer")).unwrap();
+    let plan = registry
+        .persist_plan_revision(&sample("latest reviewer"))
+        .unwrap();
 
     registry
         .record_plan_verdict(
@@ -177,7 +179,9 @@ fn latest_cr_revise_invalidates_older_cr_pass() {
     let dir = tempdir().unwrap();
     let registry = Registry::open_at(&dir.path().join("state.db")).unwrap();
     registry.begin_plan_workflow().unwrap();
-    let plan = registry.persist_plan_revision(&sample("latest cr")).unwrap();
+    let plan = registry
+        .persist_plan_revision(&sample("latest cr"))
+        .unwrap();
 
     registry
         .record_plan_verdict(
