@@ -12,9 +12,9 @@ The Tester redesign has cross-phase impact. Earlier phases are not rolled back w
 |---|---|---|
 | Phase 2 — Harness Engine | MEDIUM | Extend Planner, Job Builder, Tester and Coder role contracts for checkpoint planning and empirical-evidence provenance. |
 | Phase 3 — Registry | MEDIUM | Extend schema for checkpoint definitions/state, Tester attempts, structured experiment samples, named evidence outputs and evidence requirements. Keep atomic transition/stale-write invariants. |
-| Phase 4 — Checkpoint + Lease | LOW/MEDIUM | Extend lightweight checkpoint stage vocabulary so Tester checkpoint DUE/RUNNING/BLOCKED/NEEDS_HUMAN/SATISFIED can resume safely. Lease model remains unchanged. |
-| Phase 5 — Planner workflow | MEDIUM | Planner must identify where later work depends on unknown runtime facts and express the need for evidence; it still does not build Job Packs itself. |
-| Phase 6 — Job Builder | HIGH | Job Builder must transform approved plan evidence needs into explicit TestCheckpointSpec + VERIFY/MEASURE/PROBE modes + named evidence outputs + downstream EvidenceRequirement edges. `verification_hints` alone is no longer sufficient. |
+| Phase 4 — Checkpoint + Lease | HIGH | Tester DUE/RUNNING/BLOCKED/NEEDS_HUMAN/SATISFIED plus attempt identity must update latest_checkpoint transactionally and resume under the execution lease without duplicate attempts. |
+| Phase 5 — Planner workflow | HIGH | Planner must persist first-class EvidenceNeed/UnknownRuntimeFact in PlanArtifact; evidence intent must survive plan hash/review/CR instead of living only in prose. |
+| Phase 6 — Job Builder | HIGH | Job Builder must transform approved EvidenceNeed records into explicit TestCheckpointSpec + VERIFY/MEASURE/PROBE + named outputs + EvidenceRequirement edges, including multi-JobPack/milestone prerequisite topology. |
 | Phase 7 — Milestone / Job Pack Controller | HIGH | Controller must recognize declared checkpoint boundaries and stop/resume at them without treating Reviewer PASS as an implicit Tester trigger. |
 | Phase 8 — Coder ↔ Reviewer | MEDIUM | Core loop stays unchanged. Coder context gains required OBSERVED evidence; Coder/Internal Fix must be denied writes to Tester-owned workspace; repair after Tester FAIL still returns through Reviewer before retest. |
 | Phase 9 — Verification Controller + Local CI | HIGH semantic change | Keep deterministic build/test capability discovery and Local CI evidence, but remove authority to decide where Tester appears. Phase 9 becomes a deterministic verification primitive/capability provider used by coding self-checks and declared checkpoints. |
@@ -93,8 +93,10 @@ Completed core:
 - Job Builder execution-graph registration.
 
 Tester rebaseline extensions:
-- Planner identifies unknown runtime facts/evidence needs instead of guessing them;
-- Job Builder authors Test Checkpoints and evidence dependencies;
+- Planner persists unknown runtime facts/evidence needs as first-class PlanArtifact data;
+- EvidenceNeed participates in plan revision/hash and Reviewer/CR approval;
+- Job Builder transforms approved EvidenceNeed into Test Checkpoints/evidence dependencies rather than re-inferring intent from prose;
+- Test Checkpoints may depend on one Job Pack, a Job Pack set, or a milestone integration boundary;
 - `submit_execution_graph` schema supports checkpoint definitions and named evidence outputs;
 - Job Builder returns PLAN_GAP when required checkpoint/evidence semantics cannot be derived safely.
 
@@ -131,6 +133,8 @@ Rebased work:
 
 ## Milestone E — Completion / Resume / Hardening
 Future work must now include:
+- checkpoint state crash/resume is already handled in Phase 10 through latest_checkpoint + lease;
+- material Tester SPEC_GAP pauses the graph and requires new plan revision + Reviewer/CR + superseding graph;
 - CR packet consumes required checkpoint evidence;
 - Job Pack completion rejects unsatisfied required checkpoints;
 - Milestone completion rejects unsatisfied milestone-level checkpoints;
