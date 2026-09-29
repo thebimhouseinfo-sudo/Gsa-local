@@ -2932,6 +2932,7 @@ mod tests {
             sequence: vec!["step".into()],
             risks: vec!["risk".into()],
             acceptance_direction: vec!["acceptance".into()],
+            evidence_needs: vec![],
         };
 
         let first = registry.persist_plan_revision(&artifact).unwrap();
@@ -2953,6 +2954,7 @@ mod tests {
             sequence: vec!["step".into()],
             risks: vec!["risk".into()],
             acceptance_direction: vec!["acceptance".into()],
+            evidence_needs: vec![],
         };
         let plan = registry.persist_plan_revision(&artifact).unwrap();
 
