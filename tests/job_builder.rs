@@ -110,6 +110,17 @@ fn validator_rejects_duplicate_jobpack_ids() {
 }
 
 #[test]
+fn validator_rejects_missing_jobpack_input_output_contract() {
+    let mut graph = valid_graph();
+    graph.jobpacks[0].required_inputs.clear();
+    assert!(graph.validate().is_err());
+
+    let mut graph = valid_graph();
+    graph.jobpacks[0].expected_outputs.clear();
+    assert!(graph.validate().is_err());
+}
+
+#[test]
 fn validator_rejects_missing_milestone() {
     let mut graph = valid_graph();
     graph.jobpacks[0].milestone_id = "M404".into();
