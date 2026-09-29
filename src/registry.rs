@@ -1204,8 +1204,7 @@ impl Registry {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()?;
-        let Some((state_coder_attempts, state_reviewer_attempts, state_status)) =
-            workflow_state
+        let Some((state_coder_attempts, state_reviewer_attempts, state_status)) = workflow_state
         else {
             bail!("code workflow state is missing for active Job Pack");
         };
@@ -1315,12 +1314,8 @@ impl Registry {
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .optional()?;
-        let Some((
-            state_change_set,
-            state_coder_attempts,
-            state_reviewer_attempts,
-            state_status,
-        )) = state
+        let Some((state_change_set, state_coder_attempts, state_reviewer_attempts, state_status)) =
+            state
         else {
             bail!("code workflow state is missing for active Job Pack");
         };
