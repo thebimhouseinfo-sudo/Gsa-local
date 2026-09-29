@@ -1,11 +1,15 @@
 use crate::{
     config::AppConfig,
+    controller::ActiveWork,
     execution_graph::ExecutionGraph,
     harness::{AgentId, HarnessRegistry},
-    ollama::{ChatMessage, OllamaClient, ToolDefinition},
+    ollama::{ChatMessage, OllamaClient, ToolCall, ToolDefinition},
     plan::{PlanArtifact, PlanRevision},
-    registry::{PlanBinding, Registry, ReviewActor, ReviewVerdict},
+    registry::{
+        ChecklistClaim, CodeTodoState, PlanBinding, Registry, ReviewActor, ReviewVerdict,
+    },
     session::Session,
+    tools::ProjectToolRuntime,
 };
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -17,6 +21,30 @@ const MAX_CONTEXT_PATHS: usize = 500;
 const MAX_CONTEXT_FILES: usize = 200;
 const MAX_CONTEXT_BYTES: usize = 128 * 1024;
 const MAX_FILE_BYTES: usize = 16 * 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CodingOutcome {
+    ReviewPass {
+        change_set_id: String,
+    },
+    Paused {
+        change_set_id: Option<String>,
+        reason: String,
+    },
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct CodeCheckpointSubmission {
+    summary: String,
+    completed_checklist: Vec<ChecklistClaim>,
+    goal_recheck: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct CodeReviewDecision {
+    verdict: String,
+    findings: Vec<String>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlanningStage {
