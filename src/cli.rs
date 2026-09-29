@@ -25,7 +25,11 @@ pub fn parse_line(input: &str) -> Result<InputLine> {
 
     let mut parts = trimmed.splitn(2, char::is_whitespace);
     let command = parts.next().unwrap_or_default();
-    let arg = parts.next().map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned);
+    let arg = parts
+        .next()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned);
 
     match command {
         "/agent" => Ok(InputLine::Command(SlashCommand::Agent(arg))),
@@ -42,9 +46,18 @@ mod tests {
 
     #[test]
     fn only_three_slash_commands_are_recognized() {
-        assert!(matches!(parse_line("/agent").unwrap(), InputLine::Command(SlashCommand::Agent(None))));
-        assert!(matches!(parse_line("/model foo").unwrap(), InputLine::Command(SlashCommand::Model(Some(_)))));
-        assert!(matches!(parse_line("/config").unwrap(), InputLine::Command(SlashCommand::Config)));
+        assert!(matches!(
+            parse_line("/agent").unwrap(),
+            InputLine::Command(SlashCommand::Agent(None))
+        ));
+        assert!(matches!(
+            parse_line("/model foo").unwrap(),
+            InputLine::Command(SlashCommand::Model(Some(_)))
+        ));
+        assert!(matches!(
+            parse_line("/config").unwrap(),
+            InputLine::Command(SlashCommand::Config)
+        ));
         assert!(parse_line("/status").is_err());
         assert!(parse_line("/cr").is_err());
     }
