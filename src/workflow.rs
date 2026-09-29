@@ -759,9 +759,9 @@ impl<'a> CodingWorkflow<'a> {
             "tasks": tasks,
             "review_findings": findings,
             "previous_checkpoint": previous.map(|item| json!({
-                "summary": item.summary,
-                "completed_checklist": item.completed_checklist,
-                "goal_recheck": item.goal_recheck
+                "summary": &item.summary,
+                "completed_checklist": &item.completed_checklist,
+                "goal_recheck": &item.goal_recheck
             })),
             "instruction": if agent == AgentId::Coder {
                 "Implement the current ACTIVE Job Pack only. Inspect live source before writing. Submit claims only for checklist items actually satisfied by this checkpoint."
@@ -826,14 +826,14 @@ impl<'a> CodingWorkflow<'a> {
             "tasks": tasks,
             "target": {
                 "graph_version": active_work.graph_version,
-                "jobpack_id": active_work.jobpack_id,
+                "jobpack_id": &active_work.jobpack_id,
                 "change_set_id": change_set_id,
                 "mutation_journal": tool_runtime.journal()
             },
             "coder_checkpoint": {
-                "summary": checkpoint.summary,
-                "completed_checklist": checkpoint.completed_checklist,
-                "goal_recheck": checkpoint.goal_recheck
+                "summary": &checkpoint.summary,
+                "completed_checklist": &checkpoint.completed_checklist,
+                "goal_recheck": &checkpoint.goal_recheck
             },
             "instruction": "Review only this exact current change set. Return PASS or CHANGES_REQUIRED with actionable findings. Do not repair source."
         });
@@ -903,16 +903,16 @@ fn active_work_packet(active_work: &ActiveWork) -> serde_json::Value {
     json!({
         "graph_version": active_work.graph_version,
         "plan_revision": active_work.plan_revision,
-        "plan_hash": active_work.plan_hash,
-        "milestone_id": active_work.milestone_id,
-        "milestone_title": active_work.milestone_title,
-        "jobpack_id": active_work.jobpack_id,
-        "jobpack_title": active_work.jobpack_title,
-        "goal": active_work.goal,
-        "required_inputs": active_work.required_inputs,
-        "expected_outputs": active_work.expected_outputs,
-        "acceptance": active_work.acceptance,
-        "verification_hints": active_work.verification_hints
+        "plan_hash": &active_work.plan_hash,
+        "milestone_id": &active_work.milestone_id,
+        "milestone_title": &active_work.milestone_title,
+        "jobpack_id": &active_work.jobpack_id,
+        "jobpack_title": &active_work.jobpack_title,
+        "goal": &active_work.goal,
+        "required_inputs": &active_work.required_inputs,
+        "expected_outputs": &active_work.expected_outputs,
+        "acceptance": &active_work.acceptance,
+        "verification_hints": &active_work.verification_hints
     })
 }
 
@@ -1141,6 +1141,56 @@ fn cr_tool() -> ToolDefinition {
             "properties": {
                 "verdict": {"type": "string", "enum": ["PASS", "REVISE"]},
                 "findings": {"type": "array", "items": {"type": "string"}}
+            }
+        }),
+    )
+}
+
+fn code_checkpoint_tool() -> ToolDefinition {
+    ToolDefinition::function(
+        "submit_code_checkpoint",
+        "Submit the Coder/Internal Fix checkpoint after real project edits. Source identity is computed by runtime; do not provide hashes or change_set_id.",
+        json!({
+            "type": "object",
+            "required": ["summary", "completed_checklist", "goal_recheck"],
+            "properties": {
+                "summary": {"type": "string", "minLength": 1},
+                "completed_checklist": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["todo_id", "position"],
+                        "properties": {
+                            "todo_id": {"type": "string", "minLength": 1},
+                            "position": {"type": "integer", "minimum": 1}
+                        }
+                    }
+                },
+                "goal_recheck": {
+                    "type": "array",
+                    "items": {"type": "string"}
+                }
+            }
+        }),
+    )
+}
+
+fn code_review_tool() -> ToolDefinition {
+    ToolDefinition::function(
+        "submit_code_review",
+        "Submit the read-only Reviewer verdict for the exact runtime-bound change set.",
+        json!({
+            "type": "object",
+            "required": ["verdict", "findings"],
+            "properties": {
+                "verdict": {
+                    "type": "string",
+                    "enum": ["PASS", "CHANGES_REQUIRED"]
+                },
+                "findings": {
+                    "type": "array",
+                    "items": {"type": "string"}
+                }
             }
         }),
     )
