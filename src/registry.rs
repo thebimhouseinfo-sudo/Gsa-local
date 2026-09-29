@@ -2,7 +2,7 @@ use crate::{
     checkpoint::Checkpoint,
     execution_graph::ExecutionGraph,
     plan::{PlanArtifact, PlanRevision},
-    verification::{VerificationEvidence, VerificationResult},
+    verification::{RecordedVerification, VerificationEvidence, VerificationResult},
 };
 use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
@@ -997,6 +997,32 @@ impl Registry {
         .transpose()
     }
 
+    pub fn jobpack_test_contract(
+        &self,
+        version: i64,
+        jobpack_id: &str,
+    ) -> Result<Option<(Vec<String>, Vec<String>)>> {
+        let row: Option<(String, String)> = self
+            .conn
+            .query_row(
+                r#"
+                SELECT acceptance, verification_hints
+                FROM execution_jobpacks
+                WHERE graph_version=?1 AND jobpack_id=?2
+                "#,
+                params![version, jobpack_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        row.map(|(acceptance, hints)| {
+            Ok((
+                serde_json::from_str::<Vec<String>>(&acceptance)?,
+                serde_json::from_str::<Vec<String>>(&hints)?,
+            ))
+        })
+        .transpose()
+    }
+
     pub fn has_active_jobpack(&self, version: i64) -> Result<bool> {
         let active: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM execution_jobpacks WHERE graph_version=?1 AND status='ACTIVE'",
@@ -1529,6 +1555,27 @@ impl Registry {
         change_set_id: &str,
         evidence: &VerificationEvidence,
     ) -> Result<VerificationResult> {
+        Ok(self
+            .record_verification_run(
+                project_root,
+                owner,
+                graph_version,
+                jobpack_id,
+                change_set_id,
+                evidence,
+            )?
+            .result)
+    }
+
+    pub fn record_verification_run(
+        &self,
+        project_root: &Path,
+        owner: &str,
+        graph_version: i64,
+        jobpack_id: &str,
+        change_set_id: &str,
+        evidence: &VerificationEvidence,
+    ) -> Result<RecordedVerification> {
         let tx = self.conn.unchecked_transaction()?;
         assert_lease_owner_tx(&tx, project_root, owner)?;
         assert_active_jobpack_binding_tx(&tx, graph_version, jobpack_id)?;
@@ -1590,6 +1637,7 @@ impl Registry {
                 unix_seconds()?
             ],
         )?;
+        let verification_run_id = tx.last_insert_rowid();
         append_event_tx(
             &tx,
             "VERIFICATION_RESULT",
@@ -1602,7 +1650,14 @@ impl Registry {
             }),
         )?;
         tx.commit()?;
-        Ok(result)
+        Ok(RecordedVerification {
+            id: verification_run_id,
+            graph_version,
+            jobpack_id: jobpack_id.to_owned(),
+            change_set_id: change_set_id.to_owned(),
+            result,
+            evidence: evidence.clone(),
+        })
     }
 
     pub fn latest_verification_result(
@@ -1623,6 +1678,98 @@ impl Registry {
             )
             .optional()
             .map_err(Into::into)
+    }
+
+    pub fn latest_verification_run(
+        &self,
+        graph_version: i64,
+        jobpack_id: &str,
+        change_set_id: &str,
+    ) -> Result<Option<RecordedVerification>> {
+        let row: Option<(i64, String, i64, String, String)> = self
+            .conn
+            .query_row(
+                r#"
+                SELECT id, result, test_surface_changed, profile_json, commands_json
+                FROM verification_runs
+                WHERE graph_version=?1 AND jobpack_id=?2 AND change_set_id=?3
+                ORDER BY id DESC LIMIT 1
+                "#,
+                params![graph_version, jobpack_id, change_set_id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .optional()?;
+
+        row.map(|(id, result, test_surface_changed, profile_json, commands_json)| {
+            Ok(RecordedVerification {
+                id,
+                graph_version,
+                jobpack_id: jobpack_id.to_owned(),
+                change_set_id: change_set_id.to_owned(),
+                result: VerificationResult::parse(&result)?,
+                evidence: VerificationEvidence {
+                    profile: serde_json::from_str(&profile_json)?,
+                    commands: serde_json::from_str(&commands_json)?,
+                    test_surface_changed: test_surface_changed != 0,
+                },
+            })
+        })
+        .transpose()
+    }
+
+    pub fn verification_run(
+        &self,
+        verification_run_id: i64,
+    ) -> Result<Option<RecordedVerification>> {
+        let row: Option<(i64, String, String, String, i64, String, String)> = self
+            .conn
+            .query_row(
+                r#"
+                SELECT graph_version, jobpack_id, change_set_id, result,
+                       test_surface_changed, profile_json, commands_json
+                FROM verification_runs
+                WHERE id=?1
+                "#,
+                params![verification_run_id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                    ))
+                },
+            )
+            .optional()?;
+
+        row.map(
+            |(graph_version, jobpack_id, change_set_id, result, test_surface_changed, profile_json, commands_json)| {
+                Ok(RecordedVerification {
+                    id: verification_run_id,
+                    graph_version,
+                    jobpack_id,
+                    change_set_id,
+                    result: VerificationResult::parse(&result)?,
+                    evidence: VerificationEvidence {
+                        profile: serde_json::from_str(&profile_json)?,
+                        commands: serde_json::from_str(&commands_json)?,
+                        test_surface_changed: test_surface_changed != 0,
+                    },
+                })
+            },
+        )
+        .transpose()
     }
 
     pub fn checklist_checked(
