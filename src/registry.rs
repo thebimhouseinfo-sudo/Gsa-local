@@ -6,6 +6,7 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::{
+    collections::HashSet,
     fs,
     path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -137,6 +138,8 @@ impl Registry {
                 milestone_id TEXT NOT NULL,
                 title TEXT NOT NULL,
                 goal TEXT NOT NULL,
+                required_inputs TEXT NOT NULL,
+                expected_outputs TEXT NOT NULL,
                 acceptance TEXT NOT NULL,
                 verification_hints TEXT NOT NULL,
                 status TEXT NOT NULL,
@@ -203,6 +206,35 @@ impl Registry {
             "#,
         )?;
         self.migrate_plan_revision_hash_schema()?;
+        self.migrate_execution_jobpack_contract_schema()?;
+        Ok(())
+    }
+
+    fn migrate_execution_jobpack_contract_schema(&self) -> Result<()> {
+        let mut statement = self.conn.prepare("PRAGMA table_info(execution_jobpacks)")?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<std::result::Result<HashSet<_>, _>>()?;
+
+        let missing_inputs = !columns.contains("required_inputs");
+        let missing_outputs = !columns.contains("expected_outputs");
+        if !missing_inputs && !missing_outputs {
+            return Ok(());
+        }
+
+        let mut sql = String::from("BEGIN IMMEDIATE;\n");
+        if missing_inputs {
+            sql.push_str(
+                "ALTER TABLE execution_jobpacks ADD COLUMN required_inputs TEXT NOT NULL DEFAULT '[]';\n",
+            );
+        }
+        if missing_outputs {
+            sql.push_str(
+                "ALTER TABLE execution_jobpacks ADD COLUMN expected_outputs TEXT NOT NULL DEFAULT '[]';\n",
+            );
+        }
+        sql.push_str("COMMIT;");
+        self.conn.execute_batch(&sql)?;
         Ok(())
     }
 
@@ -453,6 +485,18 @@ impl Registry {
             bail!("cannot approve stale plan revision/hash");
         }
 
+        let previous_approved: Option<(i64, String)> = tx
+            .query_row(
+                "SELECT revision, plan_hash FROM approved_plan WHERE id=1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let binding_changed = previous_approved
+            .as_ref()
+            .map(|(old_revision, old_hash)| *old_revision != revision || old_hash != hash)
+            .unwrap_or(false);
+
         for actor in [ReviewActor::Reviewer, ReviewActor::LocalCr] {
             let latest: Option<String> = tx
                 .query_row(
@@ -471,6 +515,13 @@ impl Registry {
                     actor.as_str()
                 );
             }
+        }
+
+        if binding_changed {
+            tx.execute(
+                "UPDATE execution_graph SET status='SUPERSEDED' WHERE status='CURRENT'",
+                [],
+            )?;
         }
 
         tx.execute(
@@ -616,8 +667,8 @@ impl Registry {
                 r#"
                 INSERT INTO execution_jobpacks
                     (graph_version, jobpack_id, milestone_id, title, goal,
-                     acceptance, verification_hints, status)
-                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'PENDING')
+                     required_inputs, expected_outputs, acceptance, verification_hints, status)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'PENDING')
                 "#,
                 params![
                     version,
@@ -625,6 +676,8 @@ impl Registry {
                     pack.milestone_id,
                     pack.title,
                     pack.goal,
+                    serde_json::to_string(&pack.required_inputs)?,
+                    serde_json::to_string(&pack.expected_outputs)?,
                     serde_json::to_string(&pack.acceptance)?,
                     serde_json::to_string(&pack.verification_hints)?
                 ],
@@ -753,6 +806,32 @@ impl Registry {
             |row| row.get(0),
         )?;
         Ok((milestone_count, jobpack_count, todo_count, checklist_count))
+    }
+
+    pub fn execution_jobpack_contract(
+        &self,
+        version: i64,
+        jobpack_id: &str,
+    ) -> Result<Option<(Vec<String>, Vec<String>)>> {
+        let row: Option<(String, String)> = self
+            .conn
+            .query_row(
+                r#"
+                SELECT required_inputs, expected_outputs
+                FROM execution_jobpacks
+                WHERE graph_version=?1 AND jobpack_id=?2
+                "#,
+                params![version, jobpack_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        row.map(|(inputs, outputs)| {
+            Ok((
+                serde_json::from_str::<Vec<String>>(&inputs)?,
+                serde_json::from_str::<Vec<String>>(&outputs)?,
+            ))
+        })
+        .transpose()
     }
 
     pub fn has_active_jobpack(&self, version: i64) -> Result<bool> {
