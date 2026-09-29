@@ -1386,6 +1386,33 @@ mod tests {
     }
 
     #[test]
+    fn submit_plan_contract_requires_structured_evidence_needs() {
+        let tool = plan_tool();
+        let parameters = &tool.function.parameters;
+        let required = parameters["required"].as_array().unwrap();
+        assert!(required.iter().any(|item| item == "evidence_needs"));
+
+        let evidence = &parameters["properties"]["evidence_needs"];
+        assert_eq!(evidence["type"], "array");
+        let item_required = evidence["items"]["required"].as_array().unwrap();
+        for field in [
+            "id",
+            "question",
+            "purpose",
+            "required",
+            "consumer",
+            "modes",
+            "intent",
+        ] {
+            assert!(item_required.iter().any(|item| item == field));
+        }
+        assert_eq!(
+            evidence["items"]["properties"]["modes"]["items"]["enum"],
+            serde_json::json!(["VERIFY", "MEASURE", "PROBE"])
+        );
+    }
+
+    #[test]
     fn structured_submission_requires_exactly_one_total_tool_call() {
         use crate::ollama::{ToolCall, ToolFunctionCall};
 
