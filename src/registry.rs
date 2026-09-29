@@ -927,6 +927,44 @@ impl Registry {
         Ok(active > 0)
     }
 
+    pub fn milestone_status(&self, version: i64, milestone_id: &str) -> Result<Option<String>> {
+        self.conn
+            .query_row(
+                r#"
+                SELECT status FROM execution_milestones
+                WHERE graph_version=?1 AND milestone_id=?2
+                "#,
+                params![version, milestone_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn jobpack_status(&self, version: i64, jobpack_id: &str) -> Result<Option<String>> {
+        self.conn
+            .query_row(
+                r#"
+                SELECT status FROM execution_jobpacks
+                WHERE graph_version=?1 AND jobpack_id=?2
+                "#,
+                params![version, jobpack_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn active_jobpack_count(&self, version: i64) -> Result<i64> {
+        self.conn
+            .query_row(
+                "SELECT COUNT(*) FROM execution_jobpacks WHERE graph_version=?1 AND status='ACTIVE'",
+                params![version],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+    }
+
     pub fn resolve_or_activate_work(
         &self,
         project_root: &Path,
