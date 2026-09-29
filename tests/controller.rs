@@ -18,6 +18,7 @@ fn plan(goal: &str) -> PlanArtifact {
         sequence: vec!["Activate".into(), "Advance".into()],
         risks: vec!["Milestone jump".into()],
         acceptance_direction: vec!["Exactly one active Job Pack".into()],
+        evidence_needs: vec![],
     }
 }
 
