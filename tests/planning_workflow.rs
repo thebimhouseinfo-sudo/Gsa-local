@@ -138,6 +138,28 @@ fn reviewer_revision_and_cr_fix_routes_are_enforced() {
 }
 
 #[test]
+fn unchanged_revision_fails_closed_to_paused() {
+    let mut route = PlanningRoute::new(3);
+    assert!(route.enter_reviewer());
+    route.reviewer_result(ReviewVerdict::Revise);
+    route.unchanged_revision();
+    assert_eq!(route.stage, PlanningStage::Paused);
+}
+
+#[test]
+fn repeated_plan_hash_can_exist_in_distinct_revisions_without_db_failure() {
+    let dir = tempdir().unwrap();
+    let registry = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    registry.begin_plan_workflow().unwrap();
+
+    let first = registry.persist_plan_revision(&sample("same")).unwrap();
+    let second = registry.persist_plan_revision(&sample("same")).unwrap();
+
+    assert_eq!(first.hash, second.hash);
+    assert_ne!(first.revision, second.revision);
+}
+
+#[test]
 fn loop_exhaustion_pauses_instead_of_approving() {
     let mut route = PlanningRoute::new(1);
     assert!(route.enter_reviewer());
