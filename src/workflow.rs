@@ -12,7 +12,7 @@ use serde_json::json;
 use std::{
     fs,
     io::Read,
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 const DEFAULT_MAX_ATTEMPTS: u32 = 5;
