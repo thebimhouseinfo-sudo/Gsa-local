@@ -5,6 +5,7 @@ use crate::{
 };
 use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
+use serde::{Deserialize, Serialize};
 use std::{
     collections::HashSet,
     fs,
@@ -54,6 +55,37 @@ pub struct PlanWorkflowState {
     pub current_revision: Option<i64>,
     pub reviewer_attempts: u32,
     pub cr_attempts: u32,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChecklistClaim {
+    pub todo_id: String,
+    pub position: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeChecklistState {
+    pub position: i64,
+    pub item: String,
+    pub checked: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeTodoState {
+    pub todo_id: String,
+    pub title: String,
+    pub status: String,
+    pub checklist: Vec<CodeChecklistState>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodeWorkflowState {
+    pub graph_version: i64,
+    pub jobpack_id: String,
+    pub change_set_id: Option<String>,
+    pub coder_attempts: u32,
+    pub reviewer_attempts: u32,
     pub status: String,
 }
 
@@ -197,6 +229,38 @@ impl Registry {
                     REFERENCES execution_jobpacks(graph_version, jobpack_id) ON DELETE CASCADE,
                 FOREIGN KEY (graph_version, depends_on_jobpack_id)
                     REFERENCES execution_jobpacks(graph_version, jobpack_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS code_workflow_state (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                graph_version INTEGER NOT NULL,
+                jobpack_id TEXT NOT NULL,
+                change_set_id TEXT,
+                coder_attempts INTEGER NOT NULL DEFAULT 0,
+                reviewer_attempts INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS code_checkpoints (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                graph_version INTEGER NOT NULL,
+                jobpack_id TEXT NOT NULL,
+                change_set_id TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                checklist_claims TEXT NOT NULL,
+                goal_recheck TEXT NOT NULL,
+                mutation_journal TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS code_reviews (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                graph_version INTEGER NOT NULL,
+                jobpack_id TEXT NOT NULL,
+                change_set_id TEXT NOT NULL,
+                verdict TEXT NOT NULL,
+                findings TEXT NOT NULL,
+                created_at INTEGER NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS events (
