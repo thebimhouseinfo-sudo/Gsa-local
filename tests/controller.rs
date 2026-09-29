@@ -153,9 +153,18 @@ fn controller_activates_deterministically_and_never_jumps_milestones() {
     assert_eq!(first.milestone_id, "M1");
     assert_eq!(first.jobpack_id, "JP-B");
     assert_eq!(registry.active_jobpack_count(version).unwrap(), 1);
-    assert_eq!(registry.milestone_status(version, "M1").unwrap().as_deref(), Some("ACTIVE"));
-    assert_eq!(registry.milestone_status(version, "M2").unwrap().as_deref(), Some("LOCKED"));
-    assert_eq!(registry.jobpack_status(version, "JP-A").unwrap().as_deref(), Some("PENDING"));
+    assert_eq!(
+        registry.milestone_status(version, "M1").unwrap().as_deref(),
+        Some("ACTIVE")
+    );
+    assert_eq!(
+        registry.milestone_status(version, "M2").unwrap().as_deref(),
+        Some("LOCKED")
+    );
+    assert_eq!(
+        registry.jobpack_status(version, "JP-A").unwrap().as_deref(),
+        Some("PENDING")
+    );
 
     // Restart/idempotent resolve must not activate a second Job Pack.
     let again = controller.resolve_or_activate().unwrap().unwrap();
@@ -164,15 +173,24 @@ fn controller_activates_deterministically_and_never_jumps_milestones() {
 
     let second = controller.mark_active_jobpack_done().unwrap().unwrap();
     assert_eq!(second.jobpack_id, "JP-C");
-    assert_eq!(registry.jobpack_status(version, "JP-B").unwrap().as_deref(), Some("DONE"));
+    assert_eq!(
+        registry.jobpack_status(version, "JP-B").unwrap().as_deref(),
+        Some("DONE")
+    );
 
     let third = controller.mark_active_jobpack_done().unwrap().unwrap();
     assert_eq!(third.jobpack_id, "JP-A");
 
     let none = controller.mark_active_jobpack_done().unwrap();
     assert!(none.is_none());
-    assert_eq!(registry.milestone_status(version, "M1").unwrap().as_deref(), Some("VERIFY"));
-    assert_eq!(registry.milestone_status(version, "M2").unwrap().as_deref(), Some("LOCKED"));
+    assert_eq!(
+        registry.milestone_status(version, "M1").unwrap().as_deref(),
+        Some("VERIFY")
+    );
+    assert_eq!(
+        registry.milestone_status(version, "M2").unwrap().as_deref(),
+        Some("LOCKED")
+    );
     assert_eq!(registry.active_jobpack_count(version).unwrap(), 0);
 
     let next = controller
@@ -181,16 +199,28 @@ fn controller_activates_deterministically_and_never_jumps_milestones() {
         .unwrap();
     assert_eq!(next.milestone_id, "M2");
     assert_eq!(next.jobpack_id, "JP-D");
-    assert_eq!(registry.milestone_status(version, "M1").unwrap().as_deref(), Some("COMPLETE"));
-    assert_eq!(registry.milestone_status(version, "M2").unwrap().as_deref(), Some("ACTIVE"));
+    assert_eq!(
+        registry.milestone_status(version, "M1").unwrap().as_deref(),
+        Some("COMPLETE")
+    );
+    assert_eq!(
+        registry.milestone_status(version, "M2").unwrap().as_deref(),
+        Some("ACTIVE")
+    );
 
     assert!(controller.mark_active_jobpack_done().unwrap().is_none());
-    assert_eq!(registry.milestone_status(version, "M2").unwrap().as_deref(), Some("VERIFY"));
+    assert_eq!(
+        registry.milestone_status(version, "M2").unwrap().as_deref(),
+        Some("VERIFY")
+    );
     assert!(controller
         .mark_verified_milestone_complete("M2")
         .unwrap()
         .is_none());
-    assert_eq!(registry.milestone_status(version, "M2").unwrap().as_deref(), Some("COMPLETE"));
+    assert_eq!(
+        registry.milestone_status(version, "M2").unwrap().as_deref(),
+        Some("COMPLETE")
+    );
 }
 
 #[test]
@@ -230,8 +260,14 @@ fn stale_checkpoint_is_repaired_to_current_active_work() {
     let repaired = controller.resolve_or_activate().unwrap().unwrap();
     assert_eq!(repaired.jobpack_id, work.jobpack_id);
     let checkpoint = registry.latest_checkpoint().unwrap().unwrap();
-    assert_eq!(checkpoint.milestone.as_deref(), Some(work.milestone_id.as_str()));
-    assert_eq!(checkpoint.jobpack.as_deref(), Some(work.jobpack_id.as_str()));
+    assert_eq!(
+        checkpoint.milestone.as_deref(),
+        Some(work.milestone_id.as_str())
+    );
+    assert_eq!(
+        checkpoint.jobpack.as_deref(),
+        Some(work.jobpack_id.as_str())
+    );
     assert_eq!(checkpoint.stage, "jobpack_active");
     assert_eq!(checkpoint.jobpack_status.as_deref(), Some("ACTIVE"));
 }
@@ -264,7 +300,5 @@ fn verified_completion_cannot_skip_verify_state() {
     let controller = MilestoneController::new(&registry, dir.path(), "owner-a");
     controller.resolve_or_activate().unwrap();
 
-    assert!(controller
-        .mark_verified_milestone_complete("M1")
-        .is_err());
+    assert!(controller.mark_verified_milestone_complete("M1").is_err());
 }
