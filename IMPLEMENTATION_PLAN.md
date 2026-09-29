@@ -466,7 +466,7 @@ Local CR
  │
  └─ REVISE
       ↓
- Internal Fix
+     Internal Fix
       ↓
    Reviewer
       ↓
@@ -520,8 +520,6 @@ new plan revision
 Không được tiếp tục execute Job Pack sinh từ plan revision cũ.
 
 Sau `PLAN_APPROVED` mới gọi Job Builder.
-
-# JOB BUILDING
 
 # JOB BUILDING
 
@@ -795,7 +793,6 @@ Runtime mới có quyền đổi trạng thái.
 ---
 
 ## 24. Lightweight latest checkpoint
-execution lease
 
 Không scan toàn database/event history mỗi lần.
 
@@ -1257,7 +1254,7 @@ CR
  │
  └─ REVISE
       ↓
- Internal Fix
+     Internal Fix
       ↓
    Reviewer
       ↓
@@ -1559,6 +1556,7 @@ review findings
 CR findings
 event log
 latest checkpoint
+execution lease
 ```
 
 Không persist:
