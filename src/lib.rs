@@ -4,5 +4,7 @@ pub mod cli;
 pub mod config;
 pub mod harness;
 pub mod ollama;
+pub mod plan;
 pub mod registry;
 pub mod session;
+pub mod workflow;
