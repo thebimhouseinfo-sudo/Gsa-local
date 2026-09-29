@@ -4,7 +4,7 @@ use crate::{
     plan::{PlanArtifact, PlanRevision},
 };
 use anyhow::{bail, Context, Result};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use std::{
     collections::HashSet,
     fs,
@@ -55,6 +55,24 @@ pub struct PlanWorkflowState {
     pub reviewer_attempts: u32,
     pub cr_attempts: u32,
     pub status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActiveWorkRecord {
+    pub graph_version: i64,
+    pub plan_revision: i64,
+    pub plan_hash: String,
+    pub milestone_id: String,
+    pub milestone_title: String,
+    pub milestone_status: String,
+    pub jobpack_id: String,
+    pub jobpack_title: String,
+    pub jobpack_status: String,
+    pub goal: String,
+    pub required_inputs: Vec<String>,
+    pub expected_outputs: Vec<String>,
+    pub acceptance: Vec<String>,
+    pub verification_hints: Vec<String>,
 }
 
 pub struct Registry {
@@ -909,6 +927,335 @@ impl Registry {
         Ok(active > 0)
     }
 
+    pub fn resolve_or_activate_work(
+        &self,
+        project_root: &Path,
+        owner: &str,
+    ) -> Result<Option<ActiveWorkRecord>> {
+        let tx = self.conn.unchecked_transaction()?;
+        assert_lease_owner_tx(&tx, project_root, owner)?;
+        let Some((graph_version, plan_revision, plan_hash)) = current_graph_binding_tx(&tx)?
+        else {
+            tx.commit()?;
+            return Ok(None);
+        };
+
+        if let Some(work) = active_work_tx(&tx, graph_version)? {
+            ensure_active_checkpoint_tx(&tx, &work)?;
+            tx.commit()?;
+            return Ok(Some(work));
+        }
+
+        let milestone = current_milestone_tx(&tx, graph_version)?;
+        match milestone {
+            Some((_, _, ref status, _)) if status == "VERIFY" => {
+                ensure_milestone_checkpoint_tx(
+                    &tx,
+                    plan_revision,
+                    milestone.as_ref().map(|item| item.0.as_str()),
+                    "milestone_verify",
+                )?;
+                tx.commit()?;
+                return Ok(None);
+            }
+            Some((_, _, ref status, _)) if status == "ACTIVE" => {}
+            Some((id, _, status, _)) => {
+                bail!("invalid current milestone state {id}: {status}");
+            }
+            None => {
+                let next: Option<(String, String, String, i64)> = tx
+                    .query_row(
+                        r#"
+                        SELECT milestone_id, title, status, position
+                        FROM execution_milestones
+                        WHERE graph_version=?1 AND status!='COMPLETE'
+                        ORDER BY position ASC LIMIT 1
+                        "#,
+                        params![graph_version],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+                    )
+                    .optional()?;
+                let Some((milestone_id, _, status, position)) = next else {
+                    ensure_milestone_checkpoint_tx(
+                        &tx,
+                        plan_revision,
+                        None,
+                        "execution_graph_complete",
+                    )?;
+                    tx.commit()?;
+                    return Ok(None);
+                };
+                if status != "LOCKED" {
+                    bail!(
+                        "cannot activate milestone {milestone_id} from state {status}; expected LOCKED"
+                    );
+                }
+                let unfinished_before: i64 = tx.query_row(
+                    r#"
+                    SELECT COUNT(*) FROM execution_milestones
+                    WHERE graph_version=?1 AND position<?2 AND status!='COMPLETE'
+                    "#,
+                    params![graph_version, position],
+                    |row| row.get(0),
+                )?;
+                if unfinished_before != 0 {
+                    bail!("cannot jump to milestone {milestone_id}; earlier milestone is incomplete");
+                }
+                tx.execute(
+                    r#"
+                    UPDATE execution_milestones
+                    SET status='ACTIVE'
+                    WHERE graph_version=?1 AND milestone_id=?2 AND status='LOCKED'
+                    "#,
+                    params![graph_version, milestone_id],
+                )?;
+                append_event_tx(
+                    &tx,
+                    "MILESTONE_ACTIVE",
+                    &serde_json::json!({
+                        "graph_version": graph_version,
+                        "milestone": milestone_id
+                    }),
+                )?;
+            }
+        }
+
+        let work = activate_eligible_jobpack_tx(
+            &tx,
+            graph_version,
+            plan_revision,
+            &plan_hash,
+        )?;
+        tx.commit()?;
+        Ok(work)
+    }
+
+    pub fn complete_active_jobpack(
+        &self,
+        project_root: &Path,
+        owner: &str,
+    ) -> Result<Option<ActiveWorkRecord>> {
+        let tx = self.conn.unchecked_transaction()?;
+        assert_lease_owner_tx(&tx, project_root, owner)?;
+        let Some((graph_version, plan_revision, plan_hash)) = current_graph_binding_tx(&tx)?
+        else {
+            bail!("cannot complete Job Pack without a current execution graph");
+        };
+        let work = active_work_tx(&tx, graph_version)?
+            .context("there is no ACTIVE Job Pack to complete")?;
+
+        let updated = tx.execute(
+            r#"
+            UPDATE execution_jobpacks
+            SET status='DONE'
+            WHERE graph_version=?1 AND jobpack_id=?2 AND status='ACTIVE'
+            "#,
+            params![graph_version, work.jobpack_id],
+        )?;
+        if updated != 1 {
+            bail!("ACTIVE Job Pack changed before completion");
+        }
+        append_event_tx(
+            &tx,
+            "JOBPACK_DONE",
+            &serde_json::json!({
+                "graph_version": graph_version,
+                "milestone": work.milestone_id,
+                "jobpack": work.jobpack_id
+            }),
+        )?;
+
+        let unfinished: i64 = tx.query_row(
+            r#"
+            SELECT COUNT(*) FROM execution_jobpacks
+            WHERE graph_version=?1 AND milestone_id=?2 AND status!='DONE'
+            "#,
+            params![graph_version, work.milestone_id],
+            |row| row.get(0),
+        )?;
+
+        if unfinished == 0 {
+            tx.execute(
+                r#"
+                UPDATE execution_milestones
+                SET status='VERIFY'
+                WHERE graph_version=?1 AND milestone_id=?2 AND status='ACTIVE'
+                "#,
+                params![graph_version, work.milestone_id],
+            )?;
+            let sequence = append_event_tx(
+                &tx,
+                "MILESTONE_VERIFY",
+                &serde_json::json!({
+                    "graph_version": graph_version,
+                    "milestone": work.milestone_id
+                }),
+            )?;
+            write_checkpoint_tx(
+                &tx,
+                sequence,
+                plan_revision,
+                Some(&work.milestone_id),
+                None,
+                "milestone_verify",
+                None,
+            )?;
+            tx.commit()?;
+            return Ok(None);
+        }
+
+        let next = activate_eligible_jobpack_tx(
+            &tx,
+            graph_version,
+            plan_revision,
+            &plan_hash,
+        )?
+        .context("unfinished Job Packs remain but none is dependency-eligible")?;
+        tx.commit()?;
+        Ok(Some(next))
+    }
+
+    pub fn complete_verified_milestone(
+        &self,
+        project_root: &Path,
+        owner: &str,
+        milestone_id: &str,
+    ) -> Result<Option<ActiveWorkRecord>> {
+        let tx = self.conn.unchecked_transaction()?;
+        assert_lease_owner_tx(&tx, project_root, owner)?;
+        let Some((graph_version, plan_revision, plan_hash)) = current_graph_binding_tx(&tx)?
+        else {
+            bail!("cannot complete Milestone without a current execution graph");
+        };
+
+        let row: Option<(String, i64)> = tx
+            .query_row(
+                r#"
+                SELECT status, position
+                FROM execution_milestones
+                WHERE graph_version=?1 AND milestone_id=?2
+                "#,
+                params![graph_version, milestone_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((status, position)) = row else {
+            bail!("unknown milestone {milestone_id}");
+        };
+        if status != "VERIFY" {
+            bail!("milestone {milestone_id} must be VERIFY before COMPLETE; found {status}");
+        }
+
+        let active_count: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM execution_jobpacks WHERE graph_version=?1 AND status='ACTIVE'",
+            params![graph_version],
+            |row| row.get(0),
+        )?;
+        if active_count != 0 {
+            bail!("cannot complete milestone while a Job Pack is ACTIVE");
+        }
+        let unfinished: i64 = tx.query_row(
+            r#"
+            SELECT COUNT(*) FROM execution_jobpacks
+            WHERE graph_version=?1 AND milestone_id=?2 AND status!='DONE'
+            "#,
+            params![graph_version, milestone_id],
+            |row| row.get(0),
+        )?;
+        if unfinished != 0 {
+            bail!("cannot complete milestone while Job Packs are unfinished");
+        }
+
+        tx.execute(
+            r#"
+            UPDATE execution_milestones
+            SET status='COMPLETE'
+            WHERE graph_version=?1 AND milestone_id=?2 AND status='VERIFY'
+            "#,
+            params![graph_version, milestone_id],
+        )?;
+        let complete_sequence = append_event_tx(
+            &tx,
+            "MILESTONE_COMPLETE",
+            &serde_json::json!({
+                "graph_version": graph_version,
+                "milestone": milestone_id
+            }),
+        )?;
+
+        let next: Option<(String, String, i64)> = tx
+            .query_row(
+                r#"
+                SELECT milestone_id, status, position
+                FROM execution_milestones
+                WHERE graph_version=?1 AND position>?2
+                ORDER BY position ASC LIMIT 1
+                "#,
+                params![graph_version, position],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+
+        let Some((next_id, next_status, next_position)) = next else {
+            write_checkpoint_tx(
+                &tx,
+                complete_sequence,
+                plan_revision,
+                Some(milestone_id),
+                None,
+                "milestone_complete",
+                None,
+            )?;
+            tx.commit()?;
+            return Ok(None);
+        };
+        if next_position != position + 1 {
+            bail!("milestone ordering is not contiguous after {milestone_id}");
+        }
+        if next_status != "LOCKED" {
+            bail!("next milestone {next_id} must be LOCKED; found {next_status}");
+        }
+
+        let earlier_incomplete: i64 = tx.query_row(
+            r#"
+            SELECT COUNT(*) FROM execution_milestones
+            WHERE graph_version=?1 AND position<?2 AND status!='COMPLETE'
+            "#,
+            params![graph_version, next_position],
+            |row| row.get(0),
+        )?;
+        if earlier_incomplete != 0 {
+            bail!("cannot activate {next_id}; an earlier milestone is incomplete");
+        }
+
+        tx.execute(
+            r#"
+            UPDATE execution_milestones
+            SET status='ACTIVE'
+            WHERE graph_version=?1 AND milestone_id=?2 AND status='LOCKED'
+            "#,
+            params![graph_version, next_id],
+        )?;
+        append_event_tx(
+            &tx,
+            "MILESTONE_ACTIVE",
+            &serde_json::json!({
+                "graph_version": graph_version,
+                "milestone": next_id
+            }),
+        )?;
+
+        let work = activate_eligible_jobpack_tx(
+            &tx,
+            graph_version,
+            plan_revision,
+            &plan_hash,
+        )?
+        .context("new ACTIVE milestone has no dependency-eligible Job Pack")?;
+        tx.commit()?;
+        Ok(Some(work))
+    }
+
     #[cfg(test)]
     pub fn set_plan_binding(
         &self,
@@ -1119,6 +1466,421 @@ impl Registry {
             .optional()
             .map_err(Into::into)
     }
+}
+
+fn assert_lease_owner_tx(
+    tx: &Transaction<'_>,
+    project_root: &Path,
+    owner: &str,
+) -> Result<()> {
+    let project_root = canonical_or_original(project_root)
+        .to_string_lossy()
+        .into_owned();
+    let stored: Option<String> = tx
+        .query_row(
+            "SELECT owner FROM execution_lease WHERE project_root=?1",
+            params![project_root],
+            |row| row.get(0),
+        )
+        .optional()?;
+    match stored {
+        Some(stored) if stored == owner => Ok(()),
+        Some(stored) => bail!("execution lease is owned by {stored}, not {owner}"),
+        None => bail!("project execution lease is not held"),
+    }
+}
+
+fn current_graph_binding_tx(tx: &Transaction<'_>) -> Result<Option<(i64, i64, String)>> {
+    let row: Option<(i64, i64, String, String, i64, String)> = tx
+        .query_row(
+            r#"
+            SELECT ap.execution_graph_version, ap.revision, ap.plan_hash,
+                   eg.status, pr.revision, pr.plan_hash
+            FROM approved_plan ap
+            JOIN execution_graph eg ON eg.version=ap.execution_graph_version
+            JOIN plan_revisions pr ON pr.revision=(
+                SELECT MAX(revision) FROM plan_revisions
+            )
+            WHERE ap.id=1 AND ap.execution_graph_version>0
+            "#,
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )
+        .optional()?;
+
+    let Some((version, revision, hash, graph_status, current_revision, current_hash)) = row else {
+        return Ok(None);
+    };
+    if graph_status != "CURRENT" {
+        bail!("approved execution graph {version} is not CURRENT");
+    }
+    if revision != current_revision || hash != current_hash {
+        bail!("execution graph is bound to a stale approved plan");
+    }
+    Ok(Some((version, revision, hash)))
+}
+
+fn current_milestone_tx(
+    tx: &Transaction<'_>,
+    graph_version: i64,
+) -> Result<Option<(String, String, String, i64)>> {
+    let count: i64 = tx.query_row(
+        r#"
+        SELECT COUNT(*) FROM execution_milestones
+        WHERE graph_version=?1 AND status IN ('ACTIVE', 'VERIFY')
+        "#,
+        params![graph_version],
+        |row| row.get(0),
+    )?;
+    if count > 1 {
+        bail!("execution graph has more than one current Milestone");
+    }
+    tx.query_row(
+        r#"
+        SELECT milestone_id, title, status, position
+        FROM execution_milestones
+        WHERE graph_version=?1 AND status IN ('ACTIVE', 'VERIFY')
+        ORDER BY position ASC LIMIT 1
+        "#,
+        params![graph_version],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
+fn active_work_tx(
+    tx: &Transaction<'_>,
+    graph_version: i64,
+) -> Result<Option<ActiveWorkRecord>> {
+    let active_count: i64 = tx.query_row(
+        "SELECT COUNT(*) FROM execution_jobpacks WHERE graph_version=?1 AND status='ACTIVE'",
+        params![graph_version],
+        |row| row.get(0),
+    )?;
+    if active_count > 1 {
+        bail!("execution graph has more than one ACTIVE Job Pack");
+    }
+    if active_count == 0 {
+        return Ok(None);
+    }
+
+    let row: (
+        i64,
+        i64,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+        String,
+    ) = tx.query_row(
+        r#"
+        SELECT eg.version, eg.plan_revision, eg.plan_hash,
+               m.milestone_id, m.title, m.status,
+               jp.jobpack_id, jp.title, jp.status, jp.goal,
+               jp.required_inputs, jp.expected_outputs,
+               jp.acceptance, jp.verification_hints
+        FROM execution_jobpacks jp
+        JOIN execution_milestones m
+          ON m.graph_version=jp.graph_version AND m.milestone_id=jp.milestone_id
+        JOIN execution_graph eg ON eg.version=jp.graph_version
+        WHERE jp.graph_version=?1 AND jp.status='ACTIVE'
+        LIMIT 1
+        "#,
+        params![graph_version],
+        |row| {
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+                row.get(6)?,
+                row.get(7)?,
+                row.get(8)?,
+                row.get(9)?,
+                row.get(10)?,
+                row.get(11)?,
+                row.get(12)?,
+                row.get(13)?,
+            ))
+        },
+    )?;
+    if row.5 != "ACTIVE" {
+        bail!("ACTIVE Job Pack {} is outside an ACTIVE Milestone", row.6);
+    }
+
+    Ok(Some(ActiveWorkRecord {
+        graph_version: row.0,
+        plan_revision: row.1,
+        plan_hash: row.2,
+        milestone_id: row.3,
+        milestone_title: row.4,
+        milestone_status: row.5,
+        jobpack_id: row.6,
+        jobpack_title: row.7,
+        jobpack_status: row.8,
+        goal: row.9,
+        required_inputs: serde_json::from_str(&row.10)?,
+        expected_outputs: serde_json::from_str(&row.11)?,
+        acceptance: serde_json::from_str(&row.12)?,
+        verification_hints: serde_json::from_str(&row.13)?,
+    }))
+}
+
+fn activate_eligible_jobpack_tx(
+    tx: &Transaction<'_>,
+    graph_version: i64,
+    plan_revision: i64,
+    _plan_hash: &str,
+) -> Result<Option<ActiveWorkRecord>> {
+    if active_work_tx(tx, graph_version)?.is_some() {
+        bail!("cannot activate another Job Pack while one is ACTIVE");
+    }
+    let Some((milestone_id, _, status, _)) = current_milestone_tx(tx, graph_version)? else {
+        return Ok(None);
+    };
+    if status != "ACTIVE" {
+        return Ok(None);
+    }
+
+    let candidate: Option<String> = tx
+        .query_row(
+            r#"
+            SELECT jp.jobpack_id
+            FROM execution_jobpacks jp
+            WHERE jp.graph_version=?1
+              AND jp.milestone_id=?2
+              AND jp.status IN ('PENDING', 'READY')
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM execution_jobpack_dependencies d
+                  JOIN execution_jobpacks dep
+                    ON dep.graph_version=d.graph_version
+                   AND dep.jobpack_id=d.depends_on_jobpack_id
+                  WHERE d.graph_version=jp.graph_version
+                    AND d.jobpack_id=jp.jobpack_id
+                    AND dep.status!='DONE'
+              )
+            ORDER BY jp.jobpack_id ASC
+            LIMIT 1
+            "#,
+            params![graph_version, milestone_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+
+    let Some(jobpack_id) = candidate else {
+        return Ok(None);
+    };
+    let updated = tx.execute(
+        r#"
+        UPDATE execution_jobpacks
+        SET status='ACTIVE'
+        WHERE graph_version=?1 AND jobpack_id=?2
+          AND status IN ('PENDING', 'READY')
+        "#,
+        params![graph_version, jobpack_id],
+    )?;
+    if updated != 1 {
+        bail!("Job Pack eligibility changed before activation");
+    }
+    let sequence = append_event_tx(
+        tx,
+        "JOBPACK_ACTIVE",
+        &serde_json::json!({
+            "graph_version": graph_version,
+            "milestone": milestone_id,
+            "jobpack": jobpack_id
+        }),
+    )?;
+    write_checkpoint_tx(
+        tx,
+        sequence,
+        plan_revision,
+        Some(&milestone_id),
+        Some(&jobpack_id),
+        "jobpack_active",
+        Some("ACTIVE"),
+    )?;
+    active_work_tx(tx, graph_version)
+}
+
+fn append_event_tx(
+    tx: &Transaction<'_>,
+    kind: &str,
+    payload: &serde_json::Value,
+) -> Result<i64> {
+    tx.execute(
+        "INSERT INTO events (kind, payload, created_at) VALUES (?1, ?2, ?3)",
+        params![kind, payload.to_string(), unix_seconds()?],
+    )?;
+    Ok(tx.last_insert_rowid())
+}
+
+fn write_checkpoint_tx(
+    tx: &Transaction<'_>,
+    sequence: i64,
+    plan_revision: i64,
+    milestone: Option<&str>,
+    jobpack: Option<&str>,
+    stage: &str,
+    jobpack_status: Option<&str>,
+) -> Result<()> {
+    tx.execute(
+        r#"
+        INSERT INTO latest_checkpoint
+            (id, sequence, plan_revision, milestone, jobpack, stage, jobpack_status)
+        VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)
+        ON CONFLICT(id) DO UPDATE SET
+            sequence=excluded.sequence,
+            plan_revision=excluded.plan_revision,
+            milestone=excluded.milestone,
+            jobpack=excluded.jobpack,
+            stage=excluded.stage,
+            jobpack_status=excluded.jobpack_status
+        "#,
+        params![
+            sequence,
+            plan_revision,
+            milestone,
+            jobpack,
+            stage,
+            jobpack_status
+        ],
+    )?;
+    Ok(())
+}
+
+fn ensure_active_checkpoint_tx(tx: &Transaction<'_>, work: &ActiveWorkRecord) -> Result<()> {
+    let checkpoint: Option<(i64, Option<i64>, Option<String>, Option<String>, String, Option<String>)> =
+        tx.query_row(
+            r#"
+            SELECT sequence, plan_revision, milestone, jobpack, stage, jobpack_status
+            FROM latest_checkpoint WHERE id=1
+            "#,
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )
+        .optional()?;
+    let max_sequence: i64 =
+        tx.query_row("SELECT COALESCE(MAX(sequence),0) FROM events", [], |row| row.get(0))?;
+
+    let valid = checkpoint.as_ref().is_some_and(|cp| {
+        cp.0 == max_sequence
+            && cp.1 == Some(work.plan_revision)
+            && cp.2.as_deref() == Some(work.milestone_id.as_str())
+            && cp.3.as_deref() == Some(work.jobpack_id.as_str())
+            && cp.4 == "jobpack_active"
+            && cp.5.as_deref() == Some("ACTIVE")
+    });
+    if valid {
+        return Ok(());
+    }
+
+    let sequence = append_event_tx(
+        tx,
+        "CHECKPOINT_REPAIRED",
+        &serde_json::json!({
+            "graph_version": work.graph_version,
+            "milestone": work.milestone_id,
+            "jobpack": work.jobpack_id,
+            "stage": "jobpack_active"
+        }),
+    )?;
+    write_checkpoint_tx(
+        tx,
+        sequence,
+        work.plan_revision,
+        Some(&work.milestone_id),
+        Some(&work.jobpack_id),
+        "jobpack_active",
+        Some("ACTIVE"),
+    )
+}
+
+fn ensure_milestone_checkpoint_tx(
+    tx: &Transaction<'_>,
+    plan_revision: i64,
+    milestone: Option<&str>,
+    stage: &str,
+) -> Result<()> {
+    let current: Option<(i64, Option<i64>, Option<String>, Option<String>, String, Option<String>)> =
+        tx.query_row(
+            r#"
+            SELECT sequence, plan_revision, milestone, jobpack, stage, jobpack_status
+            FROM latest_checkpoint WHERE id=1
+            "#,
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                ))
+            },
+        )
+        .optional()?;
+    let max_sequence: i64 =
+        tx.query_row("SELECT COALESCE(MAX(sequence),0) FROM events", [], |row| row.get(0))?;
+    let valid = current.as_ref().is_some_and(|cp| {
+        cp.0 == max_sequence
+            && cp.1 == Some(plan_revision)
+            && cp.2.as_deref() == milestone
+            && cp.3.is_none()
+            && cp.4 == stage
+            && cp.5.is_none()
+    });
+    if valid {
+        return Ok(());
+    }
+
+    let sequence = append_event_tx(
+        tx,
+        "CHECKPOINT_REPAIRED",
+        &serde_json::json!({
+            "milestone": milestone,
+            "stage": stage
+        }),
+    )?;
+    write_checkpoint_tx(
+        tx,
+        sequence,
+        plan_revision,
+        milestone,
+        None,
+        stage,
+        None,
+    )
 }
 
 #[cfg(unix)]
