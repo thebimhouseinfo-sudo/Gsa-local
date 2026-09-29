@@ -1041,6 +1041,436 @@ impl Registry {
             .map_err(Into::into)
     }
 
+    pub fn begin_code_workflow(
+        &self,
+        project_root: &Path,
+        owner: &str,
+        graph_version: i64,
+        jobpack_id: &str,
+    ) -> Result<CodeWorkflowState> {
+        let tx = self.conn.unchecked_transaction()?;
+        assert_lease_owner_tx(&tx, project_root, owner)?;
+        let (_plan_revision, _milestone_id) =
+            assert_active_jobpack_binding_tx(&tx, graph_version, jobpack_id)?;
+
+        tx.execute(
+            r#"
+            INSERT INTO code_workflow_state
+                (id, graph_version, jobpack_id, change_set_id,
+                 coder_attempts, reviewer_attempts, status)
+            VALUES (1, ?1, ?2, NULL, 0, 0, 'CODER')
+            ON CONFLICT(id) DO UPDATE SET
+                graph_version=excluded.graph_version,
+                jobpack_id=excluded.jobpack_id,
+                change_set_id=NULL,
+                coder_attempts=0,
+                reviewer_attempts=0,
+                status='CODER'
+            "#,
+            params![graph_version, jobpack_id],
+        )?;
+        append_event_tx(
+            &tx,
+            "CODE_WORKFLOW_STARTED",
+            &serde_json::json!({
+                "graph_version": graph_version,
+                "jobpack": jobpack_id
+            }),
+        )?;
+        tx.commit()?;
+        Ok(CodeWorkflowState {
+            graph_version,
+            jobpack_id: jobpack_id.to_owned(),
+            change_set_id: None,
+            coder_attempts: 0,
+            reviewer_attempts: 0,
+            status: "CODER".into(),
+        })
+    }
+
+    pub fn code_workflow_state(&self) -> Result<Option<CodeWorkflowState>> {
+        self.conn
+            .query_row(
+                r#"
+                SELECT graph_version, jobpack_id, change_set_id,
+                       coder_attempts, reviewer_attempts, status
+                FROM code_workflow_state WHERE id=1
+                "#,
+                [],
+                |row| {
+                    Ok(CodeWorkflowState {
+                        graph_version: row.get(0)?,
+                        jobpack_id: row.get(1)?,
+                        change_set_id: row.get(2)?,
+                        coder_attempts: row.get::<_, i64>(3)? as u32,
+                        reviewer_attempts: row.get::<_, i64>(4)? as u32,
+                        status: row.get(5)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn jobpack_code_tasks(
+        &self,
+        graph_version: i64,
+        jobpack_id: &str,
+    ) -> Result<Vec<CodeTodoState>> {
+        let mut statement = self.conn.prepare(
+            r#"
+            SELECT todo_id, title, status
+            FROM execution_todos
+            WHERE graph_version=?1 AND jobpack_id=?2
+            ORDER BY todo_id ASC
+            "#,
+        )?;
+        let todos = statement
+            .query_map(params![graph_version, jobpack_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        let mut result = Vec::with_capacity(todos.len());
+        for (todo_id, title, status) in todos {
+            let mut checklist_stmt = self.conn.prepare(
+                r#"
+                SELECT position, item, checked
+                FROM execution_checklist_items
+                WHERE graph_version=?1 AND todo_id=?2
+                ORDER BY position ASC
+                "#,
+            )?;
+            let checklist = checklist_stmt
+                .query_map(params![graph_version, todo_id], |row| {
+                    Ok(CodeChecklistState {
+                        position: row.get(0)?,
+                        item: row.get(1)?,
+                        checked: row.get::<_, i64>(2)? != 0,
+                    })
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            result.push(CodeTodoState {
+                todo_id,
+                title,
+                status,
+                checklist,
+            });
+        }
+        Ok(result)
+    }
+
+    pub fn record_code_checkpoint(
+        &self,
+        project_root: &Path,
+        owner: &str,
+        graph_version: i64,
+        jobpack_id: &str,
+        change_set_id: &str,
+        summary: &str,
+        claims: &[ChecklistClaim],
+        goal_recheck: &[String],
+        mutation_journal: &serde_json::Value,
+        coder_attempts: u32,
+        reviewer_attempts: u32,
+    ) -> Result<()> {
+        if change_set_id.trim().is_empty() {
+            bail!("code checkpoint change_set_id cannot be empty");
+        }
+        let journal = mutation_journal
+            .as_array()
+            .context("mutation journal must be an array")?;
+        if journal.is_empty() {
+            bail!("code checkpoint must contain at least one runtime-observed mutation");
+        }
+
+        let tx = self.conn.unchecked_transaction()?;
+        assert_lease_owner_tx(&tx, project_root, owner)?;
+        assert_active_jobpack_binding_tx(&tx, graph_version, jobpack_id)?;
+        validate_checklist_claims_tx(&tx, graph_version, jobpack_id, claims)?;
+
+        tx.execute(
+            r#"
+            INSERT INTO code_checkpoints
+                (graph_version, jobpack_id, change_set_id, summary,
+                 checklist_claims, goal_recheck, mutation_journal, created_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "#,
+            params![
+                graph_version,
+                jobpack_id,
+                change_set_id,
+                summary,
+                serde_json::to_string(claims)?,
+                serde_json::to_string(goal_recheck)?,
+                mutation_journal.to_string(),
+                unix_seconds()?
+            ],
+        )?;
+        tx.execute(
+            r#"
+            INSERT INTO code_workflow_state
+                (id, graph_version, jobpack_id, change_set_id,
+                 coder_attempts, reviewer_attempts, status)
+            VALUES (1, ?1, ?2, ?3, ?4, ?5, 'REVIEWER')
+            ON CONFLICT(id) DO UPDATE SET
+                graph_version=excluded.graph_version,
+                jobpack_id=excluded.jobpack_id,
+                change_set_id=excluded.change_set_id,
+                coder_attempts=excluded.coder_attempts,
+                reviewer_attempts=excluded.reviewer_attempts,
+                status='REVIEWER'
+            "#,
+            params![
+                graph_version,
+                jobpack_id,
+                change_set_id,
+                coder_attempts as i64,
+                reviewer_attempts as i64
+            ],
+        )?;
+        append_event_tx(
+            &tx,
+            "CODE_CHECKPOINT_SUBMITTED",
+            &serde_json::json!({
+                "graph_version": graph_version,
+                "jobpack": jobpack_id,
+                "change_set_id": change_set_id,
+                "coder_attempts": coder_attempts
+            }),
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn record_code_review(
+        &self,
+        project_root: &Path,
+        owner: &str,
+        graph_version: i64,
+        jobpack_id: &str,
+        change_set_id: &str,
+        verdict: ReviewVerdict,
+        findings: &[String],
+        coder_attempts: u32,
+        reviewer_attempts: u32,
+    ) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        assert_lease_owner_tx(&tx, project_root, owner)?;
+        let (plan_revision, milestone_id) =
+            assert_active_jobpack_binding_tx(&tx, graph_version, jobpack_id)?;
+
+        let state: Option<(String, String)> = tx
+            .query_row(
+                r#"
+                SELECT change_set_id, status
+                FROM code_workflow_state
+                WHERE id=1 AND graph_version=?1 AND jobpack_id=?2
+                "#,
+                params![graph_version, jobpack_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((state_change_set, state_status)) = state else {
+            bail!("code workflow state is missing for active Job Pack");
+        };
+        if state_change_set != change_set_id || state_status != "REVIEWER" {
+            bail!(
+                "stale code review target: expected REVIEWER on change set {}, found {} on {}",
+                change_set_id,
+                state_status,
+                state_change_set
+            );
+        }
+
+        let claims_json: Option<String> = tx
+            .query_row(
+                r#"
+                SELECT checklist_claims
+                FROM code_checkpoints
+                WHERE graph_version=?1 AND jobpack_id=?2 AND change_set_id=?3
+                ORDER BY id DESC LIMIT 1
+                "#,
+                params![graph_version, jobpack_id, change_set_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let claims_json = claims_json.context("review target has no code checkpoint")?;
+        let claims: Vec<ChecklistClaim> = serde_json::from_str(&claims_json)?;
+        validate_checklist_claims_tx(&tx, graph_version, jobpack_id, &claims)?;
+
+        tx.execute(
+            r#"
+            INSERT INTO code_reviews
+                (graph_version, jobpack_id, change_set_id, verdict, findings, created_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "#,
+            params![
+                graph_version,
+                jobpack_id,
+                change_set_id,
+                verdict.as_str(),
+                serde_json::to_string(findings)?,
+                unix_seconds()?
+            ],
+        )?;
+
+        if verdict == ReviewVerdict::Revise {
+            tx.execute(
+                r#"
+                UPDATE code_workflow_state
+                SET coder_attempts=?1,
+                    reviewer_attempts=?2,
+                    status='INTERNAL_FIX'
+                WHERE id=1
+                "#,
+                params![coder_attempts as i64, reviewer_attempts as i64],
+            )?;
+            append_event_tx(
+                &tx,
+                "CODE_REVIEW_CHANGES_REQUIRED",
+                &serde_json::json!({
+                    "graph_version": graph_version,
+                    "jobpack": jobpack_id,
+                    "change_set_id": change_set_id,
+                    "findings": findings
+                }),
+            )?;
+            tx.commit()?;
+            return Ok(());
+        }
+
+        apply_checklist_claims_tx(&tx, graph_version, jobpack_id, &claims)?;
+        tx.execute(
+            r#"
+            UPDATE code_workflow_state
+            SET coder_attempts=?1,
+                reviewer_attempts=?2,
+                status='REVIEW_PASS'
+            WHERE id=1
+            "#,
+            params![coder_attempts as i64, reviewer_attempts as i64],
+        )?;
+        let sequence = append_event_tx(
+            &tx,
+            "CODE_REVIEW_PASS",
+            &serde_json::json!({
+                "graph_version": graph_version,
+                "jobpack": jobpack_id,
+                "change_set_id": change_set_id
+            }),
+        )?;
+        write_checkpoint_tx(
+            &tx,
+            sequence,
+            plan_revision,
+            Some(&milestone_id),
+            Some(jobpack_id),
+            "code_review_pass",
+            Some("ACTIVE"),
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn pause_code_workflow(
+        &self,
+        project_root: &Path,
+        owner: &str,
+        graph_version: i64,
+        jobpack_id: &str,
+        coder_attempts: u32,
+        reviewer_attempts: u32,
+        reason: &str,
+    ) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        assert_lease_owner_tx(&tx, project_root, owner)?;
+        assert_active_jobpack_binding_tx(&tx, graph_version, jobpack_id)?;
+        tx.execute(
+            r#"
+            UPDATE code_workflow_state
+            SET coder_attempts=?1,
+                reviewer_attempts=?2,
+                status='PAUSED'
+            WHERE id=1 AND graph_version=?3 AND jobpack_id=?4
+            "#,
+            params![
+                coder_attempts as i64,
+                reviewer_attempts as i64,
+                graph_version,
+                jobpack_id
+            ],
+        )?;
+        append_event_tx(
+            &tx,
+            "CODE_WORKFLOW_PAUSED",
+            &serde_json::json!({
+                "graph_version": graph_version,
+                "jobpack": jobpack_id,
+                "reason": reason
+            }),
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn latest_code_review_verdict(
+        &self,
+        graph_version: i64,
+        jobpack_id: &str,
+        change_set_id: &str,
+    ) -> Result<Option<String>> {
+        self.conn
+            .query_row(
+                r#"
+                SELECT verdict FROM code_reviews
+                WHERE graph_version=?1 AND jobpack_id=?2 AND change_set_id=?3
+                ORDER BY id DESC LIMIT 1
+                "#,
+                params![graph_version, jobpack_id, change_set_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn checklist_checked(
+        &self,
+        graph_version: i64,
+        todo_id: &str,
+        position: i64,
+    ) -> Result<Option<bool>> {
+        self.conn
+            .query_row(
+                r#"
+                SELECT checked FROM execution_checklist_items
+                WHERE graph_version=?1 AND todo_id=?2 AND position=?3
+                "#,
+                params![graph_version, todo_id, position],
+                |row| Ok(row.get::<_, i64>(0)? != 0),
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn todo_status(&self, graph_version: i64, todo_id: &str) -> Result<Option<String>> {
+        self.conn
+            .query_row(
+                r#"
+                SELECT status FROM execution_todos
+                WHERE graph_version=?1 AND todo_id=?2
+                "#,
+                params![graph_version, todo_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
     pub fn resolve_or_activate_work(
         &self,
         project_root: &Path,
@@ -1577,6 +2007,138 @@ fn retire_active_jobpacks_for_current_graphs_tx(tx: &Transaction<'_>) -> Result<
           )
         "#,
         [],
+    )?;
+    Ok(())
+}
+
+fn assert_active_jobpack_binding_tx(
+    tx: &Transaction<'_>,
+    graph_version: i64,
+    jobpack_id: &str,
+) -> Result<(i64, String)> {
+    let Some((current_graph, plan_revision, _plan_hash)) = current_graph_binding_tx(tx)? else {
+        bail!("no CURRENT approved execution graph is bound");
+    };
+    if current_graph != graph_version {
+        bail!(
+            "stale code target graph: requested {}, current {}",
+            graph_version,
+            current_graph
+        );
+    }
+    let work = active_work_tx(tx, graph_version)?
+        .context("current execution graph has no ACTIVE Job Pack")?;
+    if work.jobpack_id != jobpack_id {
+        bail!(
+            "stale code target Job Pack: requested {}, current {}",
+            jobpack_id,
+            work.jobpack_id
+        );
+    }
+    Ok((plan_revision, work.milestone_id))
+}
+
+fn validate_checklist_claims_tx(
+    tx: &Transaction<'_>,
+    graph_version: i64,
+    jobpack_id: &str,
+    claims: &[ChecklistClaim],
+) -> Result<()> {
+    let mut seen = HashSet::new();
+    for claim in claims {
+        if claim.todo_id.trim().is_empty() || claim.position <= 0 {
+            bail!("invalid checklist completion claim");
+        }
+        if !seen.insert((claim.todo_id.as_str(), claim.position)) {
+            bail!(
+                "duplicate checklist completion claim {}#{}",
+                claim.todo_id,
+                claim.position
+            );
+        }
+        let exists: i64 = tx.query_row(
+            r#"
+            SELECT COUNT(*)
+            FROM execution_checklist_items c
+            JOIN execution_todos t
+              ON t.graph_version=c.graph_version AND t.todo_id=c.todo_id
+            WHERE c.graph_version=?1
+              AND c.todo_id=?2
+              AND c.position=?3
+              AND t.jobpack_id=?4
+            "#,
+            params![
+                graph_version,
+                claim.todo_id,
+                claim.position,
+                jobpack_id
+            ],
+            |row| row.get(0),
+        )?;
+        if exists != 1 {
+            bail!(
+                "checklist claim {}#{} is not part of active Job Pack {}",
+                claim.todo_id,
+                claim.position,
+                jobpack_id
+            );
+        }
+    }
+    Ok(())
+}
+
+fn apply_checklist_claims_tx(
+    tx: &Transaction<'_>,
+    graph_version: i64,
+    jobpack_id: &str,
+    claims: &[ChecklistClaim],
+) -> Result<()> {
+    validate_checklist_claims_tx(tx, graph_version, jobpack_id, claims)?;
+    for claim in claims {
+        let updated = tx.execute(
+            r#"
+            UPDATE execution_checklist_items
+            SET checked=1
+            WHERE graph_version=?1 AND todo_id=?2 AND position=?3
+              AND EXISTS (
+                  SELECT 1 FROM execution_todos t
+                  WHERE t.graph_version=execution_checklist_items.graph_version
+                    AND t.todo_id=execution_checklist_items.todo_id
+                    AND t.jobpack_id=?4
+              )
+            "#,
+            params![
+                graph_version,
+                claim.todo_id,
+                claim.position,
+                jobpack_id
+            ],
+        )?;
+        if updated != 1 {
+            bail!(
+                "checklist claim {}#{} changed before Reviewer PASS",
+                claim.todo_id,
+                claim.position
+            );
+        }
+    }
+
+    tx.execute(
+        r#"
+        UPDATE execution_todos
+        SET status=CASE
+            WHEN NOT EXISTS (
+                SELECT 1 FROM execution_checklist_items c
+                WHERE c.graph_version=execution_todos.graph_version
+                  AND c.todo_id=execution_todos.todo_id
+                  AND c.checked=0
+            )
+            THEN 'DONE'
+            ELSE 'PENDING'
+        END
+        WHERE graph_version=?1 AND jobpack_id=?2
+        "#,
+        params![graph_version, jobpack_id],
     )?;
     Ok(())
 }
