@@ -238,11 +238,7 @@ where
     Ok(())
 }
 
-fn consume_chat_bytes<F>(
-    line: &[u8],
-    assistant: &mut ChatMessage,
-    on_token: &mut F,
-) -> Result<()>
+fn consume_chat_bytes<F>(line: &[u8], assistant: &mut ChatMessage, on_token: &mut F) -> Result<()>
 where
     F: FnMut(&str),
 {
