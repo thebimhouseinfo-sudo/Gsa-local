@@ -1137,7 +1137,8 @@ fn plan_tool() -> ToolDefinition {
                 "dependencies",
                 "sequence",
                 "risks",
-                "acceptance_direction"
+                "acceptance_direction",
+                "evidence_needs"
             ],
             "properties": {
                 "goal": {"type": "string"},
@@ -1147,7 +1148,33 @@ fn plan_tool() -> ToolDefinition {
                 "dependencies": {"type": "array", "items": {"type": "string"}},
                 "sequence": {"type": "array", "items": {"type": "string"}},
                 "risks": {"type": "array", "items": {"type": "string"}},
-                "acceptance_direction": {"type": "array", "items": {"type": "string"}}
+                "acceptance_direction": {"type": "array", "items": {"type": "string"}},
+                "evidence_needs": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": [
+                            "id", "question", "purpose", "required",
+                            "consumer", "modes", "intent"
+                        ],
+                        "properties": {
+                            "id": {"type": "string", "minLength": 1},
+                            "question": {"type": "string", "minLength": 1},
+                            "purpose": {"type": "string", "minLength": 1},
+                            "required": {"type": "boolean"},
+                            "consumer": {"type": "string", "minLength": 1},
+                            "modes": {
+                                "type": "array",
+                                "minItems": 1,
+                                "items": {
+                                    "type": "string",
+                                    "enum": ["VERIFY", "MEASURE", "PROBE"]
+                                }
+                            },
+                            "intent": {"type": "string", "minLength": 1}
+                        }
+                    }
+                }
             }
         }),
     )
