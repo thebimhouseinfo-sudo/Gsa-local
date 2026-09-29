@@ -193,10 +193,16 @@ impl App {
                 &self.project_root,
             );
             match workflow.run(&text).await? {
-                PlanningOutcome::Approved(binding) => {
+                PlanningOutcome::Registered {
+                    plan,
+                    graph_version,
+                } => {
                     println!(
                         "PLAN_APPROVED revision={} hash={}",
-                        binding.revision, binding.hash
+                        plan.revision, plan.hash
+                    );
+                    println!(
+                        "EXECUTION_GRAPH_REGISTERED version={graph_version}"
                     );
                 }
                 PlanningOutcome::Paused { revision, .. } => {
