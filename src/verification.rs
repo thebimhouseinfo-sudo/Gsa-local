@@ -96,6 +96,16 @@ impl VerificationResult {
             Self::Blocked => "BLOCKED",
         }
     }
+
+    pub fn parse(value: &str) -> Result<Self> {
+        match value {
+            "TEST_PASS" => Ok(Self::TestPass),
+            "FAIL" => Ok(Self::Fail),
+            "NOT_APPLICABLE" => Ok(Self::NotApplicable),
+            "BLOCKED" => Ok(Self::Blocked),
+            other => bail!("unknown verification result {other}"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
