@@ -8,7 +8,7 @@ use crate::{
     registry::Registry,
     session::Session,
     tools::ProjectToolRuntime,
-    workflow::{PlanningOutcome, PlanningWorkflow},
+    workflow::{CodingOutcome, CodingWorkflow, PlanningOutcome, PlanningWorkflow},
 };
 use anyhow::{bail, Context, Result};
 use std::{
@@ -232,6 +232,57 @@ impl App {
                     println!(
                         "Planning workflow PAUSED after bounded review attempts (revision={:?}).",
                         revision
+                    );
+                }
+            }
+            return Ok(());
+        }
+
+        if agent == AgentId::Coder {
+            if self.active_work.is_none() {
+                self.active_work = MilestoneController::new(
+                    &self.registry,
+                    &self.project_root,
+                    &self.lease_owner,
+                )
+                .resolve_or_activate()?;
+            }
+            let active_work = self
+                .active_work
+                .clone()
+                .context("no ACTIVE Job Pack is available for Coder")?;
+
+            println!(
+                "Coding workflow: Coder → Reviewer (milestone={} jobpack={})",
+                active_work.milestone_id, active_work.jobpack_id
+            );
+            let workflow = CodingWorkflow::new(
+                &self.ollama,
+                &self.harnesses,
+                &self.registry,
+                &self.config,
+                &self.session,
+                &self.project_root,
+                &self.lease_owner,
+            );
+            match workflow
+                .run(&text, &active_work, &mut self.tool_runtime)
+                .await?
+            {
+                CodingOutcome::ReviewPass { change_set_id } => {
+                    println!(
+                        "CODE_REVIEW_PASS jobpack={} change_set={}",
+                        active_work.jobpack_id, change_set_id
+                    );
+                    println!("Job Pack remains ACTIVE pending verification and later gates.");
+                }
+                CodingOutcome::Paused {
+                    change_set_id,
+                    reason,
+                } => {
+                    println!(
+                        "Coding workflow PAUSED jobpack={} change_set={:?}: {}",
+                        active_work.jobpack_id, change_set_id, reason
                     );
                 }
             }
