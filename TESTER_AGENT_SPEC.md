@@ -91,26 +91,44 @@ A checkpoint is appropriate when one or more of the following is true:
 - continuing would produce a large amount of code before the current foundation is proven;
 - final Job verification is required.
 
-Typical flow:
+Typical orchestration:
 
 ```text
-Coder tasks
-   |
-   v
-TEST CHECKPOINT
-   |
-   v
+Coder
+  |
+  v
+lightweight self-check
+  |
+  v
+Reviewer
+  | CHANGES_REQUIRED
+  +----------------------> Internal Fix -> self-check -> Reviewer
+  |
+  | PASS
+  v
+continue planned Job/Job Pack work
+  |
+  | execution reaches a declared TEST CHECKPOINT
+  v
 Tester
-   | PASS
-   +--------------------> Coder continues
-   |
-   | FAIL
-   v
-Coder fixes product source
-   |
-   v
-Tester RETEST
+  | PASS
+  +----------------------> continue after the checkpoint
+  |
+  | FAIL
+  v
+Coder/Internal Fix
+  |
+  v
+lightweight self-check
+  |
+  v
+Reviewer PASS
+  |
+  v
+Tester RETEST of the same checkpoint
 ```
+
+Test Checkpoints are declared ahead of execution by planning/Job Builder as part of the Milestone/Execution Graph. Tester does not decide where checkpoints exist, and it is not inserted after every coding task or every Reviewer PASS.
 
 Final Tester verification should include the relevant regression surface accumulated from prior checkpoints.
 
@@ -535,33 +553,48 @@ Coverage or other metrics may be included when meaningful, but they are optional
 
 ## 14. Relationship to Reviewer
 
-Tester and Reviewer have different responsibilities.
+Tester and Reviewer have different responsibilities and operate at different orchestration levels.
+
+Reviewer is part of the normal coding loop. Every product-source change still passes through Coder self-check and Reviewer review before it can be treated as the current reviewed product state.
+
+Tester is a Milestone/Execution-Graph checkpoint agent. It is invoked only when execution reaches a declared Test Checkpoint, after the prerequisite coding work for that checkpoint has reached Reviewer PASS.
 
 ```text
 Coder
   |
-  | implementation + lightweight self-check
+  v
+lightweight self-check
+  |
+  v
+Reviewer <----------------------+
+  | CHANGES_REQUIRED            |
+  +--> Internal Fix ------------+
+  |
+  | PASS
+  v
+planned work continues
+  |
+  | declared TEST CHECKPOINT reached
   v
 Tester
   |
-  | executable behavior evidence / measurements / probes
-  v
-Reviewer
+  +-- PASS --> continue after checkpoint
   |
-  | semantic and implementation review against Job/spec
-  v
-next gate
+  +-- FAIL --> Coder/Internal Fix
+                 |
+                 v
+              self-check
+                 |
+                 v
+              Reviewer PASS
+                 |
+                 v
+              Tester RETEST
 ```
 
-When Tester finds a clear product failure, the normal path is:
+A Tester FAIL does not bypass Reviewer. Tester identifies and evidences the product failure; Coder owns the source fix; Reviewer revalidates the changed implementation; Tester then retests the same checkpoint against the new exact target revision/state.
 
-```text
-Tester FAIL
-  -> Coder fixes
-  -> Tester RETEST
-```
-
-There is no value in forcing full Reviewer work on an implementation that is already proven to fail the current executable checkpoint, unless orchestration explicitly needs Reviewer input for diagnosis or scope decisions.
+Reviewer should not be invoked merely to repeat Tester diagnosis before the first repair. Its required role is to review the resulting source change before Tester accepts the repaired checkpoint.
 
 ## 15. Core principles
 
