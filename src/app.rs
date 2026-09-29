@@ -240,12 +240,9 @@ impl App {
 
         if agent == AgentId::Coder {
             if self.active_work.is_none() {
-                self.active_work = MilestoneController::new(
-                    &self.registry,
-                    &self.project_root,
-                    &self.lease_owner,
-                )
-                .resolve_or_activate()?;
+                self.active_work =
+                    MilestoneController::new(&self.registry, &self.project_root, &self.lease_owner)
+                        .resolve_or_activate()?;
             }
             let active_work = self
                 .active_work
