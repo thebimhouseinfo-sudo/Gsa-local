@@ -634,15 +634,18 @@ fn extract_tool_args<T>(message: &ChatMessage, name: &str) -> Result<T>
 where
     T: for<'de> Deserialize<'de>,
 {
-    let mut matching = message
-        .tool_calls
-        .iter()
-        .filter(|call| call.function.name == name);
-    let call = matching
-        .next()
-        .with_context(|| format!("missing required tool call {name}"))?;
-    if matching.next().is_some() {
-        bail!("multiple {name} tool calls are not allowed");
+    if message.tool_calls.len() != 1 {
+        bail!(
+            "expected exactly one workflow tool call {name}, received {}",
+            message.tool_calls.len()
+        );
+    }
+    let call = &message.tool_calls[0];
+    if call.function.name != name {
+        bail!(
+            "expected workflow tool call {name}, received {}",
+            call.function.name
+        );
     }
     serde_json::from_value(call.function.arguments.clone())
         .with_context(|| format!("invalid arguments for tool {name}"))
@@ -739,7 +742,8 @@ fn execution_graph_tool() -> ToolDefinition {
                                 "type": "object",
                                 "required": [
                                     "id", "milestone_id", "title", "goal", "todo_ids",
-                                    "depends_on", "acceptance", "verification_hints"
+                                    "depends_on", "required_inputs", "expected_outputs",
+                                    "acceptance", "verification_hints"
                                 ],
                                 "properties": {
                                     "id": {"type": "string"},
@@ -748,6 +752,8 @@ fn execution_graph_tool() -> ToolDefinition {
                                     "goal": {"type": "string"},
                                     "todo_ids": {"type": "array", "items": {"type": "string"}},
                                     "depends_on": {"type": "array", "items": {"type": "string"}},
+                                    "required_inputs": {"type": "array", "items": {"type": "string"}},
+                                    "expected_outputs": {"type": "array", "items": {"type": "string"}},
                                     "acceptance": {"type": "array", "items": {"type": "string"}},
                                     "verification_hints": {"type": "array", "items": {"type": "string"}}
                                 }
@@ -828,6 +834,36 @@ mod tests {
             .text_files
             .iter()
             .any(|file| file.path == "src/main.rs" && file.content.contains("fn main")));
+    }
+
+    #[test]
+    fn structured_submission_requires_exactly_one_total_tool_call() {
+        use crate::ollama::{ToolCall, ToolFunctionCall};
+
+        let expected = ToolCall {
+            kind: Some("function".into()),
+            function: ToolFunctionCall {
+                index: Some(0),
+                name: "submit_review".into(),
+                arguments: serde_json::json!({
+                    "verdict": "PASS",
+                    "findings": []
+                }),
+            },
+        };
+        let extra = ToolCall {
+            kind: Some("function".into()),
+            function: ToolFunctionCall {
+                index: Some(1),
+                name: "unexpected_tool".into(),
+                arguments: serde_json::json!({}),
+            },
+        };
+        let mut message = ChatMessage::assistant("");
+        message.tool_calls = vec![expected, extra];
+
+        let result: Result<ReviewDecision> = extract_tool_args(&message, "submit_review");
+        assert!(result.is_err());
     }
 
     #[test]
