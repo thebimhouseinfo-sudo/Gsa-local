@@ -210,7 +210,7 @@ impl Registry {
                     let content: String = row.get(2)?;
                     let artifact: PlanArtifact = serde_json::from_str(&content).map_err(|error| {
                         rusqlite::Error::FromSqlConversionFailure(
-                            content.len(),
+                            2,
                             rusqlite::types::Type::Text,
                             Box::new(error),
                         )
@@ -412,6 +412,7 @@ impl Registry {
         })
     }
 
+    #[cfg(test)]
     pub fn set_plan_binding(
         &self,
         revision: i64,
