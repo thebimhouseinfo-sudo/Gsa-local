@@ -18,6 +18,7 @@ fn plan() -> PlanArtifact {
         sequence: vec!["code".into(), "review".into()],
         risks: vec!["stale target".into()],
         acceptance_direction: vec!["review gate only".into()],
+        evidence_needs: vec![],
     }
 }
 
