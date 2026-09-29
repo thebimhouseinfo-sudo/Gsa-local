@@ -1,4 +1,5 @@
 use crate::{
+    agent_runtime::run_with_project_tools,
     cli::{self, InputLine, SlashCommand},
     config::AppConfig,
     controller::{ActiveWork, MilestoneController},
@@ -6,6 +7,7 @@ use crate::{
     ollama::{ChatMessage, OllamaClient},
     registry::Registry,
     session::Session,
+    tools::ProjectToolRuntime,
     workflow::{PlanningOutcome, PlanningWorkflow},
 };
 use anyhow::{bail, Context, Result};
@@ -27,6 +29,7 @@ pub struct App {
     lease_owner: String,
     history: HashMap<AgentId, Vec<ChatMessage>>,
     active_work: Option<ActiveWork>,
+    tool_runtime: ProjectToolRuntime,
 }
 
 impl App {
@@ -37,6 +40,7 @@ impl App {
             .context("failed to canonicalize current directory")?;
         let config = AppConfig::load()?;
         let ollama = OllamaClient::new(config.ollama_base_url.clone());
+        let tool_runtime = ProjectToolRuntime::new(&project_root)?;
         let registry = Registry::open(&project_root)?;
         let lease_owner = format!("pid:{}", std::process::id());
         registry.acquire_lease(
@@ -57,6 +61,7 @@ impl App {
             lease_owner,
             history: HashMap::new(),
             active_work,
+            tool_runtime,
         })
     }
 
@@ -260,16 +265,24 @@ impl App {
         print!("{} [{}]: ", agent.display_name(), model);
         io::stdout().flush()?;
 
-        let answer = self
-            .ollama
-            .chat_stream(&model, history, |token| {
+        let journal_before = self.tool_runtime.journal().len();
+        let result = run_with_project_tools(
+            &self.ollama,
+            &model,
+            agent,
+            history,
+            &mut self.tool_runtime,
+            |token| {
                 print!("{token}");
                 let _ = io::stdout().flush();
-            })
-            .await?;
+            },
+        )
+        .await?;
         println!();
 
-        history.push(ChatMessage::assistant(answer));
+        if self.tool_runtime.journal().len() > journal_before {
+            println!("Change set: {}", result.change_set_id);
+        }
         Ok(())
     }
 }
