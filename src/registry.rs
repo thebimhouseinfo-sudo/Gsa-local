@@ -1071,8 +1071,7 @@ impl Registry {
     ) -> Result<Option<ActiveWorkRecord>> {
         let tx = self.conn.unchecked_transaction()?;
         assert_lease_owner_tx(&tx, project_root, owner)?;
-        let Some((graph_version, plan_revision, plan_hash)) = current_graph_binding_tx(&tx)?
-        else {
+        let Some((graph_version, plan_revision, plan_hash)) = current_graph_binding_tx(&tx)? else {
             bail!("cannot complete Job Pack without a current execution graph");
         };
         let work = active_work_tx(&tx, graph_version)?
@@ -1880,7 +1879,9 @@ fn ensure_milestone_checkpoint_tx(
         )
         .optional()?;
     let max_sequence: i64 =
-        tx.query_row("SELECT COALESCE(MAX(sequence),0) FROM events", [], |row| row.get(0))?;
+        tx.query_row("SELECT COALESCE(MAX(sequence),0) FROM events", [], |row| {
+            row.get(0)
+        })?;
     let valid = current.as_ref().is_some_and(|cp| {
         cp.0 == max_sequence
             && cp.1 == Some(plan_revision)
