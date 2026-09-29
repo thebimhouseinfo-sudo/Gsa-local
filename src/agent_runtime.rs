@@ -176,6 +176,8 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].tool_name.as_deref(), Some("project_read"));
         assert_eq!(results[1].tool_name.as_deref(), Some("project_search"));
-        assert!(results.iter().all(|message| message.content.contains("\"ok\":true")));
+        assert!(results
+            .iter()
+            .all(|message| message.content.contains("\"ok\":true")));
     }
 }
