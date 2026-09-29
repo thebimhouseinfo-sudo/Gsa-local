@@ -16,6 +16,7 @@ const MAX_LIST_RESULTS: usize = 500;
 const MAX_SEARCH_RESULTS: usize = 200;
 const MAX_READ_BYTES: usize = 64 * 1024;
 const MAX_SEARCH_FILE_BYTES: usize = 256 * 1024;
+const MAX_WRITE_BYTES: usize = 512 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MutationRecord {
@@ -182,8 +183,7 @@ impl ProjectToolRuntime {
             bytes.truncate(MAX_READ_BYTES);
         }
         let content = String::from_utf8(bytes).context("project_read supports UTF-8 text files only")?;
-        let full_bytes = fs::read(&resolved)?;
-        let sha256 = sha256_bytes(&full_bytes);
+        let sha256 = sha256_file(&resolved)?;
         Ok(ReadResult {
             path: normalize_display(path)?,
             content,
@@ -257,6 +257,9 @@ impl ProjectToolRuntime {
     }
 
     fn write(&mut self, args: WriteArgs) -> Result<WriteResult> {
+        if args.content.len() > MAX_WRITE_BYTES {
+            bail!("project_write content exceeds {} bytes", MAX_WRITE_BYTES);
+        }
         let relative = normalize_relative(&args.path)?;
         let display = relative.to_string_lossy().replace('\\', "/");
         let target = self.root.join(&relative);
@@ -289,8 +292,7 @@ impl ProjectToolRuntime {
         if !meta.is_file() {
             bail!("write target is not a regular file");
         }
-        let before_bytes = fs::read(&resolved)?;
-        let before = sha256_bytes(&before_bytes);
+        let before = sha256_file(&resolved)?;
         let expected = args
             .expected_sha256
             .as_deref()
@@ -462,8 +464,26 @@ fn should_skip(relative: &Path) -> bool {
     })
 }
 
+fn sha256_file(path: &Path) -> Result<String> {
+    let mut file = fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 8192];
+    loop {
+        let read = file.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buffer[..read]);
+    }
+    Ok(hex_digest(hasher.finalize()))
+}
+
 fn sha256_bytes(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
+    hex_digest(Sha256::digest(bytes))
+}
+
+fn hex_digest(digest: impl AsRef<[u8]>) -> String {
+    let digest = digest.as_ref();
     let mut output = String::with_capacity(digest.len() * 2);
     for byte in digest {
         use std::fmt::Write;
