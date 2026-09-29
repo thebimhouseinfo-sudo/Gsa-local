@@ -43,15 +43,20 @@ where
             });
         }
 
-        if round + 1 >= MAX_TOOL_ROUNDS {
-            bail!("agent exceeded maximum project-tool rounds ({MAX_TOOL_ROUNDS})");
-        }
+        ensure_tool_round_available(round, !calls.is_empty())?;
 
         let results = dispatch_tool_calls(agent, tools, &calls);
         messages.extend(results);
     }
 
     unreachable!("bounded tool loop must return or fail")
+}
+
+fn ensure_tool_round_available(round: usize, has_calls: bool) -> Result<()> {
+    if has_calls && round + 1 >= MAX_TOOL_ROUNDS {
+        bail!("agent exceeded maximum project-tool rounds ({MAX_TOOL_ROUNDS})");
+    }
+    Ok(())
 }
 
 pub fn dispatch_tool_calls(
@@ -111,6 +116,13 @@ mod tests {
     use crate::ollama::{ToolCall, ToolFunctionCall};
     use serde_json::json;
     use tempfile::tempdir;
+
+    #[test]
+    fn tool_round_limit_fails_closed() {
+        assert!(ensure_tool_round_available(MAX_TOOL_ROUNDS - 2, true).is_ok());
+        assert!(ensure_tool_round_available(MAX_TOOL_ROUNDS - 1, true).is_err());
+        assert!(ensure_tool_round_available(MAX_TOOL_ROUNDS - 1, false).is_ok());
+    }
 
     #[test]
     fn dispatch_returns_structured_error_for_disallowed_write() {
