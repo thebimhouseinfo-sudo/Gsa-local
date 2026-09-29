@@ -198,6 +198,13 @@ fn registration_is_normalized_checkpointed_and_not_active() {
 
     let binding = registry.plan_binding().unwrap().unwrap();
     assert_eq!(binding.execution_graph_version, version);
+
+    let (required_inputs, expected_outputs) = registry
+        .execution_jobpack_contract(version, "JP2")
+        .unwrap()
+        .unwrap();
+    assert_eq!(required_inputs, vec!["foundation output"]);
+    assert_eq!(expected_outputs, vec!["workflow output"]);
 }
 
 #[test]
@@ -211,6 +218,15 @@ fn newer_approved_plan_graph_supersedes_older_graph() {
         .unwrap();
 
     let (second_revision, second_hash) = approve(&registry, plan("second"));
+    assert_eq!(
+        registry
+            .execution_graph_status(first_version)
+            .unwrap()
+            .as_deref(),
+        Some("SUPERSEDED")
+    );
+    assert_eq!(registry.current_execution_graph_version().unwrap(), None);
+
     let second_version = registry
         .register_execution_graph(second_revision, &second_hash, &valid_graph())
         .unwrap();
