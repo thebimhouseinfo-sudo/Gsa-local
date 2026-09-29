@@ -206,26 +206,42 @@ fn ensure_secure_child_dir(project_root: &Path, parent: &Path, name: &str) -> Re
     match fs::symlink_metadata(&path) {
         Ok(metadata) => {
             if metadata.file_type().is_symlink() {
-                anyhow::bail!("verification runtime directory must not be a symlink: {}", path.display());
+                anyhow::bail!(
+                    "verification runtime directory must not be a symlink: {}",
+                    path.display()
+                );
             }
             if !metadata.is_dir() {
-                anyhow::bail!("verification runtime path is not a directory: {}", path.display());
+                anyhow::bail!(
+                    "verification runtime path is not a directory: {}",
+                    path.display()
+                );
             }
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            fs::create_dir(&path)
-                .with_context(|| format!("failed to create verification runtime directory {}", path.display()))?;
+            fs::create_dir(&path).with_context(|| {
+                format!(
+                    "failed to create verification runtime directory {}",
+                    path.display()
+                )
+            })?;
             let metadata = fs::symlink_metadata(&path)?;
             if metadata.file_type().is_symlink() || !metadata.is_dir() {
-                anyhow::bail!("verification runtime directory became unsafe: {}", path.display());
+                anyhow::bail!(
+                    "verification runtime directory became unsafe: {}",
+                    path.display()
+                );
             }
         }
         Err(error) => return Err(error.into()),
     }
 
-    let canonical = path
-        .canonicalize()
-        .with_context(|| format!("failed to canonicalize verification runtime directory {}", path.display()))?;
+    let canonical = path.canonicalize().with_context(|| {
+        format!(
+            "failed to canonicalize verification runtime directory {}",
+            path.display()
+        )
+    })?;
     if !canonical.starts_with(project_root) {
         anyhow::bail!(
             "verification runtime directory escaped project root: {}",
