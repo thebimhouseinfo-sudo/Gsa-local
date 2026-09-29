@@ -1,7 +1,4 @@
-use gsa_local::{
-    harness::AgentId,
-    tools::ProjectToolRuntime,
-};
+use gsa_local::{harness::AgentId, tools::ProjectToolRuntime};
 use serde_json::json;
 use tempfile::tempdir;
 
@@ -12,10 +9,18 @@ fn boundary_rejects_absolute_and_parent_traversal() {
     let mut runtime = ProjectToolRuntime::new(dir.path()).unwrap();
 
     assert!(runtime
-        .execute(AgentId::Coder, "project_read", &json!({"path":"../outside.txt"}))
+        .execute(
+            AgentId::Coder,
+            "project_read",
+            &json!({"path":"../outside.txt"})
+        )
         .is_err());
     assert!(runtime
-        .execute(AgentId::Coder, "project_read", &json!({"path":"/etc/passwd"}))
+        .execute(
+            AgentId::Coder,
+            "project_read",
+            &json!({"path":"/etc/passwd"})
+        )
         .is_err());
 }
 
@@ -85,7 +90,10 @@ fn existing_write_requires_fresh_read_hash() {
             }),
         )
         .unwrap();
-    assert_eq!(std::fs::read_to_string(dir.path().join("a.txt")).unwrap(), "two");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "two"
+    );
     assert_eq!(runtime.journal().len(), 1);
     assert_eq!(
         written["before_sha256"].as_str().unwrap(),
@@ -110,7 +118,10 @@ fn create_only_never_overwrites_existing_file() {
             })
         )
         .is_err());
-    assert_eq!(std::fs::read_to_string(dir.path().join("a.txt")).unwrap(), "one");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "one"
+    );
 
     runtime
         .execute(
@@ -123,7 +134,10 @@ fn create_only_never_overwrites_existing_file() {
             }),
         )
         .unwrap();
-    assert_eq!(std::fs::read_to_string(dir.path().join("b.txt")).unwrap(), "new");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("b.txt")).unwrap(),
+        "new"
+    );
 }
 
 #[test]
