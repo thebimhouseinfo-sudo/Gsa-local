@@ -170,6 +170,9 @@ impl Registry {
             Some((existing_owner, acquired_at))
                 if now.saturating_sub(acquired_at) > stale_after.as_secs() as i64 =>
             {
+                if owner_process_alive(&existing_owner) {
+                    bail!("project execution lease is stale by time but owner {existing_owner} is still alive");
+                }
                 tx.execute(
                     "DELETE FROM execution_lease WHERE project_root = ?1",
                     params![project_root],
@@ -178,7 +181,6 @@ impl Registry {
                     "INSERT INTO execution_lease (project_root, owner, acquired_at) VALUES (?1, ?2, ?3)",
                     params![project_root, owner, now],
                 )?;
-                let _ = existing_owner;
             }
             Some((existing_owner, _)) => {
                 bail!("project execution is already leased by {existing_owner}");
@@ -280,6 +282,28 @@ impl Registry {
     }
 }
 
+#[cfg(unix)]
+fn owner_process_alive(owner: &str) -> bool {
+    let Some(pid) = owner
+        .strip_prefix("pid:")
+        .and_then(|value| value.parse::<i32>().ok())
+    else {
+        return false;
+    };
+
+    let result = unsafe { libc::kill(pid, 0) };
+    if result == 0 {
+        return true;
+    }
+
+    std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+#[cfg(not(unix))]
+fn owner_process_alive(_owner: &str) -> bool {
+    false
+}
+
 fn canonical_or_original(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
@@ -317,6 +341,28 @@ mod tests {
         registry
             .acquire_lease(dir.path(), "owner-b", Duration::from_secs(3600))
             .unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stale_lease_does_not_displace_live_owner_process() {
+        let (dir, registry) = registry();
+        let owner = format!("pid:{}", std::process::id());
+        registry
+            .acquire_lease(dir.path(), &owner, Duration::from_secs(3600))
+            .unwrap();
+
+        registry
+            .conn
+            .execute("UPDATE execution_lease SET acquired_at = 0", [])
+            .unwrap();
+
+        let result = registry.acquire_lease(
+            dir.path(),
+            "pid:999999",
+            Duration::from_secs(0),
+        );
+        assert!(result.is_err());
     }
 
     #[test]
