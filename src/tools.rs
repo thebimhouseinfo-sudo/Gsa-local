@@ -1,7 +1,4 @@
-use crate::{
-    harness::AgentId,
-    ollama::ToolDefinition,
-};
+use crate::{harness::AgentId, ollama::ToolDefinition};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -105,7 +102,10 @@ impl ProjectToolRuntime {
         ) {
             Ok(())
         } else {
-            bail!("{} is not allowed to read project files", agent.display_name())
+            bail!(
+                "{} is not allowed to read project files",
+                agent.display_name()
+            )
         }
     }
 
@@ -182,7 +182,8 @@ impl ProjectToolRuntime {
         if truncated {
             bytes.truncate(MAX_READ_BYTES);
         }
-        let content = String::from_utf8(bytes).context("project_read supports UTF-8 text files only")?;
+        let content =
+            String::from_utf8(bytes).context("project_read supports UTF-8 text files only")?;
         let sha256 = sha256_file(&resolved)?;
         Ok(ReadResult {
             path: normalize_display(path)?,
@@ -355,7 +356,10 @@ impl ProjectToolRuntime {
                 bail!("write through symlink is not allowed: {}", cursor.display());
             }
             if !meta.is_dir() {
-                bail!("write parent component is not a directory: {}", cursor.display());
+                bail!(
+                    "write parent component is not a directory: {}",
+                    cursor.display()
+                );
             }
         }
         let canonical = path.canonicalize()?;
