@@ -534,3 +534,75 @@ fn code_state_rejects_out_of_order_checkpoint_and_review_attempts() {
         )
         .is_err());
 }
+
+
+#[test]
+fn new_code_workflow_invalidates_prior_checklist_completion() {
+    let (dir, registry, version) = setup();
+    registry
+        .begin_code_workflow(dir.path(), "owner-a", version, "JP1")
+        .unwrap();
+    let claims = vec![
+        ChecklistClaim {
+            todo_id: "T1".into(),
+            position: 1,
+        },
+        ChecklistClaim {
+            todo_id: "T1".into(),
+            position: 2,
+        },
+    ];
+    registry
+        .record_code_checkpoint(
+            dir.path(),
+            "owner-a",
+            version,
+            "JP1",
+            "change-pass",
+            "first reviewed implementation",
+            &claims,
+            &[],
+            &journal(),
+            1,
+            0,
+        )
+        .unwrap();
+    registry
+        .record_code_review(
+            dir.path(),
+            "owner-a",
+            version,
+            "JP1",
+            "change-pass",
+            ReviewVerdict::Pass,
+            &[],
+            1,
+            1,
+        )
+        .unwrap();
+    assert_eq!(
+        registry.todo_status(version, "T1").unwrap().as_deref(),
+        Some("DONE")
+    );
+
+    registry
+        .begin_code_workflow(dir.path(), "owner-a", version, "JP1")
+        .unwrap();
+
+    assert_eq!(
+        registry.checklist_checked(version, "T1", 1).unwrap(),
+        Some(false)
+    );
+    assert_eq!(
+        registry.checklist_checked(version, "T1", 2).unwrap(),
+        Some(false)
+    );
+    assert_eq!(
+        registry.todo_status(version, "T1").unwrap().as_deref(),
+        Some("PENDING")
+    );
+    assert_eq!(
+        registry.jobpack_status(version, "JP1").unwrap().as_deref(),
+        Some("ACTIVE")
+    );
+}
