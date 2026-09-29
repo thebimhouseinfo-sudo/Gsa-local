@@ -8,7 +8,7 @@ use crate::{
 };
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::json;
 use std::path::Path;
 
 const DEFAULT_MAX_ATTEMPTS: u32 = 5;
