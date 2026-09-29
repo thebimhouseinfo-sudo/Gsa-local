@@ -80,7 +80,11 @@ fn setup() -> (tempfile::TempDir, Registry, i64) {
         .unwrap();
     let controller = MilestoneController::new(&registry, dir.path(), "owner-a");
     assert_eq!(
-        controller.resolve_or_activate().unwrap().unwrap().jobpack_id,
+        controller
+            .resolve_or_activate()
+            .unwrap()
+            .unwrap()
+            .jobpack_id,
         "JP1"
     );
     (dir, registry, version)
