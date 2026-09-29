@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     fs,
-    io::Read,
+    io::{Read, Write},
     path::{Component, Path, PathBuf},
 };
 
@@ -178,18 +178,20 @@ impl ProjectToolRuntime {
         file.by_ref()
             .take((MAX_READ_BYTES + 1) as u64)
             .read_to_end(&mut bytes)?;
-        let truncated = bytes.len() > MAX_READ_BYTES;
-        if truncated {
-            bytes.truncate(MAX_READ_BYTES);
+        if bytes.len() > MAX_READ_BYTES {
+            bail!(
+                "project_read refuses files larger than {} bytes because partial content is not safe for read-before-write CAS",
+                MAX_READ_BYTES
+            );
         }
+        let sha256 = sha256_bytes(&bytes);
         let content =
             String::from_utf8(bytes).context("project_read supports UTF-8 text files only")?;
-        let sha256 = sha256_file(&resolved)?;
         Ok(ReadResult {
             path: normalize_display(path)?,
             content,
             sha256,
-            truncated,
+            truncated: false,
         })
     }
 
@@ -274,7 +276,12 @@ impl ProjectToolRuntime {
             if args.expected_sha256.is_some() {
                 bail!("create-only write must not provide expected_sha256");
             }
-            fs::write(&target, args.content.as_bytes())?;
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&target)
+                .with_context(|| format!("failed create-only write for {display}"))?;
+            file.write_all(args.content.as_bytes())?;
             let after = sha256_bytes(args.content.as_bytes());
             self.journal.push(MutationRecord {
                 path: display.clone(),
@@ -293,6 +300,7 @@ impl ProjectToolRuntime {
         if !meta.is_file() {
             bail!("write target is not a regular file");
         }
+        reject_multi_link_file(&meta)?;
         let before = sha256_file(&resolved)?;
         let expected = args
             .expected_sha256
@@ -466,6 +474,20 @@ fn should_skip(relative: &Path) -> bool {
             Some(".git" | "target" | "node_modules" | ".gsa-local")
         )
     })
+}
+
+#[cfg(unix)]
+fn reject_multi_link_file(metadata: &fs::Metadata) -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    if metadata.nlink() > 1 {
+        bail!("refusing to edit a file with multiple hard links");
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn reject_multi_link_file(_metadata: &fs::Metadata) -> Result<()> {
+    Ok(())
 }
 
 fn sha256_file(path: &Path) -> Result<String> {
