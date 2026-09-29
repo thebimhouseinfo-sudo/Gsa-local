@@ -221,20 +221,86 @@ impl Registry {
         if !missing_inputs && !missing_outputs {
             return Ok(());
         }
+        drop(statement);
 
-        let mut sql = String::from("BEGIN IMMEDIATE;\n");
+        let tx = self.conn.unchecked_transaction()?;
         if missing_inputs {
-            sql.push_str(
-                "ALTER TABLE execution_jobpacks ADD COLUMN required_inputs TEXT NOT NULL DEFAULT '[]';\n",
-            );
+            tx.execute_batch(
+                "ALTER TABLE execution_jobpacks ADD COLUMN required_inputs TEXT NOT NULL DEFAULT '[]';",
+            )?;
         }
         if missing_outputs {
-            sql.push_str(
-                "ALTER TABLE execution_jobpacks ADD COLUMN expected_outputs TEXT NOT NULL DEFAULT '[]';\n",
-            );
+            tx.execute_batch(
+                "ALTER TABLE execution_jobpacks ADD COLUMN expected_outputs TEXT NOT NULL DEFAULT '[]';",
+            )?;
         }
-        sql.push_str("COMMIT;");
-        self.conn.execute_batch(&sql)?;
+
+        let affected_current: i64 = tx.query_row(
+            r#"
+            SELECT COUNT(*)
+            FROM execution_graph
+            WHERE status='CURRENT'
+              AND version IN (SELECT DISTINCT graph_version FROM execution_jobpacks)
+            "#,
+            [],
+            |row| row.get(0),
+        )?;
+
+        if affected_current > 0 {
+            tx.execute(
+                r#"
+                UPDATE approved_plan
+                SET execution_graph_version=0
+                WHERE execution_graph_version IN (
+                    SELECT version
+                    FROM execution_graph
+                    WHERE status='CURRENT'
+                      AND version IN (
+                          SELECT DISTINCT graph_version FROM execution_jobpacks
+                      )
+                )
+                "#,
+                [],
+            )?;
+            tx.execute(
+                r#"
+                UPDATE execution_graph
+                SET status='SUPERSEDED'
+                WHERE status='CURRENT'
+                  AND version IN (
+                      SELECT DISTINCT graph_version FROM execution_jobpacks
+                  )
+                "#,
+                [],
+            )?;
+
+            tx.execute(
+                "INSERT INTO events (kind, payload, created_at) VALUES ('LEGACY_EXECUTION_GRAPH_INVALIDATED', ?1, ?2)",
+                params![
+                    serde_json::json!({
+                        "reason": "legacy jobpack rows lack required_inputs/expected_outputs"
+                    })
+                    .to_string(),
+                    unix_seconds()?
+                ],
+            )?;
+            let sequence = tx.last_insert_rowid();
+
+            tx.execute(
+                r#"
+                UPDATE latest_checkpoint
+                SET sequence=?1,
+                    stage='plan_approved',
+                    milestone=NULL,
+                    jobpack=NULL,
+                    jobpack_status=NULL
+                WHERE id=1 AND stage='graph_registered'
+                "#,
+                params![sequence],
+            )?;
+        }
+
+        tx.commit()?;
         Ok(())
     }
 
