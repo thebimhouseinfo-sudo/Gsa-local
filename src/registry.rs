@@ -2067,12 +2067,7 @@ fn validate_checklist_claims_tx(
               AND c.position=?3
               AND t.jobpack_id=?4
             "#,
-            params![
-                graph_version,
-                claim.todo_id,
-                claim.position,
-                jobpack_id
-            ],
+            params![graph_version, claim.todo_id, claim.position, jobpack_id],
             |row| row.get(0),
         )?;
         if exists != 1 {
