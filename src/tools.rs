@@ -369,8 +369,8 @@ impl ProjectToolRuntime {
                 MAX_READ_BYTES
             );
         }
-        let before_content =
-            fs::read_to_string(&resolved).context("project_write supports UTF-8 text files only")?;
+        let before_content = fs::read_to_string(&resolved)
+            .context("project_write supports UTF-8 text files only")?;
         let before = sha256_bytes(before_content.as_bytes());
         let expected = args
             .expected_sha256
