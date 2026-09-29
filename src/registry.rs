@@ -161,7 +161,10 @@ impl Registry {
         let Some(sql) = sql else {
             return Ok(());
         };
-        if !sql.to_ascii_uppercase().contains("PLAN_HASH TEXT NOT NULL UNIQUE") {
+        if !sql
+            .to_ascii_uppercase()
+            .contains("PLAN_HASH TEXT NOT NULL UNIQUE")
+        {
             return Ok(());
         }
 
@@ -405,7 +408,10 @@ impl Registry {
                 )
                 .optional()?;
             if latest.as_deref() != Some("PASS") {
-                bail!("cannot approve plan without latest {} verdict PASS", actor.as_str());
+                bail!(
+                    "cannot approve plan without latest {} verdict PASS",
+                    actor.as_str()
+                );
             }
         }
 
