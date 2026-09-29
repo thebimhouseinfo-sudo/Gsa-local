@@ -1,7 +1,6 @@
 use gsa_local::{harness::AgentId, tools::ProjectToolRuntime};
 use serde_json::json;
 use tempfile::tempdir;
-
 #[test]
 fn boundary_rejects_absolute_and_parent_traversal() {
     let dir = tempdir().unwrap();
@@ -23,7 +22,6 @@ fn boundary_rejects_absolute_and_parent_traversal() {
         )
         .is_err());
 }
-
 #[test]
 fn project_read_refuses_partial_large_file_content() {
     let dir = tempdir().unwrap();
@@ -101,7 +99,6 @@ fn boundary_rejects_symlink_escape_for_read_and_write() {
         )
         .is_err());
 }
-
 #[test]
 fn existing_write_requires_fresh_read_hash() {
     let dir = tempdir().unwrap();
@@ -147,7 +144,6 @@ fn existing_write_requires_fresh_read_hash() {
         read["sha256"].as_str().unwrap()
     );
 }
-
 #[test]
 fn create_only_never_overwrites_existing_file() {
     let dir = tempdir().unwrap();
@@ -186,7 +182,6 @@ fn create_only_never_overwrites_existing_file() {
         "new"
     );
 }
-
 #[test]
 fn reviewer_and_cr_are_read_only_but_coder_can_write() {
     let dir = tempdir().unwrap();
@@ -219,7 +214,6 @@ fn reviewer_and_cr_are_read_only_but_coder_can_write() {
         .collect::<Vec<_>>();
     assert!(coder_names.iter().any(|name| name == "project_write"));
 }
-
 #[test]
 fn mutation_change_set_id_is_deterministic_and_order_sensitive() {
     let dir_a = tempdir().unwrap();
@@ -286,7 +280,6 @@ fn mutation_change_set_id_is_deterministic_and_order_sensitive() {
 
     assert_ne!(a.change_set_id().unwrap(), c.change_set_id().unwrap());
 }
-
 #[test]
 fn list_and_search_are_bounded_to_project_and_skip_generated_dirs() {
     let dir = tempdir().unwrap();
@@ -314,7 +307,6 @@ fn list_and_search_are_bounded_to_project_and_skip_generated_dirs() {
     assert_eq!(matches.len(), 1);
     assert_eq!(matches[0]["path"], "src/a.txt");
 }
-
 #[test]
 fn mutation_journal_rejects_external_source_change() {
     let dir = tempdir().unwrap();
@@ -340,7 +332,6 @@ fn mutation_journal_rejects_external_source_change() {
     std::fs::write(dir.path().join("a.txt"), "external edit").unwrap();
     assert!(runtime.verify_journal_current().is_err());
 }
-
 
 #[test]
 fn review_evidence_keeps_original_before_and_final_after_content() {
@@ -383,7 +374,6 @@ fn review_evidence_keeps_original_before_and_final_after_content() {
     assert_eq!(evidence[0].before_content.as_deref(), Some("one"));
     assert_eq!(evidence[0].after_content, "three");
 }
-
 #[test]
 fn no_op_and_unreviewably_large_writes_are_rejected() {
     let dir = tempdir().unwrap();
@@ -420,4 +410,3 @@ fn no_op_and_unreviewably_large_writes_are_rejected() {
         .is_err());
     assert!(!dir.path().join("large.txt").exists());
 }
-
