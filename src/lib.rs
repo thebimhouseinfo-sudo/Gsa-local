@@ -2,6 +2,7 @@ pub mod app;
 pub mod checkpoint;
 pub mod cli;
 pub mod config;
+pub mod execution_graph;
 pub mod harness;
 pub mod ollama;
 pub mod plan;
