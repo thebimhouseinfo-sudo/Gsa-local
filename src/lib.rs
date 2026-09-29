@@ -10,3 +10,4 @@ pub mod plan;
 pub mod registry;
 pub mod session;
 pub mod workflow;
+pub mod tools;
