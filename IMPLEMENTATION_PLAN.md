@@ -1802,19 +1802,57 @@ Acceptance: model claim không thể tạo PASS nếu deterministic evidence kh�
 
 ---
 
-## Phase 10 — Tester Checkpoints
+## Phase 10 — Tester Checkpoint Subsystem
 
-Implement Tester read-only và cho phép chèn vào giữa Job Pack khi thật sự testable:
+Tester is an independent checkpoint subsystem, not part of the normal Coder↔Reviewer loop.
+
+Normal coding remains:
 
 ```text
-buildable
-unit-testable
-integration-testable
-browser-testable
-semantic/interactive verification
+Coder
+  -> lightweight self-check
+  -> Reviewer
+  -> Internal Fix when required
+  -> Reviewer PASS
 ```
 
-Tester failure route về Coder/Internal Fix, không sửa source.
+Tester is invoked only when execution reaches a **Test Checkpoint declared in the Milestone/Execution Graph**. Checkpoints are intentionally sparse and meaningful.
+
+Each checkpoint may use one or more Tester modes:
+
+- `VERIFY` — verify that the current product state satisfies the checkpoint goal;
+- `MEASURE` — collect real observed values/behavior without inventing thresholds;
+- `PROBE` — test an architectural/runtime assumption before later work depends on it.
+
+Tester owns:
+
+- independent test planning from goal/spec/acceptance;
+- a dedicated writable Tester workspace for tests, fixtures, artifacts and reports;
+- bounded test/experiment execution;
+- result classification and diagnosis;
+- exact-target evidence persistence;
+- retest after product fixes;
+- accumulated regression evidence for later checkpoints.
+
+Tester product-source access remains read-only. Coder must not edit Tester-owned tests merely to force a pass.
+
+Checkpoint outputs are first-class graph artifacts. Verification evidence may gate continuation. Empirical/design evidence may become an explicit input/dependency of later Planner/Coder phases, preventing downstream work from inventing identifiers, timing constants, readiness assumptions, limits or other runtime facts.
+
+When Tester reports a product failure:
+
+```text
+Tester FAIL
+  -> Coder/Internal Fix
+  -> lightweight self-check
+  -> Reviewer PASS
+  -> Tester RETEST same checkpoint on the new exact target
+```
+
+Tester must distinguish `PRODUCT_FAILURE`, `TEST_FAILURE`, `ENVIRONMENT_FAILURE`, `NOT_READY/INTEGRATION_NOT_READY`, and `SPEC_GAP`.
+
+Verdicts are `PASS`, `FAIL`, `BLOCKED`, and `NEEDS_HUMAN`. `UNVERIFIED != PASS`.
+
+Implementation must keep this phase separate from Phase 11 Local CR / Job Pack completion.
 
 ---
 
