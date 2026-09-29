@@ -340,3 +340,84 @@ fn mutation_journal_rejects_external_source_change() {
     std::fs::write(dir.path().join("a.txt"), "external edit").unwrap();
     assert!(runtime.verify_journal_current().is_err());
 }
+
+
+#[test]
+fn review_evidence_keeps_original_before_and_final_after_content() {
+    let dir = tempdir().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "one").unwrap();
+    let mut runtime = ProjectToolRuntime::new(dir.path()).unwrap();
+
+    let first = runtime
+        .execute(AgentId::Coder, "project_read", &json!({"path":"a.txt"}))
+        .unwrap();
+    runtime
+        .execute(
+            AgentId::Coder,
+            "project_write",
+            &json!({
+                "path":"a.txt",
+                "content":"two",
+                "expected_sha256":first["sha256"]
+            }),
+        )
+        .unwrap();
+    let second = runtime
+        .execute(AgentId::Coder, "project_read", &json!({"path":"a.txt"}))
+        .unwrap();
+    runtime
+        .execute(
+            AgentId::Coder,
+            "project_write",
+            &json!({
+                "path":"a.txt",
+                "content":"three",
+                "expected_sha256":second["sha256"]
+            }),
+        )
+        .unwrap();
+
+    let evidence = runtime.review_evidence();
+    assert_eq!(evidence.len(), 1);
+    assert_eq!(evidence[0].path, "a.txt");
+    assert_eq!(evidence[0].before_content.as_deref(), Some("one"));
+    assert_eq!(evidence[0].after_content, "three");
+}
+
+#[test]
+fn no_op_and_unreviewably_large_writes_are_rejected() {
+    let dir = tempdir().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "same").unwrap();
+    let mut runtime = ProjectToolRuntime::new(dir.path()).unwrap();
+    let read = runtime
+        .execute(AgentId::Coder, "project_read", &json!({"path":"a.txt"}))
+        .unwrap();
+
+    assert!(runtime
+        .execute(
+            AgentId::Coder,
+            "project_write",
+            &json!({
+                "path":"a.txt",
+                "content":"same",
+                "expected_sha256":read["sha256"]
+            }),
+        )
+        .is_err());
+    assert!(runtime.journal().is_empty());
+
+    let too_large = "x".repeat(64 * 1024 + 1);
+    assert!(runtime
+        .execute(
+            AgentId::Coder,
+            "project_write",
+            &json!({
+                "path":"large.txt",
+                "content":too_large,
+                "create_only":true
+            }),
+        )
+        .is_err());
+    assert!(!dir.path().join("large.txt").exists());
+}
+
