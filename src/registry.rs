@@ -1151,8 +1151,7 @@ impl Registry {
     ) -> Result<Option<ActiveWorkRecord>> {
         let tx = self.conn.unchecked_transaction()?;
         assert_lease_owner_tx(&tx, project_root, owner)?;
-        let Some((graph_version, plan_revision, plan_hash)) = current_graph_binding_tx(&tx)?
-        else {
+        let Some((graph_version, plan_revision, plan_hash)) = current_graph_binding_tx(&tx)? else {
             bail!("cannot complete Milestone without a current execution graph");
         };
 
