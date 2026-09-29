@@ -1,8 +1,6 @@
 use gsa_local::{
     process_runner::LocalProcessRunner,
-    verification::{
-        VerificationCapability, VerificationCommand, VerificationCommandKind,
-    },
+    verification::{VerificationCapability, VerificationCommand, VerificationCommandKind},
 };
 use std::time::Duration;
 use tempfile::tempdir;
