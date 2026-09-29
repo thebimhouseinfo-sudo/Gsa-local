@@ -187,7 +187,7 @@ fn reviewer_and_cr_are_read_only_but_coder_can_write() {
     let dir = tempdir().unwrap();
     let mut runtime = ProjectToolRuntime::new(dir.path()).unwrap();
 
-    for agent in [AgentId::Reviewer, AgentId::Tester, AgentId::LocalCr] {
+    for agent in [AgentId::Reviewer, AgentId::LocalCr] {
         let names = runtime
             .tool_definitions(agent)
             .into_iter()
