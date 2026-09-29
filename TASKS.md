@@ -45,6 +45,7 @@ Gate:
 
 ### A4 — Phase 5 Planner evidence planning
 - [ ] Add first-class `EvidenceNeed / UnknownRuntimeFact` to PlanArtifact.
+- [ ] Legacy PlanArtifact JSON without EvidenceNeed must deserialize with `evidence_needs=[]`.
 - [ ] Extend `submit_plan` schema and validation for evidence-needs ids, purpose, required/optional flag, intended consumer, expected mode and acceptance/measurement intent.
 - [ ] Include EvidenceNeed in plan hash/revision so Reviewer/CR approve the empirical contract itself.
 - [ ] Planner may resolve a need from prior compatible OBSERVED evidence only when EvidenceApplicability holds.
@@ -60,7 +61,8 @@ Gate:
 ### B1 — TestCheckpointSpec
 - [ ] Add explicit checkpoint id.
 - [ ] Add explicit boundary kind: AFTER_JOBPACK_SET / BEFORE_JOBPACK / MILESTONE_GATE or equivalent.
-- [ ] Add prerequisite Job Pack set + required reviewed/completed condition.
+- [ ] Add prerequisite Job Pack set + explicit PrerequisiteState.
+- [ ] Phase 10 may schedule from exact REVIEW_PASS targets and may read existing DONE, but must never create DONE/COMPLETE.
 - [ ] Allow one checkpoint to depend on multiple Job Packs/integrated milestone state.
 - [ ] Add modes: VERIFY / MEASURE / PROBE.
 - [ ] Add goal and acceptance/measurement criteria.
@@ -176,13 +178,16 @@ Gate:
 - [ ] Record limitations and evidence refs.
 - [ ] Do not fabricate thresholds or product verdicts.
 
-### F5 — Tester sandbox
+### F5 — Tester sandbox and replay safety
 - [ ] cwd = exact attempt workspace.
 - [ ] writable roots = attempt workspace + runtime temp only.
 - [ ] product root = readable, not writable.
 - [ ] fixed/approved argv adapters only.
 - [ ] bounded timeout/output.
 - [ ] network policy explicit.
+- [ ] Every executable step/adapter declares OBSERVE_ONLY / IDEMPOTENT / NON_IDEMPOTENT or equivalent.
+- [ ] Persist execution fence/idempotency metadata when the adapter supports it.
+- [ ] Uncertain NON_IDEMPOTENT work after crash must never auto-replay; route BLOCKED/NEEDS_HUMAN or explicit recovery.
 - [ ] sandbox unavailable => BLOCKED, never unsandboxed fallback.
 
 ### F6 — evidence outputs
@@ -192,6 +197,7 @@ Gate:
 - [ ] Add EvidenceApplicability for each reusable output.
 - [ ] Declare dependent product/config/runtime/environment dimensions.
 - [ ] Declare invalidating changes and revalidation policy.
+- [ ] Applicability uses a finite allowlisted matcher schema evaluated by runtime, not free-form model text.
 - [ ] Only compatible OBSERVED evidence may satisfy a required measured input.
 - [ ] Persist stable refs/hashes.
 
