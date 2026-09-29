@@ -538,8 +538,27 @@ Job Packs
 Milestones
 Dependencies
 Verification hints
+Test Checkpoints
+VERIFY / MEASURE / PROBE modes
+Named empirical evidence outputs
+EvidenceRequirement edges
 Registration bound to approved plan revision
 ```
+
+Job Builder phải phân biệt:
+
+```text
+verification hint
+= gợi ý cách kiểm deterministic cho một Job Pack
+
+TestCheckpointSpec
+= boundary có chủ đích do planning quyết định nơi Tester phải chạy
+
+EvidenceRequirement
+= dữ liệu quan sát bắt buộc mà work phía sau cần dùng
+```
+
+Nếu approved plan nói phase sau cần một runtime fact chưa biết, Job Builder phải tạo checkpoint/evidence dependency phù hợp hoặc trả `PLAN_GAP`. Nó không được tự điền giá trị giả để hoàn tất graph.
 
 Pipeline:
 
@@ -549,14 +568,14 @@ Approved Plan
 Job Builder
      ↓
 TODO
-     ↓
 Checklist
-     ↓
 Job Packs
-     ↓
 Milestones
-     ↓
 Dependencies
+     ↓
+Test Checkpoints
+Named Evidence Outputs
+Evidence Requirements
      ↓
 Register
 ```
@@ -627,7 +646,11 @@ required inputs
 expected outputs
 acceptance
 verification hints
+required evidence inputs (nếu có)
+checkpoint boundary refs (nếu có)
 ```
+
+`required evidence inputs` không phải prose tự do. Khi chúng trỏ tới Tester evidence, Registry/Controller phải resolve exact named output + provenance + target compatibility trước khi Job Pack được dùng.
 
 ---
 
@@ -2170,6 +2193,34 @@ next Agent
 ```
 
 mà không cần đọc lại toàn bộ Markdown để đoán.
+
+---
+
+## 44.5 Evidence-aware next work
+
+Trước khi activate Job Pack hoặc phase tiếp theo, controller phải resolve:
+
+```text
+normal dependencies
++
+required Test Checkpoints
++
+required EvidenceRequirement
+```
+
+Nếu một work item yêu cầu runtime evidence:
+
+```text
+OBSERVED evidence available + compatible
+    ↓
+inject exact values/refs into context
+
+missing / stale / incompatible
+    ↓
+BLOCKED / PLAN_GAP
+```
+
+Không được thay required evidence bằng suy đoán model.
 
 ---
 
