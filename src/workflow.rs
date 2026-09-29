@@ -9,11 +9,7 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::{
-    fs,
-    io::Read,
-    path::Path,
-};
+use std::{fs, io::Read, path::Path};
 
 const DEFAULT_MAX_ATTEMPTS: u32 = 5;
 const MAX_CONTEXT_PATHS: usize = 500;
