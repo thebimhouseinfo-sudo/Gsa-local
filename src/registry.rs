@@ -972,8 +972,7 @@ impl Registry {
     ) -> Result<Option<ActiveWorkRecord>> {
         let tx = self.conn.unchecked_transaction()?;
         assert_lease_owner_tx(&tx, project_root, owner)?;
-        let Some((graph_version, plan_revision, plan_hash)) = current_graph_binding_tx(&tx)?
-        else {
+        let Some((graph_version, plan_revision, plan_hash)) = current_graph_binding_tx(&tx)? else {
             tx.commit()?;
             return Ok(None);
         };
@@ -1037,7 +1036,9 @@ impl Registry {
                     |row| row.get(0),
                 )?;
                 if unfinished_before != 0 {
-                    bail!("cannot jump to milestone {milestone_id}; earlier milestone is incomplete");
+                    bail!(
+                        "cannot jump to milestone {milestone_id}; earlier milestone is incomplete"
+                    );
                 }
                 tx.execute(
                     r#"
@@ -1058,12 +1059,7 @@ impl Registry {
             }
         }
 
-        let work = activate_eligible_jobpack_tx(
-            &tx,
-            graph_version,
-            plan_revision,
-            &plan_hash,
-        )?;
+        let work = activate_eligible_jobpack_tx(&tx, graph_version, plan_revision, &plan_hash)?;
         tx.commit()?;
         Ok(work)
     }
@@ -1142,13 +1138,8 @@ impl Registry {
             return Ok(None);
         }
 
-        let next = activate_eligible_jobpack_tx(
-            &tx,
-            graph_version,
-            plan_revision,
-            &plan_hash,
-        )?
-        .context("unfinished Job Packs remain but none is dependency-eligible")?;
+        let next = activate_eligible_jobpack_tx(&tx, graph_version, plan_revision, &plan_hash)?
+            .context("unfinished Job Packs remain but none is dependency-eligible")?;
         tx.commit()?;
         Ok(Some(next))
     }
@@ -1283,13 +1274,8 @@ impl Registry {
             }),
         )?;
 
-        let work = activate_eligible_jobpack_tx(
-            &tx,
-            graph_version,
-            plan_revision,
-            &plan_hash,
-        )?
-        .context("new ACTIVE milestone has no dependency-eligible Job Pack")?;
+        let work = activate_eligible_jobpack_tx(&tx, graph_version, plan_revision, &plan_hash)?
+            .context("new ACTIVE milestone has no dependency-eligible Job Pack")?;
         tx.commit()?;
         Ok(Some(work))
     }
@@ -1506,11 +1492,7 @@ impl Registry {
     }
 }
 
-fn assert_lease_owner_tx(
-    tx: &Transaction<'_>,
-    project_root: &Path,
-    owner: &str,
-) -> Result<()> {
+fn assert_lease_owner_tx(tx: &Transaction<'_>, project_root: &Path, owner: &str) -> Result<()> {
     let project_root = canonical_or_original(project_root)
         .to_string_lossy()
         .into_owned();
@@ -1596,10 +1578,7 @@ fn current_milestone_tx(
     .map_err(Into::into)
 }
 
-fn active_work_tx(
-    tx: &Transaction<'_>,
-    graph_version: i64,
-) -> Result<Option<ActiveWorkRecord>> {
+fn active_work_tx(tx: &Transaction<'_>, graph_version: i64) -> Result<Option<ActiveWorkRecord>> {
     let active_count: i64 = tx.query_row(
         "SELECT COUNT(*) FROM execution_jobpacks WHERE graph_version=?1 AND status='ACTIVE'",
         params![graph_version],
@@ -1761,11 +1740,7 @@ fn activate_eligible_jobpack_tx(
     active_work_tx(tx, graph_version)
 }
 
-fn append_event_tx(
-    tx: &Transaction<'_>,
-    kind: &str,
-    payload: &serde_json::Value,
-) -> Result<i64> {
+fn append_event_tx(tx: &Transaction<'_>, kind: &str, payload: &serde_json::Value) -> Result<i64> {
     tx.execute(
         "INSERT INTO events (kind, payload, created_at) VALUES (?1, ?2, ?3)",
         params![kind, payload.to_string(), unix_seconds()?],
@@ -1808,8 +1783,15 @@ fn write_checkpoint_tx(
 }
 
 fn ensure_active_checkpoint_tx(tx: &Transaction<'_>, work: &ActiveWorkRecord) -> Result<()> {
-    let checkpoint: Option<(i64, Option<i64>, Option<String>, Option<String>, String, Option<String>)> =
-        tx.query_row(
+    let checkpoint: Option<(
+        i64,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+        String,
+        Option<String>,
+    )> = tx
+        .query_row(
             r#"
             SELECT sequence, plan_revision, milestone, jobpack, stage, jobpack_status
             FROM latest_checkpoint WHERE id=1
@@ -1828,7 +1810,9 @@ fn ensure_active_checkpoint_tx(tx: &Transaction<'_>, work: &ActiveWorkRecord) ->
         )
         .optional()?;
     let max_sequence: i64 =
-        tx.query_row("SELECT COALESCE(MAX(sequence),0) FROM events", [], |row| row.get(0))?;
+        tx.query_row("SELECT COALESCE(MAX(sequence),0) FROM events", [], |row| {
+            row.get(0)
+        })?;
 
     let valid = checkpoint.as_ref().is_some_and(|cp| {
         cp.0 == max_sequence
@@ -1869,8 +1853,15 @@ fn ensure_milestone_checkpoint_tx(
     milestone: Option<&str>,
     stage: &str,
 ) -> Result<()> {
-    let current: Option<(i64, Option<i64>, Option<String>, Option<String>, String, Option<String>)> =
-        tx.query_row(
+    let current: Option<(
+        i64,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+        String,
+        Option<String>,
+    )> = tx
+        .query_row(
             r#"
             SELECT sequence, plan_revision, milestone, jobpack, stage, jobpack_status
             FROM latest_checkpoint WHERE id=1
@@ -1910,15 +1901,7 @@ fn ensure_milestone_checkpoint_tx(
             "stage": stage
         }),
     )?;
-    write_checkpoint_tx(
-        tx,
-        sequence,
-        plan_revision,
-        milestone,
-        None,
-        stage,
-        None,
-    )
+    write_checkpoint_tx(tx, sequence, plan_revision, milestone, None, stage, None)
 }
 
 #[cfg(unix)]
