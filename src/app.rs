@@ -8,6 +8,7 @@ use crate::{
     registry::Registry,
     session::Session,
     tools::ProjectToolRuntime,
+    verification::VerificationController,
     workflow::{CodingOutcome, CodingWorkflow, PlanningOutcome, PlanningWorkflow},
 };
 use anyhow::{bail, Context, Result};
@@ -271,7 +272,30 @@ impl App {
                         "CODE_REVIEW_PASS jobpack={} change_set={}",
                         active_work.jobpack_id, change_set_id
                     );
-                    println!("Job Pack remains ACTIVE pending verification and later gates.");
+                    let changed_paths = self
+                        .tool_runtime
+                        .review_evidence()
+                        .into_iter()
+                        .map(|item| item.path)
+                        .collect::<Vec<_>>();
+                    let verification = VerificationController::new(
+                        &self.registry,
+                        &self.project_root,
+                        &self.lease_owner,
+                    )
+                    .verify(
+                        active_work.graph_version,
+                        &active_work.jobpack_id,
+                        &change_set_id,
+                        &changed_paths,
+                    )?;
+                    println!(
+                        "VERIFICATION_RESULT jobpack={} change_set={} result={}",
+                        active_work.jobpack_id,
+                        change_set_id,
+                        verification.as_str()
+                    );
+                    println!("Job Pack remains ACTIVE pending Tester/CR and later gates.");
                 }
                 CodingOutcome::Paused {
                     change_set_id,
