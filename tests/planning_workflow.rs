@@ -1,5 +1,5 @@
 use gsa_local::{
-    plan::PlanArtifact,
+    plan::{EvidenceMode, EvidenceNeed, PlanArtifact},
     registry::{Registry, ReviewActor, ReviewVerdict},
     workflow::{PlanningRoute, PlanningStage},
 };
@@ -17,6 +17,30 @@ fn sample(goal: &str) -> PlanArtifact {
         acceptance_direction: vec!["Only current Reviewer+CR PASS can approve".into()],
         evidence_needs: vec![],
     }
+}
+
+#[test]
+fn evidence_need_round_trips_through_plan_revision() {
+    let dir = tempdir().unwrap();
+    let registry = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    registry.begin_plan_workflow().unwrap();
+
+    let mut artifact = sample("evidence need");
+    artifact.evidence_needs.push(EvidenceNeed {
+        id: "session-binding".into(),
+        question: "Which runtime identity is stable within one session?".into(),
+        purpose: "Prevent later code from guessing a binding key.".into(),
+        required: true,
+        consumer: "session controller".into(),
+        modes: vec![EvidenceMode::Probe, EvidenceMode::Measure],
+        intent: "Compare observed identity across controlled session boundaries.".into(),
+    });
+
+    let revision = registry.persist_plan_revision(&artifact).unwrap();
+    let current = registry.current_plan_revision().unwrap().unwrap();
+    assert_eq!(current.revision, revision.revision);
+    assert_eq!(current.hash, artifact.hash().unwrap());
+    assert_eq!(current.artifact.evidence_needs, artifact.evidence_needs);
 }
 
 #[test]
