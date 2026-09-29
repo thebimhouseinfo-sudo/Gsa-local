@@ -130,6 +130,7 @@ impl VerificationEvidence {
             return VerificationResult::Blocked;
         }
 
+        let mut executed_real_test = false;
         for (command, evidence) in self.profile.commands.iter().zip(&self.commands) {
             if command.id != evidence.command_id
                 || command.config_hash != evidence.config_hash
@@ -146,9 +147,16 @@ impl VerificationEvidence {
             if evidence.exit_code != Some(0) {
                 return VerificationResult::Fail;
             }
+            if command.kind == VerificationCommandKind::Test {
+                executed_real_test = true;
+            }
         }
 
-        VerificationResult::TestPass
+        if executed_real_test {
+            VerificationResult::TestPass
+        } else {
+            VerificationResult::NotApplicable
+        }
     }
 }
 
