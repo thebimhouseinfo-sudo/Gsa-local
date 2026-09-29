@@ -1,6 +1,7 @@
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::fmt::Write;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlanArtifact {
@@ -31,7 +32,11 @@ impl PlanArtifact {
         self.validate()?;
         let canonical = serde_json::to_vec(self)?;
         let digest = Sha256::digest(canonical);
-        Ok(digest.iter().map(|byte| format!("{byte:02x}")).collect())
+        let mut hash = String::with_capacity(digest.len() * 2);
+        for byte in digest {
+            write!(&mut hash, "{byte:02x}")?;
+        }
+        Ok(hash)
     }
 }
 
