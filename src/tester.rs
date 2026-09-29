@@ -3,7 +3,7 @@ use crate::{
     controller::ActiveWork,
     harness::{AgentId, HarnessRegistry},
     ollama::{ChatMessage, OllamaClient, ToolCall, ToolDefinition},
-    registry::{Registry, TesterRunRecord},
+    registry::Registry,
     session::Session,
     tools::ProjectToolRuntime,
     verification::{RecordedVerification, VerificationCapability, VerificationResult},
@@ -42,6 +42,18 @@ impl TesterVerdict {
             other => bail!("unknown Tester verdict {other}"),
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TesterRunRecord {
+    pub id: i64,
+    pub graph_version: i64,
+    pub jobpack_id: String,
+    pub change_set_id: String,
+    pub verification_run_id: i64,
+    pub verdict: TesterVerdict,
+    pub findings: Vec<String>,
+    pub evidence: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
