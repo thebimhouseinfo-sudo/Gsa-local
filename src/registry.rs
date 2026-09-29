@@ -2102,12 +2102,7 @@ fn apply_checklist_claims_tx(
                     AND t.jobpack_id=?4
               )
             "#,
-            params![
-                graph_version,
-                claim.todo_id,
-                claim.position,
-                jobpack_id
-            ],
+            params![graph_version, claim.todo_id, claim.position, jobpack_id],
         )?;
         if updated != 1 {
             bail!(
