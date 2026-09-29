@@ -1,5 +1,6 @@
 use crate::{
     config::AppConfig,
+    execution_graph::ExecutionGraph,
     harness::{AgentId, HarnessRegistry},
     ollama::{ChatMessage, OllamaClient, ToolDefinition},
     plan::{PlanArtifact, PlanRevision},
@@ -29,7 +30,10 @@ pub enum PlanningStage {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlanningOutcome {
-    Approved(PlanBinding),
+    Registered {
+        plan: PlanBinding,
+        graph_version: i64,
+    },
     Paused {
         stage: PlanningStage,
         revision: Option<i64>,
@@ -239,7 +243,24 @@ impl<'a> PlanningWorkflow<'a> {
                 let binding = self
                     .registry
                     .approve_current_plan(current.revision, &current.hash)?;
-                return Ok(PlanningOutcome::Approved(binding));
+                self.registry.set_workflow_state(
+                    Some(current.revision),
+                    route.reviewer_attempts,
+                    route.cr_attempts,
+                    "JOB_BUILDER",
+                )?;
+                let graph = self
+                    .invoke_job_builder(requirement, &current, &project_context)
+                    .await?;
+                let graph_version = self.registry.register_execution_graph(
+                    binding.revision,
+                    &binding.hash,
+                    &graph,
+                )?;
+                return Ok(PlanningOutcome::Registered {
+                    plan: binding,
+                    graph_version,
+                });
             }
 
             if route.cr_attempts >= route.max_attempts {
@@ -368,6 +389,56 @@ impl<'a> PlanningWorkflow<'a> {
             )
             .await?;
         extract_tool_args(&response, "submit_cr_review")
+    }
+
+    async fn invoke_job_builder(
+        &self,
+        requirement: &str,
+        current: &PlanRevision,
+        project_context: &ProjectContext,
+    ) -> Result<ExecutionGraph> {
+        let packet = json!({
+            "original_requirement": requirement,
+            "project_context": project_context,
+            "approved_plan": {
+                "revision": current.revision,
+                "hash": current.hash,
+                "plan": current.artifact
+            },
+            "instruction": "Decompose this approved plan only. Do not redesign it. Return READY with a complete execution graph, or PLAN_GAP with explicit findings if the approved plan is insufficient."
+        });
+        let response = self
+            .invoke_with_tool(
+                AgentId::JobBuilder,
+                vec![ChatMessage::user(packet.to_string())],
+                execution_graph_tool(),
+            )
+            .await?;
+        let submission: JobBuilderSubmission =
+            extract_tool_args(&response, "submit_execution_graph")?;
+
+        match submission.status.as_str() {
+            "READY" => {
+                if !submission.gap_findings.is_empty() {
+                    bail!("Job Builder READY submission cannot include PLAN_GAP findings");
+                }
+                let graph = submission
+                    .graph
+                    .context("Job Builder READY submission is missing graph")?;
+                graph.validate()?;
+                Ok(graph)
+            }
+            "PLAN_GAP" => {
+                if submission.gap_findings.is_empty() {
+                    bail!("Job Builder PLAN_GAP must include at least one finding");
+                }
+                bail!(
+                    "Job Builder PLAN_GAP: {}",
+                    submission.gap_findings.join("; ")
+                )
+            }
+            other => bail!("Job Builder returned unsupported status {other}"),
+        }
     }
 
     async fn invoke_with_tool(
@@ -537,6 +608,15 @@ fn should_skip(relative: &Path) -> bool {
 }
 
 #[derive(Debug, Deserialize)]
+struct JobBuilderSubmission {
+    status: String,
+    #[serde(default)]
+    gap_findings: Vec<String>,
+    #[serde(default)]
+    graph: Option<ExecutionGraph>,
+}
+
+#[derive(Debug, Deserialize)]
 struct ReviewDecision {
     verdict: String,
     #[serde(default)]
@@ -623,6 +703,72 @@ fn cr_tool() -> ToolDefinition {
             "properties": {
                 "verdict": {"type": "string", "enum": ["PASS", "REVISE"]},
                 "findings": {"type": "array", "items": {"type": "string"}}
+            }
+        }),
+    )
+}
+
+fn execution_graph_tool() -> ToolDefinition {
+    ToolDefinition::function(
+        "submit_execution_graph",
+        "Submit a Job Builder execution graph bound to the approved plan, or PLAN_GAP if the approved plan cannot be safely decomposed.",
+        json!({
+            "type": "object",
+            "required": ["status", "gap_findings"],
+            "properties": {
+                "status": {"type": "string", "enum": ["READY", "PLAN_GAP"]},
+                "gap_findings": {"type": "array", "items": {"type": "string"}},
+                "graph": {
+                    "type": "object",
+                    "properties": {
+                        "milestones": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["id", "title", "order"],
+                                "properties": {
+                                    "id": {"type": "string"},
+                                    "title": {"type": "string"},
+                                    "order": {"type": "integer", "minimum": 1}
+                                }
+                            }
+                        },
+                        "jobpacks": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": [
+                                    "id", "milestone_id", "title", "goal", "todo_ids",
+                                    "depends_on", "acceptance", "verification_hints"
+                                ],
+                                "properties": {
+                                    "id": {"type": "string"},
+                                    "milestone_id": {"type": "string"},
+                                    "title": {"type": "string"},
+                                    "goal": {"type": "string"},
+                                    "todo_ids": {"type": "array", "items": {"type": "string"}},
+                                    "depends_on": {"type": "array", "items": {"type": "string"}},
+                                    "acceptance": {"type": "array", "items": {"type": "string"}},
+                                    "verification_hints": {"type": "array", "items": {"type": "string"}}
+                                }
+                            }
+                        },
+                        "todos": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": ["id", "jobpack_id", "title", "checklist"],
+                                "properties": {
+                                    "id": {"type": "string"},
+                                    "jobpack_id": {"type": "string"},
+                                    "title": {"type": "string"},
+                                    "checklist": {"type": "array", "items": {"type": "string"}}
+                                }
+                            }
+                        }
+                    },
+                    "required": ["milestones", "jobpacks", "todos"]
+                }
             }
         }),
     )
