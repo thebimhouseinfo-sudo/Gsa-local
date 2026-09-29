@@ -18,6 +18,13 @@ Its primary question is:
 
 Tester verifies the product state that exists at a checkpoint. It may also run bounded measurements or probes when the next phase depends on an assumption that should be verified experimentally rather than guessed.
 
+Tester has two first-class outputs:
+
+1. **verification evidence** — whether the checkpoint goal is actually satisfied;
+2. **empirical/design evidence** — measured runtime facts that later Planner/Coder work must use instead of inventing constants, identifiers, timing assumptions, capability assumptions, or state lifetimes.
+
+A Test Checkpoint may therefore be a quality gate, an evidence-producing dependency for the next phase, or both.
+
 Tester does not modify product implementation.
 
 ## 2. Separation from Coder
@@ -129,6 +136,8 @@ Tester RETEST of the same checkpoint
 ```
 
 Test Checkpoints are declared ahead of execution by planning/Job Builder as part of the Milestone/Execution Graph. Tester does not decide where checkpoints exist, and it is not inserted after every coding task or every Reviewer PASS.
+
+A declared checkpoint should also specify which outputs are consumed by later work. When a later Job Pack depends on a runtime fact, measurement, or probe result, that Tester evidence becomes an explicit dependency/input rather than informal conversation context.
 
 Final Tester verification should include the relevant regression surface accumulated from prior checkpoints.
 
@@ -368,6 +377,8 @@ Design evidence should include:
 - confidence based on the number/range of observations.
 
 Tester may state evidence-supported design implications, but it does not silently make product/architecture decisions that belong to Planner/Human.
+
+When a checkpoint is declared as a prerequisite for later work, its design evidence MUST be persisted in a machine-addressable form and referenced by the consuming Planner/Coder/Job Pack. Examples include measured identifier stability, readiness timing, retry behavior, actual limits, protocol responses, or capability reachability. A downstream phase must not replace missing evidence with a guessed value merely to continue execution.
 
 ## 9. Example: CadGPT live CAD capability
 
@@ -610,6 +621,8 @@ Reviewer should not be invoked merely to repeat Tester diagnosis before the firs
 10. UNVERIFIED is never PASS.
 11. Checkpoints should be meaningful and sparse enough to avoid orchestration overhead, but early enough to prevent large amounts of code from being built on an unverified foundation.
 12. Tester may refine tests within scope, but must not silently expand product scope or make planning decisions on behalf of Planner/Human.
+13. Empirical/design evidence can be a formal dependency of later phases; downstream Planner/Coder work must consume it when the Execution Graph declares that dependency.
+14. Missing required measured evidence is a blocker or planning input gap, not permission to invent a value or assumption.
 
 ## 16. Current implementation gap
 
