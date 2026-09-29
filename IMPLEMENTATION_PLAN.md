@@ -430,7 +430,7 @@ acceptance direction
 evidence needs / unknown runtime facts
 ```
 
-`EvidenceNeed / UnknownRuntimeFact` là first-class planning data, không phải prose tùy ý. Mỗi need phải có identity, câu hỏi cần xác minh, mục đích, required/optional, consumer dự kiến, mode VERIFY/MEASURE/PROBE phù hợp và measurement/acceptance intent. Nó tham gia plan hash/revision để Reviewer/CR duyệt chính contract empirical này.
+`EvidenceNeed / UnknownRuntimeFact` là first-class planning data, không phải prose tùy ý. Mỗi need phải có identity, câu hỏi cần xác minh, mục đích, required/optional, consumer dự kiến, mode VERIFY/MEASURE/PROBE phù hợp và measurement/acceptance intent. Nó tham gia plan hash/revision để Reviewer/CR duyệt chính contract empirical này. Legacy PlanArtifact không có field này phải deserialize với danh sách rỗng để không phá durable state cũ.
 
 ---
 
@@ -1078,7 +1078,7 @@ JP-08
 
 Nếu không có declared checkpoint thì Reviewer PASS chỉ kết thúc vòng review hiện tại; Tester không tự chạy.
 
-Checkpoint không chỉ bind vào một Job Pack. Topology phải hỗ trợ checkpoint sau một tập Job Pack đã được review, trước một Job Pack consumer, hoặc tại milestone integration gate. Chỉ khi toàn bộ prerequisite đã đạt trạng thái yêu cầu checkpoint mới trở thành DUE.
+Checkpoint không chỉ bind vào một Job Pack. Topology phải hỗ trợ checkpoint sau một tập Job Pack đã được review, trước một Job Pack consumer, hoặc tại milestone integration gate. Mỗi prerequisite có `PrerequisiteState` rõ ràng. Phase 10 có thể dùng exact `REVIEW_PASS` target và có thể đọc trạng thái `DONE` đã tồn tại, nhưng không được tự tạo `DONE/COMPLETE`. Chỉ khi toàn bộ prerequisite đạt trạng thái khai báo checkpoint mới trở thành DUE.
 
 ---
 
@@ -1262,7 +1262,7 @@ OBSERVED
 
 `IMPLICATION` và `UNRESOLVED` không được dùng thay giá trị đo bắt buộc.
 
-Mỗi reusable empirical output phải có `EvidenceApplicability` mô tả những dimension làm nó còn hợp lệ hoặc hết hạn: product/config/runtime/environment identity, dependency fingerprint, boundary conditions và revalidation policy. Exact revision binding vẫn là evidence identity; applicability quyết định evidence có thể reuse sau thay đổi nào.
+Mỗi reusable empirical output phải có `EvidenceApplicability` mô tả những dimension làm nó còn hợp lệ hoặc hết hạn: product/config/runtime/environment identity, dependency fingerprint, boundary conditions và revalidation policy. Applicability phải dùng finite declarative matcher allowlist và được runtime đánh giá; model prose không có quyền override. Exact revision binding vẫn là evidence identity; applicability quyết định evidence có thể reuse sau thay đổi nào.
 
 Nếu thiếu required OBSERVED evidence:
 
@@ -2064,7 +2064,7 @@ checkpoint state transition
 = one transaction
 ```
 
-Execution lease phải bind checkpoint attempt để restart/terminal thứ hai không tạo duplicate attempt.
+Execution lease phải bind checkpoint attempt để restart/terminal thứ hai không tạo duplicate attempt. Mỗi executable Tester step phải có replay-safety class như `OBSERVE_ONLY / IDEMPOTENT / NON_IDEMPOTENT`. Sau crash, uncertain NON_IDEMPOTENT step không được auto-replay; runtime phải BLOCK/NEEDS_HUMAN hoặc dùng recovery adapter rõ ràng.
 
 Material `SPEC_GAP` hoặc architectural uncertainty không được Tester tự giải bằng cách sửa topology:
 
