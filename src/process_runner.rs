@@ -26,6 +26,8 @@ pub struct ProcessObservation {
 enum SandboxBackend {
     MacOs(PathBuf),
     Unavailable(String),
+    #[cfg(test)]
+    DirectTest,
 }
 
 #[derive(Debug, Clone)]
@@ -67,6 +69,13 @@ impl LocalProcessRunner {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn direct_for_test() -> Self {
+        Self {
+            backend: SandboxBackend::DirectTest,
+        }
+    }
+
     pub fn run(
         &self,
         project_root: &Path,
@@ -76,10 +85,7 @@ impl LocalProcessRunner {
         let root = project_root
             .canonicalize()
             .with_context(|| format!("failed to canonicalize {}", project_root.display()))?;
-        let SandboxBackend::MacOs(sandbox_exec) = &self.backend else {
-            let SandboxBackend::Unavailable(reason) = &self.backend else {
-                unreachable!();
-            };
+        if let SandboxBackend::Unavailable(reason) = &self.backend {
             return Ok(ProcessObservation {
                 exit_code: None,
                 duration_ms: 0,
@@ -88,7 +94,7 @@ impl LocalProcessRunner {
                 stdout: String::new(),
                 stderr: String::new(),
             });
-        };
+        }
 
         if command.argv.is_empty() {
             return Ok(ProcessObservation {
@@ -107,13 +113,26 @@ impl LocalProcessRunner {
         fs::create_dir_all(&temp_dir)?;
         fs::create_dir_all(&target_dir)?;
 
-        let profile = sandbox_profile(&runtime_dir, &temp_dir)?;
-        let mut child = Command::new(sandbox_exec);
-        child
-            .arg("-p")
-            .arg(profile)
-            .arg(&command.argv[0])
-            .args(&command.argv[1..])
+        let mut process = match &self.backend {
+            SandboxBackend::MacOs(sandbox_exec) => {
+                let profile = sandbox_profile(&runtime_dir, &temp_dir)?;
+                let mut process = Command::new(sandbox_exec);
+                process
+                    .arg("-p")
+                    .arg(profile)
+                    .arg(&command.argv[0])
+                    .args(&command.argv[1..]);
+                process
+            }
+            SandboxBackend::Unavailable(_) => unreachable!(),
+            #[cfg(test)]
+            SandboxBackend::DirectTest => {
+                let mut process = Command::new(&command.argv[0]);
+                process.args(&command.argv[1..]);
+                process
+            }
+        };
+        process
             .current_dir(&root)
             .env("CARGO_TARGET_DIR", &target_dir)
             .env("CARGO_NET_OFFLINE", "true")
@@ -123,7 +142,7 @@ impl LocalProcessRunner {
             .stderr(Stdio::piped());
 
         let started = Instant::now();
-        let mut child = match child.spawn() {
+        let mut child = match process.spawn() {
             Ok(child) => child,
             Err(error) => {
                 return Ok(ProcessObservation {
@@ -241,6 +260,50 @@ mod tests {
             .unwrap();
         assert_eq!(result.blocked_reason.as_deref(), Some("sandbox missing"));
         assert_eq!(result.exit_code, None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn direct_test_seam_observes_exit_zero_nonzero_and_timeout() {
+        let runner = LocalProcessRunner::direct_for_test();
+        let dir = tempfile::tempdir().unwrap();
+        let command = |id: &str, argv: Vec<String>| VerificationCommand {
+            id: id.into(),
+            kind: crate::verification::VerificationCommandKind::Test,
+            capability: crate::verification::VerificationCapability::Unit,
+            argv,
+            source_paths: vec![],
+            config_hash: "x".into(),
+        };
+
+        let passed = runner
+            .run(
+                dir.path(),
+                &command("pass", vec!["/bin/true".into()]),
+                Duration::from_secs(1),
+            )
+            .unwrap();
+        assert_eq!(passed.exit_code, Some(0));
+        assert!(!passed.timed_out);
+
+        let failed = runner
+            .run(
+                dir.path(),
+                &command("fail", vec!["/bin/false".into()]),
+                Duration::from_secs(1),
+            )
+            .unwrap();
+        assert_ne!(failed.exit_code, Some(0));
+        assert!(!failed.timed_out);
+
+        let timed_out = runner
+            .run(
+                dir.path(),
+                &command("timeout", vec!["/bin/sleep".into(), "1".into()]),
+                Duration::from_millis(50),
+            )
+            .unwrap();
+        assert!(timed_out.timed_out);
     }
 
     #[test]
