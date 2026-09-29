@@ -1,0 +1,147 @@
+use gsa_local::{
+    plan::PlanArtifact,
+    registry::{Registry, ReviewActor, ReviewVerdict},
+    workflow::{PlanningRoute, PlanningStage},
+};
+use tempfile::tempdir;
+
+fn sample(goal: &str) -> PlanArtifact {
+    PlanArtifact {
+        goal: goal.into(),
+        current_architecture: "Existing GSA Local runtime".into(),
+        required_changes: vec!["Add revision-bound workflow".into()],
+        implementation_approach: vec!["Persist plan and verdicts in SQLite".into()],
+        dependencies: vec![],
+        sequence: vec!["Planner".into(), "Reviewer".into(), "Local CR".into()],
+        risks: vec!["Stale verdict".into()],
+        acceptance_direction: vec!["Only current Reviewer+CR PASS can approve".into()],
+    }
+}
+
+#[test]
+fn stale_reviewer_and_cr_verdicts_are_rejected() {
+    let dir = tempdir().unwrap();
+    let registry = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    registry.begin_plan_workflow().unwrap();
+
+    let first = registry.persist_plan_revision(&sample("first")).unwrap();
+    let second = registry.persist_plan_revision(&sample("second")).unwrap();
+
+    assert!(registry
+        .record_plan_verdict(
+            ReviewActor::Reviewer,
+            first.revision,
+            &first.hash,
+            ReviewVerdict::Pass,
+            &[],
+        )
+        .is_err());
+    assert!(registry
+        .record_plan_verdict(
+            ReviewActor::LocalCr,
+            first.revision,
+            &first.hash,
+            ReviewVerdict::Pass,
+            &[],
+        )
+        .is_err());
+
+    registry
+        .record_plan_verdict(
+            ReviewActor::Reviewer,
+            second.revision,
+            &second.hash,
+            ReviewVerdict::Pass,
+            &[],
+        )
+        .unwrap();
+}
+
+#[test]
+fn approval_requires_current_reviewer_and_cr_pass() {
+    let dir = tempdir().unwrap();
+    let registry = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    registry.begin_plan_workflow().unwrap();
+    let plan = registry.persist_plan_revision(&sample("approval")).unwrap();
+
+    registry
+        .record_plan_verdict(
+            ReviewActor::Reviewer,
+            plan.revision,
+            &plan.hash,
+            ReviewVerdict::Pass,
+            &[],
+        )
+        .unwrap();
+    assert!(registry
+        .approve_current_plan(plan.revision, &plan.hash)
+        .is_err());
+
+    registry
+        .record_plan_verdict(
+            ReviewActor::LocalCr,
+            plan.revision,
+            &plan.hash,
+            ReviewVerdict::Pass,
+            &[],
+        )
+        .unwrap();
+    let approved = registry
+        .approve_current_plan(plan.revision, &plan.hash)
+        .unwrap();
+    assert_eq!(approved.revision, plan.revision);
+    assert_eq!(approved.hash, plan.hash);
+}
+
+#[test]
+fn new_plan_revision_invalidates_prior_approval_binding() {
+    let dir = tempdir().unwrap();
+    let registry = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    registry.begin_plan_workflow().unwrap();
+    let first = registry.persist_plan_revision(&sample("first")).unwrap();
+
+    for actor in [ReviewActor::Reviewer, ReviewActor::LocalCr] {
+        registry
+            .record_plan_verdict(actor, first.revision, &first.hash, ReviewVerdict::Pass, &[])
+            .unwrap();
+    }
+    registry
+        .approve_current_plan(first.revision, &first.hash)
+        .unwrap();
+    assert!(registry.plan_binding().unwrap().is_some());
+
+    let second = registry.persist_plan_revision(&sample("second")).unwrap();
+    assert_ne!(second.hash, first.hash);
+    assert!(registry.plan_binding().unwrap().is_none());
+    assert!(registry
+        .approve_current_plan(first.revision, &first.hash)
+        .is_err());
+}
+
+#[test]
+fn reviewer_revision_and_cr_fix_routes_are_enforced() {
+    let mut route = PlanningRoute::new(3);
+    assert!(route.enter_reviewer());
+    route.reviewer_result(ReviewVerdict::Revise);
+    assert_eq!(route.stage, PlanningStage::Planner);
+
+    assert!(route.enter_reviewer());
+    route.reviewer_result(ReviewVerdict::Pass);
+    assert_eq!(route.stage, PlanningStage::LocalCr);
+
+    assert!(route.enter_cr());
+    route.cr_result(ReviewVerdict::Revise);
+    assert_eq!(route.stage, PlanningStage::InternalFix);
+
+    route.after_internal_fix();
+    assert_eq!(route.stage, PlanningStage::Reviewer);
+}
+
+#[test]
+fn loop_exhaustion_pauses_instead_of_approving() {
+    let mut route = PlanningRoute::new(1);
+    assert!(route.enter_reviewer());
+    route.reviewer_result(ReviewVerdict::Revise);
+    assert!(!route.enter_reviewer());
+    assert_eq!(route.stage, PlanningStage::Paused);
+}
