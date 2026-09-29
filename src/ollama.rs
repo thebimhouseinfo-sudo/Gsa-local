@@ -118,35 +118,53 @@ impl OllamaClient {
             .context("Ollama /api/chat returned an error")?;
 
         let mut stream = response.bytes_stream();
-        let mut pending = String::new();
+        let mut pending = Vec::new();
         let mut full = String::new();
 
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.context("failed while reading Ollama stream")?;
-            pending.push_str(&String::from_utf8_lossy(&chunk));
-
-            while let Some(newline) = pending.find('\n') {
-                let line = pending[..newline].trim().to_owned();
-                pending.drain(..=newline);
-                if !line.is_empty() {
-                    consume_chat_line(&line, &mut full, &mut on_token)?;
-                }
-            }
+            pending.extend_from_slice(&chunk);
+            consume_complete_lines(&mut pending, &mut full, &mut on_token)?;
         }
 
-        let tail = pending.trim();
-        if !tail.is_empty() {
-            consume_chat_line(tail, &mut full, &mut on_token)?;
+        if !pending.is_empty() {
+            consume_chat_bytes(&pending, &mut full, &mut on_token)?;
         }
 
         Ok(full)
     }
 }
 
-fn consume_chat_line<F>(line: &str, full: &mut String, on_token: &mut F) -> Result<()>
+fn consume_complete_lines<F>(
+    pending: &mut Vec<u8>,
+    full: &mut String,
+    on_token: &mut F,
+) -> Result<()>
 where
     F: FnMut(&str),
 {
+    while let Some(newline) = pending.iter().position(|byte| *byte == b'\n') {
+        let mut line: Vec<u8> = pending.drain(..=newline).collect();
+        line.pop();
+        if line.last() == Some(&b'\r') {
+            line.pop();
+        }
+        if !line.iter().all(|byte| byte.is_ascii_whitespace()) {
+            consume_chat_bytes(&line, full, on_token)?;
+        }
+    }
+    Ok(())
+}
+
+fn consume_chat_bytes<F>(line: &[u8], full: &mut String, on_token: &mut F) -> Result<()>
+where
+    F: FnMut(&str),
+{
+    let line = std::str::from_utf8(line).context("Ollama stream line was not valid UTF-8")?;
+    let line = line.trim();
+    if line.is_empty() {
+        return Ok(());
+    }
     let chunk: ChatChunk = serde_json::from_str(line)
         .with_context(|| format!("invalid Ollama stream line: {line}"))?;
     if let Some(message) = chunk.message {
@@ -157,4 +175,43 @@ where
     }
     let _ = chunk.done;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn utf8_split_across_network_chunks_is_reassembled_before_decode() {
+        let line = serde_json::to_string(&json!({
+            "message": {
+                "role": "assistant",
+                "content": "Việt"
+            },
+            "done": false
+        }))
+        .unwrap() + "\n";
+
+        let marker = line.find('ệ').unwrap();
+        let split_inside_multibyte = marker + 1;
+        let bytes = line.as_bytes();
+
+        let mut pending = Vec::new();
+        let mut full = String::new();
+        let mut emitted = String::new();
+
+        pending.extend_from_slice(&bytes[..split_inside_multibyte]);
+        consume_complete_lines(&mut pending, &mut full, &mut |token| emitted.push_str(token))
+            .unwrap();
+        assert!(full.is_empty());
+        assert!(emitted.is_empty());
+
+        pending.extend_from_slice(&bytes[split_inside_multibyte..]);
+        consume_complete_lines(&mut pending, &mut full, &mut |token| emitted.push_str(token))
+            .unwrap();
+
+        assert_eq!(full, "Việt");
+        assert_eq!(emitted, "Việt");
+        assert!(pending.is_empty());
+    }
 }
