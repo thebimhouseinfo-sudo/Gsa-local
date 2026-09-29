@@ -602,7 +602,12 @@ impl Registry {
                     (graph_version, milestone_id, title, position, status)
                 VALUES (?1, ?2, ?3, ?4, 'LOCKED')
                 "#,
-                params![version, milestone.id, milestone.title, milestone.order as i64],
+                params![
+                    version,
+                    milestone.id,
+                    milestone.title,
+                    milestone.order as i64
+                ],
             )?;
         }
 
