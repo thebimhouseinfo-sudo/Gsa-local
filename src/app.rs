@@ -36,7 +36,11 @@ impl App {
         let ollama = OllamaClient::new(config.ollama_base_url.clone());
         let registry = Registry::open(&project_root)?;
         let lease_owner = format!("pid:{}", std::process::id());
-        registry.acquire_lease(&project_root, &lease_owner, Duration::from_secs(6 * 60 * 60))?;
+        registry.acquire_lease(
+            &project_root,
+            &lease_owner,
+            Duration::from_secs(6 * 60 * 60),
+        )?;
 
         Ok(Self {
             project_root,
