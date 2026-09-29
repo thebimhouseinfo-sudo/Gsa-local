@@ -602,6 +602,7 @@ impl Registry {
         }
 
         if binding_changed {
+            retire_active_jobpacks_for_current_graphs_tx(&tx)?;
             tx.execute(
                 "UPDATE execution_graph SET status='SUPERSEDED' WHERE status='CURRENT'",
                 [],
@@ -721,6 +722,7 @@ impl Registry {
             |row| row.get(0),
         )?;
 
+        retire_active_jobpacks_for_current_graphs_tx(&tx)?;
         tx.execute(
             "UPDATE execution_graph SET status='SUPERSEDED' WHERE status='CURRENT'",
             [],
@@ -960,6 +962,16 @@ impl Registry {
             .query_row(
                 "SELECT COUNT(*) FROM execution_jobpacks WHERE graph_version=?1 AND status='ACTIVE'",
                 params![version],
+                |row| row.get(0),
+            )
+            .map_err(Into::into)
+    }
+
+    pub fn project_active_jobpack_count(&self) -> Result<i64> {
+        self.conn
+            .query_row(
+                "SELECT COUNT(*) FROM execution_jobpacks WHERE status='ACTIVE'",
+                [],
                 |row| row.get(0),
             )
             .map_err(Into::into)
@@ -1488,6 +1500,21 @@ impl Registry {
             .optional()
             .map_err(Into::into)
     }
+}
+
+fn retire_active_jobpacks_for_current_graphs_tx(tx: &Transaction<'_>) -> Result<()> {
+    tx.execute(
+        r#"
+        UPDATE execution_jobpacks
+        SET status='BLOCKED'
+        WHERE status='ACTIVE'
+          AND graph_version IN (
+              SELECT version FROM execution_graph WHERE status='CURRENT'
+          )
+        "#,
+        [],
+    )?;
+    Ok(())
 }
 
 fn assert_lease_owner_tx(tx: &Transaction<'_>, project_root: &Path, owner: &str) -> Result<()> {
