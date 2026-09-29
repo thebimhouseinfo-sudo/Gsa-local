@@ -22,6 +22,7 @@ fn plan() -> PlanArtifact {
         sequence: vec!["review".into(), "verify".into()],
         risks: vec!["fake pass".into()],
         acceptance_direction: vec!["observed evidence only".into()],
+        evidence_needs: vec![],
     }
 }
 
