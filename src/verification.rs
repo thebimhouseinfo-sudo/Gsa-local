@@ -270,12 +270,7 @@ pub fn discover_profile(project_root: &Path) -> Result<VerificationProfile> {
         let config_hash = hash_config_paths(&root, &source_paths)?;
         let content = fs::read_to_string(&ci)
             .context("scripts/ci.sh must be UTF-8 text for deterministic verification discovery")?;
-        return discover_validated_ci_script(
-            &content,
-            source_paths,
-            config_hash,
-            rust_tests,
-        );
+        return discover_validated_ci_script(&content, source_paths, config_hash, rust_tests);
     }
 
     let cargo = root.join("Cargo.toml");
@@ -407,7 +402,10 @@ fn discover_validated_ci_script(
             }
         };
 
-        if commands.iter().any(|command: &VerificationCommand| command.id == id) {
+        if commands
+            .iter()
+            .any(|command: &VerificationCommand| command.id == id)
+        {
             continue;
         }
         capabilities.insert(VerificationCapability::BuildOnly);
@@ -481,7 +479,8 @@ fn contains_rust_file(root: &Path, max_files: usize) -> Result<bool> {
             }
             if meta.is_dir() {
                 pending.push(path);
-            } else if meta.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+            } else if meta.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("rs")
+            {
                 seen += 1;
                 if seen > max_files {
                     bail!("Rust test-surface discovery exceeded bounded file count");
@@ -660,7 +659,11 @@ mod tests {
             "[package]\nname='x'\nversion='0.1.0'\n",
         )
         .unwrap();
-        fs::write(dir.path().join("tests/smoke.rs"), "#[test]\nfn smoke() {}\n").unwrap();
+        fs::write(
+            dir.path().join("tests/smoke.rs"),
+            "#[test]\nfn smoke() {}\n",
+        )
+        .unwrap();
 
         let profile = discover_profile(dir.path()).unwrap();
         assert_eq!(profile.status, DiscoveryStatus::Applicable);
@@ -694,7 +697,11 @@ mod tests {
             "[package]\nname='x'\nversion='0.1.0'\n",
         )
         .unwrap();
-        fs::write(dir.path().join("src/lib.rs"), "pub fn value() -> u32 { 1 }\n").unwrap();
+        fs::write(
+            dir.path().join("src/lib.rs"),
+            "pub fn value() -> u32 { 1 }\n",
+        )
+        .unwrap();
 
         let first = discover_profile(dir.path()).unwrap();
         let second = discover_profile(dir.path()).unwrap();
