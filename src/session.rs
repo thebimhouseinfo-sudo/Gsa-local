@@ -30,7 +30,8 @@ impl Session {
     }
 
     pub fn resolved_model<'a>(&'a self, config: &'a AppConfig, agent: AgentId) -> Option<&'a str> {
-        self.model_override(agent).or_else(|| config.model_for(agent))
+        self.model_override(agent)
+            .or_else(|| config.model_for(agent))
     }
 }
 
