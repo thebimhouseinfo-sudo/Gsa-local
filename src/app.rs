@@ -1,6 +1,7 @@
 use crate::{
     cli::{self, InputLine, SlashCommand},
     config::AppConfig,
+    controller::{ActiveWork, MilestoneController},
     harness::{AgentId, HarnessRegistry},
     ollama::{ChatMessage, OllamaClient},
     registry::Registry,
@@ -25,6 +26,7 @@ pub struct App {
     registry: Registry,
     lease_owner: String,
     history: HashMap<AgentId, Vec<ChatMessage>>,
+    active_work: Option<ActiveWork>,
 }
 
 impl App {
@@ -42,6 +44,8 @@ impl App {
             &lease_owner,
             Duration::from_secs(6 * 60 * 60),
         )?;
+        let active_work =
+            MilestoneController::new(&registry, &project_root, &lease_owner).resolve_or_activate()?;
 
         Ok(Self {
             project_root,
@@ -52,6 +56,7 @@ impl App {
             registry,
             lease_owner,
             history: HashMap::new(),
+            active_work,
         })
     }
 
@@ -94,6 +99,12 @@ impl App {
         println!("Project: {}", self.project_root.display());
         println!("Agent: {}", self.session.active_agent);
         println!("Commands: /agent  /model  /config");
+        if let Some(work) = &self.active_work {
+            println!(
+                "Work: {} / {}",
+                work.milestone_id, work.jobpack_id
+            );
+        }
         println!("Ctrl-D to exit.");
     }
 
@@ -202,6 +213,18 @@ impl App {
                         plan.revision, plan.hash
                     );
                     println!("EXECUTION_GRAPH_REGISTERED version={graph_version}");
+                    self.active_work = MilestoneController::new(
+                        &self.registry,
+                        &self.project_root,
+                        &self.lease_owner,
+                    )
+                    .resolve_or_activate()?;
+                    if let Some(work) = &self.active_work {
+                        println!(
+                            "ACTIVE_WORK milestone={} jobpack={}",
+                            work.milestone_id, work.jobpack_id
+                        );
+                    }
                 }
                 PlanningOutcome::Paused { revision, .. } => {
                     println!(
