@@ -175,7 +175,7 @@ impl ProjectToolRuntime {
 
         let mut file = fs::File::open(&resolved)?;
         let mut bytes = Vec::new();
-        file.by_ref()
+        std::io::Read::by_ref(&mut file)
             .take((MAX_READ_BYTES + 1) as u64)
             .read_to_end(&mut bytes)?;
         if bytes.len() > MAX_READ_BYTES {
