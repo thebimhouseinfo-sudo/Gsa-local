@@ -26,6 +26,8 @@ pub struct JobPackSpec {
     pub todo_ids: Vec<String>,
     #[serde(default)]
     pub depends_on: Vec<String>,
+    pub required_inputs: Vec<String>,
+    pub expected_outputs: Vec<String>,
     pub acceptance: Vec<String>,
     pub verification_hints: Vec<String>,
 }
@@ -84,6 +86,8 @@ impl ExecutionGraph {
         let mut packs_per_milestone: HashMap<&str, usize> = HashMap::new();
         for pack in &self.jobpacks {
             require_text("jobpack goal", &pack.goal)?;
+            require_items("jobpack required_inputs", &pack.required_inputs)?;
+            require_items("jobpack expected_outputs", &pack.expected_outputs)?;
             require_items("jobpack acceptance", &pack.acceptance)?;
             require_items("jobpack verification_hints", &pack.verification_hints)?;
             if pack.todo_ids.is_empty() {
@@ -303,6 +307,8 @@ mod tests {
                     goal: "Build base".into(),
                     todo_ids: vec!["T1".into()],
                     depends_on: vec![],
+                    required_inputs: vec!["approved inputs".into()],
+                    expected_outputs: vec!["foundation output".into()],
                     acceptance: vec!["Base works".into()],
                     verification_hints: vec!["cargo test".into()],
                 },
@@ -313,6 +319,8 @@ mod tests {
                     goal: "Build flow".into(),
                     todo_ids: vec!["T2".into()],
                     depends_on: vec!["JP1".into()],
+                    required_inputs: vec!["foundation output".into()],
+                    expected_outputs: vec!["workflow output".into()],
                     acceptance: vec!["Flow works".into()],
                     verification_hints: vec!["integration test".into()],
                 },
