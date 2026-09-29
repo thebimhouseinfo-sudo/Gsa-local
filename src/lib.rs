@@ -12,6 +12,5 @@ pub mod process_runner;
 pub mod registry;
 pub mod session;
 pub mod tools;
-pub mod tester;
 pub mod verification;
 pub mod workflow;
