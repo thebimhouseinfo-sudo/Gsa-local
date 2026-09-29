@@ -302,11 +302,7 @@ impl<'a> PlanningWorkflow<'a> {
         extract_tool_args(&response, "submit_review")
     }
 
-    async fn invoke_cr(
-        &self,
-        requirement: &str,
-        current: &PlanRevision,
-    ) -> Result<CrDecision> {
+    async fn invoke_cr(&self, requirement: &str, current: &PlanRevision) -> Result<CrDecision> {
         let packet = json!({
             "original_requirement": requirement,
             "target": {
@@ -345,7 +341,10 @@ impl<'a> PlanningWorkflow<'a> {
             .chat_stream_with_tools(&model, &messages, &[tool], |_| {})
             .await?;
         if response.tool_calls.is_empty() {
-            bail!("{} did not call the required workflow tool", agent.display_name());
+            bail!(
+                "{} did not call the required workflow tool",
+                agent.display_name()
+            );
         }
         Ok(response)
     }
