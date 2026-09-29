@@ -93,12 +93,18 @@ impl Default for HarnessRegistry {
         let roles = HashMap::from([
             (AgentId::General, include_str!("../harnesses/general.md")),
             (AgentId::Planner, include_str!("../harnesses/planner.md")),
-            (AgentId::JobBuilder, include_str!("../harnesses/job_builder.md")),
+            (
+                AgentId::JobBuilder,
+                include_str!("../harnesses/job_builder.md"),
+            ),
             (AgentId::Reviewer, include_str!("../harnesses/reviewer.md")),
             (AgentId::Coder, include_str!("../harnesses/coder.md")),
             (AgentId::Tester, include_str!("../harnesses/tester.md")),
             (AgentId::LocalCr, include_str!("../harnesses/local_cr.md")),
-            (AgentId::InternalFix, include_str!("../harnesses/internal_fix.md")),
+            (
+                AgentId::InternalFix,
+                include_str!("../harnesses/internal_fix.md"),
+            ),
         ]);
         Self {
             shared: include_str!("../harnesses/shared.md"),
