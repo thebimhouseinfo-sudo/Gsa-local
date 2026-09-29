@@ -44,19 +44,24 @@ Gate:
 - restart cannot skip or duplicate a due Tester checkpoint.
 
 ### A4 — Phase 5 Planner evidence planning
-- [ ] Planner may declare that a later architecture decision depends on unknown runtime evidence.
-- [ ] Planner must label unresolved runtime facts instead of inventing values.
-- [ ] Planning packet can consume prior durable OBSERVED Tester evidence when relevant.
-- [ ] Missing required empirical evidence must become PLAN_GAP/BLOCKED input, not a guessed value.
+- [ ] Add first-class `EvidenceNeed / UnknownRuntimeFact` to PlanArtifact.
+- [ ] Extend `submit_plan` schema and validation for evidence-needs ids, purpose, required/optional flag, intended consumer, expected mode and acceptance/measurement intent.
+- [ ] Include EvidenceNeed in plan hash/revision so Reviewer/CR approve the empirical contract itself.
+- [ ] Planner may resolve a need from prior compatible OBSERVED evidence only when EvidenceApplicability holds.
+- [ ] Unresolved required runtime facts remain explicit; never replace them with guessed values.
+- [ ] Job Builder receives EvidenceNeed directly from the approved plan.
 
 Gate:
-- Planner still does not create Job Packs/Milestones itself.
+- Planner still does not create Job Packs/Milestones itself;
+- evidence needs survive Planner → Reviewer/CR → PLAN_APPROVED → Job Builder without prose re-inference.
 
 ## B. Job Builder and execution graph — major impact
 
 ### B1 — TestCheckpointSpec
 - [ ] Add explicit checkpoint id.
-- [ ] Bind checkpoint to milestone + reviewed Job Pack boundary.
+- [ ] Add explicit boundary kind: AFTER_JOBPACK_SET / BEFORE_JOBPACK / MILESTONE_GATE or equivalent.
+- [ ] Add prerequisite Job Pack set + required reviewed/completed condition.
+- [ ] Allow one checkpoint to depend on multiple Job Packs/integrated milestone state.
 - [ ] Add modes: VERIFY / MEASURE / PROBE.
 - [ ] Add goal and acceptance/measurement criteria.
 - [ ] Add required capabilities.
@@ -86,12 +91,15 @@ Gate:
 
 ### C1 — checkpoint boundary resolution
 - [ ] Detect when active execution reaches a declared checkpoint boundary.
+- [ ] Evaluate every prerequisite Job Pack in the checkpoint prerequisite set.
+- [ ] Support single-slice, multi-slice and milestone-gate checkpoints.
 - [ ] Do not infer checkpoint from generic Reviewer PASS.
 - [ ] Stop progression when a required checkpoint becomes DUE.
 - [ ] Return control after SATISFIED without marking Job Pack/Milestone DONE.
 
 ### C2 — downstream evidence resolution
 - [ ] Resolve EvidenceRequirement before activating consuming work.
+- [ ] Evaluate EvidenceApplicability against current product/config/runtime/environment dimensions.
 - [ ] Inject exact OBSERVED evidence refs/values into ActiveWork.
 - [ ] Block activation on missing/stale/incompatible evidence.
 
@@ -181,14 +189,31 @@ Gate:
 - [ ] OBSERVED.
 - [ ] IMPLICATION.
 - [ ] UNRESOLVED.
+- [ ] Add EvidenceApplicability for each reusable output.
+- [ ] Declare dependent product/config/runtime/environment dimensions.
+- [ ] Declare invalidating changes and revalidation policy.
 - [ ] Only compatible OBSERVED evidence may satisfy a required measured input.
 - [ ] Persist stable refs/hashes.
 
-### F7 — retest
+### F7 — crash-safe checkpoint resume
+- [ ] Bind DUE/RUNNING/SATISFIED/BLOCKED/NEEDS_HUMAN to latest_checkpoint transactionally.
+- [ ] Persist exact checkpoint + attempt identity.
+- [ ] Resume a crashed RUNNING attempt by explicit recovery policy.
+- [ ] Execution lease must prevent duplicate attempts.
+
+### F8 — retest
 - [ ] New reviewed target gets new attempt identity.
 - [ ] Rerun prior failing tests.
 - [ ] Rerun relevant regression.
 - [ ] Old PASS/evidence cannot satisfy new target automatically.
+
+## F9 — SPEC_GAP / replanning
+- [ ] Tester may emit SPEC_GAP/PLAN_GAP evidence but cannot modify checkpoint topology.
+- [ ] Material gap pauses current graph.
+- [ ] Route to Planner/Human for a new PlanArtifact revision.
+- [ ] New topology requires Reviewer + Local CR again.
+- [ ] Job Builder registers a superseding graph only after approval.
+- [ ] Non-material in-scope test adaptation does not force replanning.
 
 ## G. Phase 11 impact — Local CR / Job Pack completion
 
@@ -232,14 +257,16 @@ Add negative coverage:
 ## Execution order before coding resumes
 
 1. Reconcile architecture docs and superseded partial Phase 10 code assumptions.
-2. Update ExecutionGraph + Job Builder checkpoint/evidence schema.
-3. Update Registry checkpoint/evidence state.
-4. Update Controller checkpoint/evidence dependency resolution.
-5. Update harness contracts.
-6. Build Tester workspace + evidence model.
-7. Build Tester sandbox/execution loop.
-8. Add orchestration + retest.
-9. Add downstream evidence injection.
-10. Run regression/CI.
-11. Reviewer.
-12. Stop. Do not enter Phase 11 automatically.
+2. Add PlanArtifact EvidenceNeed + submit_plan contract.
+3. Update ExecutionGraph + Job Builder checkpoint/evidence topology, including multi-JobPack/milestone prerequisites.
+4. Update Registry checkpoint/evidence/applicability state.
+5. Update Controller checkpoint/evidence dependency resolution.
+6. Update harness contracts.
+7. Build Tester workspace + evidence model.
+8. Build Tester sandbox/execution loop.
+9. Add checkpoint orchestration + transactional resume.
+10. Add retest + downstream evidence injection.
+11. Add SPEC_GAP → new plan revision → Reviewer/CR → superseding graph path.
+12. Run regression/CI.
+13. Reviewer.
+14. Stop. Do not enter Phase 11 automatically.
