@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::BTreeMap,
     fs,
     io::{Read, Write},
     path::{Component, Path, PathBuf},
@@ -86,6 +87,27 @@ impl ProjectToolRuntime {
     pub fn change_set_id(&self) -> Result<String> {
         let canonical = serde_json::to_vec(&self.journal)?;
         Ok(sha256_bytes(&canonical))
+    }
+
+    pub fn verify_journal_current(&self) -> Result<()> {
+        let mut final_hashes = BTreeMap::new();
+        for mutation in &self.journal {
+            final_hashes.insert(mutation.path.as_str(), mutation.after_sha256.as_str());
+        }
+
+        for (path, expected) in final_hashes {
+            let resolved = self.resolve_existing(path, false)?;
+            let current = sha256_file(&resolved)?;
+            if current != expected {
+                bail!(
+                    "stale change set: {} expected {}, current {}",
+                    path,
+                    expected,
+                    current
+                );
+            }
+        }
+        Ok(())
     }
 
     fn require_read(&self, agent: AgentId) -> Result<()> {
