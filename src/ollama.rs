@@ -210,8 +210,10 @@ mod tests {
         assert!(emitted.is_empty());
 
         pending.extend_from_slice(&bytes[split_inside_multibyte..]);
-        consume_complete_lines(&mut pending, &mut full, &mut |token| emitted.push_str(token))
-            .unwrap();
+        consume_complete_lines(&mut pending, &mut full, &mut |token| {
+            emitted.push_str(token)
+        })
+        .unwrap();
 
         assert_eq!(full, "Việt");
         assert_eq!(emitted, "Việt");
