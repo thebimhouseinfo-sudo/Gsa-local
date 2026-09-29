@@ -119,6 +119,100 @@ fn new_plan_revision_invalidates_prior_approval_binding() {
 }
 
 #[test]
+fn identical_plan_content_can_form_a_new_revision_without_crashing() {
+    let dir = tempdir().unwrap();
+    let registry = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    registry.begin_plan_workflow().unwrap();
+
+    let artifact = sample("same");
+    let first = registry.persist_plan_revision(&artifact).unwrap();
+    let second = registry.persist_plan_revision(&artifact).unwrap();
+
+    assert_eq!(first.hash, second.hash);
+    assert_eq!(second.revision, first.revision + 1);
+}
+
+#[test]
+fn latest_reviewer_revise_invalidates_older_reviewer_pass() {
+    let dir = tempdir().unwrap();
+    let registry = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    registry.begin_plan_workflow().unwrap();
+    let plan = registry.persist_plan_revision(&sample("latest reviewer")).unwrap();
+
+    registry
+        .record_plan_verdict(
+            ReviewActor::Reviewer,
+            plan.revision,
+            &plan.hash,
+            ReviewVerdict::Pass,
+            &[],
+        )
+        .unwrap();
+    registry
+        .record_plan_verdict(
+            ReviewActor::Reviewer,
+            plan.revision,
+            &plan.hash,
+            ReviewVerdict::Revise,
+            &["new issue".into()],
+        )
+        .unwrap();
+    registry
+        .record_plan_verdict(
+            ReviewActor::LocalCr,
+            plan.revision,
+            &plan.hash,
+            ReviewVerdict::Pass,
+            &[],
+        )
+        .unwrap();
+
+    assert!(registry
+        .approve_current_plan(plan.revision, &plan.hash)
+        .is_err());
+}
+
+#[test]
+fn latest_cr_revise_invalidates_older_cr_pass() {
+    let dir = tempdir().unwrap();
+    let registry = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    registry.begin_plan_workflow().unwrap();
+    let plan = registry.persist_plan_revision(&sample("latest cr")).unwrap();
+
+    registry
+        .record_plan_verdict(
+            ReviewActor::Reviewer,
+            plan.revision,
+            &plan.hash,
+            ReviewVerdict::Pass,
+            &[],
+        )
+        .unwrap();
+    registry
+        .record_plan_verdict(
+            ReviewActor::LocalCr,
+            plan.revision,
+            &plan.hash,
+            ReviewVerdict::Pass,
+            &[],
+        )
+        .unwrap();
+    registry
+        .record_plan_verdict(
+            ReviewActor::LocalCr,
+            plan.revision,
+            &plan.hash,
+            ReviewVerdict::Revise,
+            &["late CR issue".into()],
+        )
+        .unwrap();
+
+    assert!(registry
+        .approve_current_plan(plan.revision, &plan.hash)
+        .is_err());
+}
+
+#[test]
 fn reviewer_revision_and_cr_fix_routes_are_enforced() {
     let mut route = PlanningRoute::new(3);
     assert!(route.enter_reviewer());
