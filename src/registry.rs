@@ -1055,6 +1055,27 @@ impl Registry {
 
         tx.execute(
             r#"
+            UPDATE execution_checklist_items
+            SET checked=0
+            WHERE graph_version=?1
+              AND todo_id IN (
+                  SELECT todo_id FROM execution_todos
+                  WHERE graph_version=?1 AND jobpack_id=?2
+              )
+            "#,
+            params![graph_version, jobpack_id],
+        )?;
+        tx.execute(
+            r#"
+            UPDATE execution_todos
+            SET status='PENDING'
+            WHERE graph_version=?1 AND jobpack_id=?2
+            "#,
+            params![graph_version, jobpack_id],
+        )?;
+
+        tx.execute(
+            r#"
             INSERT INTO code_workflow_state
                 (id, graph_version, jobpack_id, change_set_id,
                  coder_attempts, reviewer_attempts, status)
