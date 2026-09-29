@@ -451,7 +451,7 @@ impl<'a> PlanningWorkflow<'a> {
                 let graph = submission
                     .graph
                     .context("Job Builder READY submission is missing graph")?;
-                graph.validate()?;
+                graph.validate_against_plan(&current.artifact)?;
                 Ok(graph)
             }
             "PLAN_GAP" => {
@@ -1320,9 +1320,109 @@ fn execution_graph_tool() -> ToolDefinition {
                                     "checklist": {"type": "array", "items": {"type": "string"}}
                                 }
                             }
+                        },
+                        "checkpoints": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": [
+                                    "id", "milestone_id", "boundary", "prerequisites",
+                                    "evidence_need_ids", "modes", "goal", "criteria",
+                                    "required_capabilities", "experiment_dimensions",
+                                    "evidence_outputs"
+                                ],
+                                "properties": {
+                                    "id": {"type": "string", "minLength": 1},
+                                    "milestone_id": {"type": "string", "minLength": 1},
+                                    "boundary": {
+                                        "type": "string",
+                                        "enum": ["AFTER_JOBPACK_SET", "BEFORE_JOBPACK", "MILESTONE_GATE"]
+                                    },
+                                    "prerequisites": {
+                                        "type": "array",
+                                        "items": {
+                                            "type": "object",
+                                            "required": ["jobpack_id", "state"],
+                                            "properties": {
+                                                "jobpack_id": {"type": "string", "minLength": 1},
+                                                "state": {
+                                                    "type": "string",
+                                                    "enum": ["REVIEW_PASS", "DONE"]
+                                                }
+                                            }
+                                        }
+                                    },
+                                    "before_jobpack_id": {"type": ["string", "null"]},
+                                    "evidence_need_ids": {
+                                        "type": "array",
+                                        "items": {"type": "string", "minLength": 1}
+                                    },
+                                    "modes": {
+                                        "type": "array",
+                                        "minItems": 1,
+                                        "items": {
+                                            "type": "string",
+                                            "enum": ["VERIFY", "MEASURE", "PROBE"]
+                                        }
+                                    },
+                                    "goal": {"type": "string", "minLength": 1},
+                                    "criteria": {
+                                        "type": "array",
+                                        "minItems": 1,
+                                        "items": {"type": "string", "minLength": 1}
+                                    },
+                                    "required_capabilities": {
+                                        "type": "array",
+                                        "items": {"type": "string", "minLength": 1}
+                                    },
+                                    "experiment_dimensions": {
+                                        "type": "array",
+                                        "items": {"type": "string", "minLength": 1}
+                                    },
+                                    "evidence_outputs": {
+                                        "type": "array",
+                                        "minItems": 1,
+                                        "items": {
+                                            "type": "object",
+                                            "required": [
+                                                "id", "mode", "description", "required"
+                                            ],
+                                            "properties": {
+                                                "id": {"type": "string", "minLength": 1},
+                                                "mode": {
+                                                    "type": "string",
+                                                    "enum": ["VERIFY", "MEASURE", "PROBE"]
+                                                },
+                                                "description": {"type": "string", "minLength": 1},
+                                                "required": {"type": "boolean"},
+                                                "evidence_need_id": {"type": ["string", "null"]}
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "evidence_requirements": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "required": [
+                                    "consumer_jobpack_id", "checkpoint_id",
+                                    "output_id", "required"
+                                ],
+                                "properties": {
+                                    "consumer_jobpack_id": {"type": "string", "minLength": 1},
+                                    "checkpoint_id": {"type": "string", "minLength": 1},
+                                    "output_id": {"type": "string", "minLength": 1},
+                                    "required": {"type": "boolean"}
+                                }
+                            }
                         }
                     },
-                    "required": ["milestones", "jobpacks", "todos"]
+                    "required": [
+                        "milestones", "jobpacks", "todos",
+                        "checkpoints", "evidence_requirements"
+                    ]
                 }
             }
         }),
@@ -1409,6 +1509,29 @@ mod tests {
         assert_eq!(
             evidence["items"]["properties"]["modes"]["items"]["enum"],
             serde_json::json!(["VERIFY", "MEASURE", "PROBE"])
+        );
+    }
+
+    #[test]
+    fn execution_graph_contract_requires_checkpoint_and_evidence_arrays() {
+        let tool = execution_graph_tool();
+        let graph = &tool.function.parameters["properties"]["graph"];
+        let required = graph["required"].as_array().unwrap();
+        assert!(required.iter().any(|item| item == "checkpoints"));
+        assert!(required.iter().any(|item| item == "evidence_requirements"));
+
+        let checkpoint = &graph["properties"]["checkpoints"]["items"];
+        assert_eq!(
+            checkpoint["properties"]["boundary"]["enum"],
+            serde_json::json!([
+                "AFTER_JOBPACK_SET",
+                "BEFORE_JOBPACK",
+                "MILESTONE_GATE"
+            ])
+        );
+        assert_eq!(
+            checkpoint["properties"]["prerequisites"]["items"]["properties"]["state"]["enum"],
+            serde_json::json!(["REVIEW_PASS", "DONE"])
         );
     }
 
