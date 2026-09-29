@@ -190,7 +190,8 @@ mod tests {
             },
             "done": false
         }))
-        .unwrap() + "\n";
+        .unwrap()
+            + "\n";
 
         let marker = line.find('ệ').unwrap();
         let split_inside_multibyte = marker + 1;
@@ -201,8 +202,10 @@ mod tests {
         let mut emitted = String::new();
 
         pending.extend_from_slice(&bytes[..split_inside_multibyte]);
-        consume_complete_lines(&mut pending, &mut full, &mut |token| emitted.push_str(token))
-            .unwrap();
+        consume_complete_lines(&mut pending, &mut full, &mut |token| {
+            emitted.push_str(token)
+        })
+        .unwrap();
         assert!(full.is_empty());
         assert!(emitted.is_empty());
 
