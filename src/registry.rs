@@ -2124,6 +2124,38 @@ impl Registry {
         Ok(())
     }
 
+    pub fn latest_post_review_failure_findings(
+        &self,
+        graph_version: i64,
+        jobpack_id: &str,
+        change_set_id: &str,
+    ) -> Result<Vec<String>> {
+        let mut statement = self.conn.prepare(
+            "SELECT payload FROM events WHERE kind='POST_REVIEW_FAILURE_ROUTED' ORDER BY sequence DESC",
+        )?;
+        let payloads = statement.query_map([], |row| row.get::<_, String>(0))?;
+        for payload in payloads {
+            let payload = payload?;
+            let value: serde_json::Value = serde_json::from_str(&payload)?;
+            if value["graph_version"].as_i64() != Some(graph_version)
+                || value["jobpack"].as_str() != Some(jobpack_id)
+                || value["change_set_id"].as_str() != Some(change_set_id)
+            {
+                continue;
+            }
+            let findings = serde_json::from_value::<Vec<String>>(
+                value.get("findings").cloned().unwrap_or_else(|| serde_json::json!([])),
+            )?;
+            return Ok(findings);
+        }
+        bail!(
+            "no post-review failure findings found for graph={} jobpack={} change_set={}",
+            graph_version,
+            jobpack_id,
+            change_set_id
+        )
+    }
+
     pub fn checklist_checked(
         &self,
         graph_version: i64,
