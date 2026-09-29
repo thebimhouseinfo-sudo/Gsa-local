@@ -509,6 +509,413 @@ impl<'a> PlanningWorkflow<'a> {
     }
 }
 
+pub struct CodingWorkflow<'a> {
+    ollama: &'a OllamaClient,
+    harnesses: &'a HarnessRegistry,
+    registry: &'a Registry,
+    config: &'a AppConfig,
+    session: &'a Session,
+    project_root: &'a Path,
+    lease_owner: &'a str,
+    max_attempts: u32,
+}
+
+impl<'a> CodingWorkflow<'a> {
+    pub fn new(
+        ollama: &'a OllamaClient,
+        harnesses: &'a HarnessRegistry,
+        registry: &'a Registry,
+        config: &'a AppConfig,
+        session: &'a Session,
+        project_root: &'a Path,
+        lease_owner: &'a str,
+    ) -> Self {
+        Self {
+            ollama,
+            harnesses,
+            registry,
+            config,
+            session,
+            project_root,
+            lease_owner,
+            max_attempts: DEFAULT_MAX_ATTEMPTS,
+        }
+    }
+
+    #[cfg(test)]
+    pub fn with_max_attempts(mut self, max_attempts: u32) -> Self {
+        self.max_attempts = max_attempts;
+        self
+    }
+
+    pub async fn run(
+        &self,
+        requirement: &str,
+        active_work: &ActiveWork,
+        tool_runtime: &mut ProjectToolRuntime,
+    ) -> Result<CodingOutcome> {
+        self.registry.begin_code_workflow(
+            self.project_root,
+            self.lease_owner,
+            active_work.graph_version,
+            &active_work.jobpack_id,
+        )?;
+        tool_runtime.clear_journal();
+
+        let mut coder_attempts = 1u32;
+        let mut reviewer_attempts = 0u32;
+        let mut tasks = self
+            .registry
+            .jobpack_code_tasks(active_work.graph_version, &active_work.jobpack_id)?;
+        let mut checkpoint = self
+            .invoke_code_agent(
+                AgentId::Coder,
+                requirement,
+                active_work,
+                &tasks,
+                &[],
+                None,
+                tool_runtime,
+            )
+            .await?;
+        let mut change_set_id = self.persist_code_checkpoint(
+            active_work,
+            &checkpoint,
+            tool_runtime,
+            coder_attempts,
+            reviewer_attempts,
+        )?;
+
+        loop {
+            if reviewer_attempts >= self.max_attempts {
+                return self.pause(
+                    active_work,
+                    Some(change_set_id),
+                    coder_attempts,
+                    reviewer_attempts,
+                    "Reviewer attempt limit exhausted",
+                );
+            }
+            if let Err(error) = tool_runtime.verify_journal_current() {
+                return self.pause(
+                    active_work,
+                    Some(change_set_id),
+                    coder_attempts,
+                    reviewer_attempts,
+                    &format!("stale change set before review: {error:#}"),
+                );
+            }
+
+            reviewer_attempts += 1;
+            tasks = self
+                .registry
+                .jobpack_code_tasks(active_work.graph_version, &active_work.jobpack_id)?;
+            let review = self
+                .invoke_code_reviewer(
+                    requirement,
+                    active_work,
+                    &tasks,
+                    &checkpoint,
+                    &change_set_id,
+                    tool_runtime,
+                )
+                .await?;
+
+            if let Err(error) = tool_runtime.verify_journal_current() {
+                return self.pause(
+                    active_work,
+                    Some(change_set_id),
+                    coder_attempts,
+                    reviewer_attempts,
+                    &format!("stale change set after review: {error:#}"),
+                );
+            }
+
+            let verdict = match review.verdict.as_str() {
+                "PASS" => ReviewVerdict::Pass,
+                "CHANGES_REQUIRED" => ReviewVerdict::Revise,
+                other => bail!("Reviewer returned unsupported code verdict {other}"),
+            };
+            self.registry.record_code_review(
+                self.project_root,
+                self.lease_owner,
+                active_work.graph_version,
+                &active_work.jobpack_id,
+                &change_set_id,
+                verdict,
+                &review.findings,
+                coder_attempts,
+                reviewer_attempts,
+            )?;
+
+            if verdict == ReviewVerdict::Pass {
+                return Ok(CodingOutcome::ReviewPass { change_set_id });
+            }
+
+            if coder_attempts >= self.max_attempts {
+                return self.pause(
+                    active_work,
+                    Some(change_set_id),
+                    coder_attempts,
+                    reviewer_attempts,
+                    "Internal Fix attempt limit exhausted",
+                );
+            }
+
+            coder_attempts += 1;
+            tasks = self
+                .registry
+                .jobpack_code_tasks(active_work.graph_version, &active_work.jobpack_id)?;
+            checkpoint = self
+                .invoke_code_agent(
+                    AgentId::InternalFix,
+                    requirement,
+                    active_work,
+                    &tasks,
+                    &review.findings,
+                    Some(&checkpoint),
+                    tool_runtime,
+                )
+                .await?;
+            change_set_id = self.persist_code_checkpoint(
+                active_work,
+                &checkpoint,
+                tool_runtime,
+                coder_attempts,
+                reviewer_attempts,
+            )?;
+        }
+    }
+
+    fn persist_code_checkpoint(
+        &self,
+        active_work: &ActiveWork,
+        checkpoint: &CodeCheckpointSubmission,
+        tool_runtime: &ProjectToolRuntime,
+        coder_attempts: u32,
+        reviewer_attempts: u32,
+    ) -> Result<String> {
+        tool_runtime.verify_journal_current()?;
+        let change_set_id = tool_runtime.change_set_id()?;
+        let journal = serde_json::to_value(tool_runtime.journal())?;
+        self.registry.record_code_checkpoint(
+            self.project_root,
+            self.lease_owner,
+            active_work.graph_version,
+            &active_work.jobpack_id,
+            &change_set_id,
+            &checkpoint.summary,
+            &checkpoint.completed_checklist,
+            &checkpoint.goal_recheck,
+            &journal,
+            coder_attempts,
+            reviewer_attempts,
+        )?;
+        Ok(change_set_id)
+    }
+
+    fn pause(
+        &self,
+        active_work: &ActiveWork,
+        change_set_id: Option<String>,
+        coder_attempts: u32,
+        reviewer_attempts: u32,
+        reason: &str,
+    ) -> Result<CodingOutcome> {
+        self.registry.pause_code_workflow(
+            self.project_root,
+            self.lease_owner,
+            active_work.graph_version,
+            &active_work.jobpack_id,
+            coder_attempts,
+            reviewer_attempts,
+            reason,
+        )?;
+        Ok(CodingOutcome::Paused {
+            change_set_id,
+            reason: reason.to_owned(),
+        })
+    }
+
+    async fn invoke_code_agent(
+        &self,
+        agent: AgentId,
+        requirement: &str,
+        active_work: &ActiveWork,
+        tasks: &[CodeTodoState],
+        findings: &[String],
+        previous: Option<&CodeCheckpointSubmission>,
+        tool_runtime: &mut ProjectToolRuntime,
+    ) -> Result<CodeCheckpointSubmission> {
+        let model = self.model_for(agent).await?;
+        let mut system = self.harnesses.compose(agent)?;
+        system.push_str(&format!(
+            "\n\nPROJECT ROOT: {}\nWork only on the supplied ACTIVE Job Pack. Use project tools for real source work. Call submit_code_checkpoint only after source edits are complete; it must be the only tool call in that response.",
+            self.project_root.display()
+        ));
+        let packet = json!({
+            "original_instruction": requirement,
+            "active_work": active_work_packet(active_work),
+            "tasks": tasks,
+            "review_findings": findings,
+            "previous_checkpoint": previous.map(|item| json!({
+                "summary": item.summary,
+                "completed_checklist": item.completed_checklist,
+                "goal_recheck": item.goal_recheck
+            })),
+            "instruction": if agent == AgentId::Coder {
+                "Implement the current ACTIVE Job Pack only. Inspect live source before writing. Submit claims only for checklist items actually satisfied by this checkpoint."
+            } else {
+                "Repair only the supplied Reviewer findings inside the same ACTIVE Job Pack. Preserve unrelated changes. Submit a complete revised checkpoint."
+            }
+        });
+        let mut messages = vec![ChatMessage::system(system), ChatMessage::user(packet.to_string())];
+        let mut definitions = tool_runtime.tool_definitions(agent);
+        definitions.push(code_checkpoint_tool());
+
+        for round in 0..8usize {
+            let response = self
+                .ollama
+                .chat_stream_with_tools(&model, &messages, &definitions, |_| {})
+                .await?;
+            let calls = response.tool_calls.clone();
+            messages.push(response);
+
+            if calls.is_empty() {
+                bail!(
+                    "{} stopped without submit_code_checkpoint",
+                    agent.display_name()
+                );
+            }
+            if calls.iter().any(|call| call.function.name == "submit_code_checkpoint") {
+                if calls.len() != 1 || calls[0].function.name != "submit_code_checkpoint" {
+                    bail!("submit_code_checkpoint must be the only tool call in its response");
+                }
+                return serde_json::from_value(calls[0].function.arguments.clone())
+                    .context("invalid submit_code_checkpoint arguments");
+            }
+
+            if round + 1 >= 8 {
+                bail!("{} exceeded coding tool rounds", agent.display_name());
+            }
+            for call in calls {
+                messages.push(execute_project_tool_message(agent, tool_runtime, &call));
+            }
+        }
+        unreachable!("bounded coding tool loop must return or fail")
+    }
+
+    async fn invoke_code_reviewer(
+        &self,
+        requirement: &str,
+        active_work: &ActiveWork,
+        tasks: &[CodeTodoState],
+        checkpoint: &CodeCheckpointSubmission,
+        change_set_id: &str,
+        tool_runtime: &mut ProjectToolRuntime,
+    ) -> Result<CodeReviewDecision> {
+        let model = self.model_for(AgentId::Reviewer).await?;
+        let mut system = self.harnesses.compose(AgentId::Reviewer)?;
+        system.push_str(&format!(
+            "\n\nPROJECT ROOT: {}\nThis is a fresh read-only code review. Inspect source with read tools as needed. Call submit_code_review only after forming the exact-target verdict; it must be the only tool call in that response.",
+            self.project_root.display()
+        ));
+        let packet = json!({
+            "original_instruction": requirement,
+            "active_work": active_work_packet(active_work),
+            "tasks": tasks,
+            "target": {
+                "graph_version": active_work.graph_version,
+                "jobpack_id": active_work.jobpack_id,
+                "change_set_id": change_set_id,
+                "mutation_journal": tool_runtime.journal()
+            },
+            "coder_checkpoint": {
+                "summary": checkpoint.summary,
+                "completed_checklist": checkpoint.completed_checklist,
+                "goal_recheck": checkpoint.goal_recheck
+            },
+            "instruction": "Review only this exact current change set. Return PASS or CHANGES_REQUIRED with actionable findings. Do not repair source."
+        });
+        let mut messages = vec![ChatMessage::system(system), ChatMessage::user(packet.to_string())];
+        let mut definitions = tool_runtime.tool_definitions(AgentId::Reviewer);
+        definitions.push(code_review_tool());
+
+        for round in 0..8usize {
+            let response = self
+                .ollama
+                .chat_stream_with_tools(&model, &messages, &definitions, |_| {})
+                .await?;
+            let calls = response.tool_calls.clone();
+            messages.push(response);
+
+            if calls.is_empty() {
+                bail!("Reviewer stopped without submit_code_review");
+            }
+            if calls.iter().any(|call| call.function.name == "submit_code_review") {
+                if calls.len() != 1 || calls[0].function.name != "submit_code_review" {
+                    bail!("submit_code_review must be the only tool call in its response");
+                }
+                return serde_json::from_value(calls[0].function.arguments.clone())
+                    .context("invalid submit_code_review arguments");
+            }
+
+            if round + 1 >= 8 {
+                bail!("Reviewer exceeded code review tool rounds");
+            }
+            for call in calls {
+                messages.push(execute_project_tool_message(
+                    AgentId::Reviewer,
+                    tool_runtime,
+                    &call,
+                ));
+            }
+        }
+        unreachable!("bounded Reviewer tool loop must return or fail")
+    }
+
+    async fn model_for(&self, agent: AgentId) -> Result<String> {
+        if let Some(model) = self.session.resolved_model(self.config, agent) {
+            return Ok(model.to_owned());
+        }
+        self.ollama
+            .list_models()
+            .await?
+            .into_iter()
+            .next()
+            .context("no Ollama model is configured or installed")
+    }
+}
+
+fn execute_project_tool_message(
+    agent: AgentId,
+    tool_runtime: &mut ProjectToolRuntime,
+    call: &ToolCall,
+) -> ChatMessage {
+    let payload = match tool_runtime.execute(agent, &call.function.name, &call.function.arguments) {
+        Ok(result) => json!({"ok": true, "result": result}),
+        Err(error) => json!({"ok": false, "error": format!("{error:#}")}),
+    };
+    ChatMessage::tool(call.function.name.clone(), payload.to_string())
+}
+
+fn active_work_packet(active_work: &ActiveWork) -> serde_json::Value {
+    json!({
+        "graph_version": active_work.graph_version,
+        "plan_revision": active_work.plan_revision,
+        "plan_hash": active_work.plan_hash,
+        "milestone_id": active_work.milestone_id,
+        "milestone_title": active_work.milestone_title,
+        "jobpack_id": active_work.jobpack_id,
+        "jobpack_title": active_work.jobpack_title,
+        "goal": active_work.goal,
+        "required_inputs": active_work.required_inputs,
+        "expected_outputs": active_work.expected_outputs,
+        "acceptance": active_work.acceptance,
+        "verification_hints": active_work.verification_hints
+    })
+}
+
 fn build_project_context(root: &Path) -> Result<ProjectContext> {
     let root = root.canonicalize()?;
     let mut pending = vec![root.clone()];
