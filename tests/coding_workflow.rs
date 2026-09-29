@@ -109,7 +109,6 @@ fn journal() -> serde_json::Value {
         "after_sha256": "after"
     }])
 }
-
 #[test]
 fn active_jobpack_tasks_are_scoped_and_ordered() {
     let (_dir, registry, version) = setup();
@@ -122,7 +121,6 @@ fn active_jobpack_tasks_are_scoped_and_ordered() {
     assert_eq!(tasks[0].checklist[0].position, 1);
     assert!(!tasks[0].checklist[0].checked);
 }
-
 #[test]
 fn checklist_claims_remain_deferred_until_exact_reviewer_pass() {
     let (dir, registry, version) = setup();
@@ -200,7 +198,6 @@ fn checklist_claims_remain_deferred_until_exact_reviewer_pass() {
         "REVIEW_PASS"
     );
 }
-
 #[test]
 fn reviewer_revise_does_not_commit_completion_claims() {
     let (dir, registry, version) = setup();
@@ -257,7 +254,6 @@ fn reviewer_revise_does_not_commit_completion_claims() {
         "INTERNAL_FIX"
     );
 }
-
 #[test]
 fn foreign_checklist_claim_and_stale_jobpack_are_rejected() {
     let (dir, registry, version) = setup();
@@ -289,7 +285,6 @@ fn foreign_checklist_claim_and_stale_jobpack_are_rejected() {
         .begin_code_workflow(dir.path(), "owner-a", version, "JP2")
         .is_err());
 }
-
 #[test]
 fn review_verdict_is_bound_to_exact_change_set() {
     let (dir, registry, version) = setup();
@@ -332,7 +327,6 @@ fn review_verdict_is_bound_to_exact_change_set() {
         None
     );
 }
-
 #[test]
 fn later_revise_is_latest_for_the_same_exact_target() {
     let (dir, registry, version) = setup();
@@ -407,7 +401,6 @@ fn later_revise_is_latest_for_the_same_exact_target() {
         Some("PASS")
     );
 }
-
 #[test]
 fn code_state_rejects_out_of_order_checkpoint_and_review_attempts() {
     let (dir, registry, version) = setup();
@@ -534,7 +527,6 @@ fn code_state_rejects_out_of_order_checkpoint_and_review_attempts() {
         )
         .is_err());
 }
-
 
 #[test]
 fn new_code_workflow_invalidates_prior_checklist_completion() {
