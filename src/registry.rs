@@ -144,6 +144,44 @@ impl Registry {
             );
             "#,
         )?;
+        self.migrate_plan_revision_hash_schema()?;
+        Ok(())
+    }
+
+    fn migrate_plan_revision_hash_schema(&self) -> Result<()> {
+        let sql: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='plan_revisions'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        let Some(sql) = sql else {
+            return Ok(());
+        };
+        if !sql.to_ascii_uppercase().contains("PLAN_HASH TEXT NOT NULL UNIQUE") {
+            return Ok(());
+        }
+
+        self.conn.execute_batch(
+            r#"
+            BEGIN IMMEDIATE;
+            ALTER TABLE plan_revisions RENAME TO plan_revisions_legacy;
+            CREATE TABLE plan_revisions (
+                revision INTEGER PRIMARY KEY,
+                plan_hash TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+            INSERT INTO plan_revisions (revision, plan_hash, content, created_at)
+            SELECT revision, plan_hash, content, created_at
+            FROM plan_revisions_legacy;
+            DROP TABLE plan_revisions_legacy;
+            COMMIT;
+            "#,
+        )?;
         Ok(())
     }
 
@@ -266,19 +304,27 @@ impl Registry {
     }
 
     pub fn has_pass(&self, actor: ReviewActor, revision: i64, hash: &str) -> Result<bool> {
-        let found: Option<i64> = self
-            .conn
+        Ok(self.latest_verdict(actor, revision, hash)?.as_deref() == Some("PASS"))
+    }
+
+    fn latest_verdict(
+        &self,
+        actor: ReviewActor,
+        revision: i64,
+        hash: &str,
+    ) -> Result<Option<String>> {
+        self.conn
             .query_row(
                 r#"
-                SELECT id FROM plan_verdicts
-                WHERE actor=?1 AND revision=?2 AND plan_hash=?3 AND verdict='PASS'
+                SELECT verdict FROM plan_verdicts
+                WHERE actor=?1 AND revision=?2 AND plan_hash=?3
                 ORDER BY id DESC LIMIT 1
                 "#,
                 params![actor.as_str(), revision, hash],
                 |row| row.get(0),
             )
-            .optional()?;
-        Ok(found.is_some())
+            .optional()
+            .map_err(Into::into)
     }
 
     pub fn workflow_state(&self) -> Result<PlanWorkflowState> {
@@ -347,19 +393,19 @@ impl Registry {
         }
 
         for actor in [ReviewActor::Reviewer, ReviewActor::LocalCr] {
-            let pass: Option<i64> = tx
+            let latest: Option<String> = tx
                 .query_row(
                     r#"
-                    SELECT id FROM plan_verdicts
-                    WHERE actor=?1 AND revision=?2 AND plan_hash=?3 AND verdict='PASS'
+                    SELECT verdict FROM plan_verdicts
+                    WHERE actor=?1 AND revision=?2 AND plan_hash=?3
                     ORDER BY id DESC LIMIT 1
                     "#,
                     params![actor.as_str(), revision, hash],
                     |row| row.get(0),
                 )
                 .optional()?;
-            if pass.is_none() {
-                bail!("cannot approve plan without {} PASS", actor.as_str());
+            if latest.as_deref() != Some("PASS") {
+                bail!("cannot approve plan without latest {} verdict PASS", actor.as_str());
             }
         }
 
@@ -701,6 +747,79 @@ mod tests {
 
         let result = registry.acquire_lease(dir.path(), "pid:999999", Duration::from_secs(0));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn duplicate_plan_hashes_are_allowed_across_revisions() {
+        let (_dir, registry) = registry();
+        registry.begin_plan_workflow().unwrap();
+        let artifact = crate::plan::PlanArtifact {
+            goal: "same".into(),
+            current_architecture: "current".into(),
+            required_changes: vec!["change".into()],
+            implementation_approach: vec!["approach".into()],
+            dependencies: vec![],
+            sequence: vec!["step".into()],
+            risks: vec!["risk".into()],
+            acceptance_direction: vec!["acceptance".into()],
+        };
+
+        let first = registry.persist_plan_revision(&artifact).unwrap();
+        let second = registry.persist_plan_revision(&artifact).unwrap();
+        assert_eq!(first.hash, second.hash);
+        assert_eq!(second.revision, first.revision + 1);
+    }
+
+    #[test]
+    fn latest_revise_invalidates_older_pass() {
+        let (_dir, registry) = registry();
+        registry.begin_plan_workflow().unwrap();
+        let artifact = crate::plan::PlanArtifact {
+            goal: "approval".into(),
+            current_architecture: "current".into(),
+            required_changes: vec!["change".into()],
+            implementation_approach: vec!["approach".into()],
+            dependencies: vec![],
+            sequence: vec!["step".into()],
+            risks: vec!["risk".into()],
+            acceptance_direction: vec!["acceptance".into()],
+        };
+        let plan = registry.persist_plan_revision(&artifact).unwrap();
+
+        registry
+            .record_plan_verdict(
+                ReviewActor::Reviewer,
+                plan.revision,
+                &plan.hash,
+                ReviewVerdict::Pass,
+                &[],
+            )
+            .unwrap();
+        registry
+            .record_plan_verdict(
+                ReviewActor::Reviewer,
+                plan.revision,
+                &plan.hash,
+                ReviewVerdict::Revise,
+                &["new finding".into()],
+            )
+            .unwrap();
+        registry
+            .record_plan_verdict(
+                ReviewActor::LocalCr,
+                plan.revision,
+                &plan.hash,
+                ReviewVerdict::Pass,
+                &[],
+            )
+            .unwrap();
+
+        assert!(!registry
+            .has_pass(ReviewActor::Reviewer, plan.revision, &plan.hash)
+            .unwrap());
+        assert!(registry
+            .approve_current_plan(plan.revision, &plan.hash)
+            .is_err());
     }
 
     #[test]
