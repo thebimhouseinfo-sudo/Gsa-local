@@ -14,13 +14,26 @@ const MAX_LIST_RESULTS: usize = 500;
 const MAX_SEARCH_RESULTS: usize = 200;
 const MAX_READ_BYTES: usize = 64 * 1024;
 const MAX_SEARCH_FILE_BYTES: usize = 256 * 1024;
-const MAX_WRITE_BYTES: usize = 512 * 1024;
+const MAX_WRITE_BYTES: usize = MAX_READ_BYTES;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MutationRecord {
     pub path: String,
     pub before_sha256: Option<String>,
     pub after_sha256: String,
+    #[serde(skip, default)]
+    before_content: Option<String>,
+    #[serde(skip, default)]
+    after_content: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ChangeEvidence {
+    pub path: String,
+    pub before_sha256: Option<String>,
+    pub after_sha256: String,
+    pub before_content: Option<String>,
+    pub after_content: String,
 }
 
 #[derive(Debug)]
@@ -87,6 +100,31 @@ impl ProjectToolRuntime {
     pub fn change_set_id(&self) -> Result<String> {
         let canonical = serde_json::to_vec(&self.journal)?;
         Ok(sha256_bytes(&canonical))
+    }
+
+    pub fn review_evidence(&self) -> Vec<ChangeEvidence> {
+        let mut by_path: BTreeMap<&str, ChangeEvidence> = BTreeMap::new();
+        for mutation in &self.journal {
+            match by_path.get_mut(mutation.path.as_str()) {
+                Some(evidence) => {
+                    evidence.after_sha256 = mutation.after_sha256.clone();
+                    evidence.after_content = mutation.after_content.clone();
+                }
+                None => {
+                    by_path.insert(
+                        mutation.path.as_str(),
+                        ChangeEvidence {
+                            path: mutation.path.clone(),
+                            before_sha256: mutation.before_sha256.clone(),
+                            after_sha256: mutation.after_sha256.clone(),
+                            before_content: mutation.before_content.clone(),
+                            after_content: mutation.after_content.clone(),
+                        },
+                    );
+                }
+            }
+        }
+        by_path.into_values().collect()
     }
 
     pub fn verify_journal_current(&self) -> Result<()> {
@@ -309,6 +347,8 @@ impl ProjectToolRuntime {
                 path: display.clone(),
                 before_sha256: None,
                 after_sha256: after.clone(),
+                before_content: None,
+                after_content: args.content.clone(),
             });
             return Ok(WriteResult {
                 path: display,
@@ -323,7 +363,15 @@ impl ProjectToolRuntime {
             bail!("write target is not a regular file");
         }
         reject_multi_link_file(&meta)?;
-        let before = sha256_file(&resolved)?;
+        if meta.len() as usize > MAX_READ_BYTES {
+            bail!(
+                "project_write refuses existing files larger than {} bytes because Reviewer must be able to inspect the full before-state",
+                MAX_READ_BYTES
+            );
+        }
+        let before_content =
+            fs::read_to_string(&resolved).context("project_write supports UTF-8 text files only")?;
+        let before = sha256_bytes(before_content.as_bytes());
         let expected = args
             .expected_sha256
             .as_deref()
@@ -332,12 +380,17 @@ impl ProjectToolRuntime {
             bail!("stale write for {display}: expected {expected}, current {before}");
         }
 
-        fs::write(&resolved, args.content.as_bytes())?;
         let after = sha256_bytes(args.content.as_bytes());
+        if after == before {
+            bail!("project_write refuses a no-op edit for {display}");
+        }
+        fs::write(&resolved, args.content.as_bytes())?;
         self.journal.push(MutationRecord {
             path: display.clone(),
             before_sha256: Some(before.clone()),
             after_sha256: after.clone(),
+            before_content: Some(before_content),
+            after_content: args.content.clone(),
         });
         Ok(WriteResult {
             path: display,
