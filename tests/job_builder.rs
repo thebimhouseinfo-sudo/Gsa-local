@@ -15,6 +15,7 @@ fn plan(goal: &str) -> PlanArtifact {
         sequence: vec!["Build".into(), "Register".into()],
         risks: vec!["Stale plan binding".into()],
         acceptance_direction: vec!["Graph is registry truth".into()],
+        evidence_needs: vec![],
     }
 }
 
