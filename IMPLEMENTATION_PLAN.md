@@ -427,7 +427,10 @@ dependencies
 sequence
 risks
 acceptance direction
+evidence needs / unknown runtime facts
 ```
+
+`EvidenceNeed / UnknownRuntimeFact` là first-class planning data, không phải prose tùy ý. Mỗi need phải có identity, câu hỏi cần xác minh, mục đích, required/optional, consumer dự kiến, mode VERIFY/MEASURE/PROBE phù hợp và measurement/acceptance intent. Nó tham gia plan hash/revision để Reviewer/CR duyệt chính contract empirical này.
 
 ---
 
@@ -1075,6 +1078,8 @@ JP-08
 
 Nếu không có declared checkpoint thì Reviewer PASS chỉ kết thúc vòng review hiện tại; Tester không tự chạy.
 
+Checkpoint không chỉ bind vào một Job Pack. Topology phải hỗ trợ checkpoint sau một tập Job Pack đã được review, trước một Job Pack consumer, hoặc tại milestone integration gate. Chỉ khi toàn bộ prerequisite đã đạt trạng thái yêu cầu checkpoint mới trở thành DUE.
+
 ---
 
 ## 32. Verification Controller đổi vai trò
@@ -1256,6 +1261,8 @@ OBSERVED
 ```
 
 `IMPLICATION` và `UNRESOLVED` không được dùng thay giá trị đo bắt buộc.
+
+Mỗi reusable empirical output phải có `EvidenceApplicability` mô tả những dimension làm nó còn hợp lệ hoặc hết hạn: product/config/runtime/environment identity, dependency fingerprint, boundary conditions và revalidation policy. Exact revision binding vẫn là evidence identity; applicability quyết định evidence có thể reuse sau thay đổi nào.
 
 Nếu thiếu required OBSERVED evidence:
 
@@ -1836,7 +1843,7 @@ Acceptance: crash/restart không tạo thêm ACTIVE Job Pack và terminal thứ 
 
 ## Phase 5 — Planner → Reviewer → Local CR
 
-Implement:
+Core đã implement:
 
 ```text
 Planner Implementation Plan only
@@ -1846,6 +1853,19 @@ Local CR stateless auto gate
 Internal Fix loop
 PLAN_APPROVED binding
 ```
+
+Tester architecture extension:
+
+```text
+PlanArtifact EvidenceNeed / UnknownRuntimeFact
+submit_plan structured schema
+evidence need validation
+evidence need included in plan hash/revision
+prior OBSERVED evidence catalog for Planner
+PLAN_GAP when required runtime fact is unresolved
+```
+
+Planner vẫn không build Job Pack/Checkpoint. Nó chỉ persist empirical need đủ rõ để Job Builder không phải đoán lại từ prose.
 
 Acceptance:
 
@@ -1881,10 +1901,14 @@ supersede old graph
 Tester architecture extension:
 
 ```text
+EvidenceNeed from approved PlanArtifact
 TestCheckpointSpec
+CheckpointBoundaryKind
+prerequisite Job Pack set
 VERIFY / MEASURE / PROBE
 named evidence outputs
 EvidenceRequirement
+EvidenceApplicability
 experiment dimensions
 downstream evidence consumers
 submit_execution_graph schema update
@@ -1916,9 +1940,11 @@ Tester architecture extension:
 ```text
 declared checkpoint boundary resolution
 checkpoint DUE/RUNNING/SATISFIED/BLOCKED/NEEDS_HUMAN
-EvidenceRequirement resolution
+multi-prerequisite checkpoint resolution
+EvidenceRequirement + EvidenceApplicability resolution
 OBSERVED evidence injection into ActiveWork
-checkpoint-aware resume
+transactional latest_checkpoint update
+lease-bound checkpoint/attempt resume
 ```
 
 Acceptance mới:
@@ -2028,6 +2054,33 @@ Tester must distinguish `PRODUCT_FAILURE`, `TEST_FAILURE`, `ENVIRONMENT_FAILURE`
 Verdicts are `PASS`, `FAIL`, `BLOCKED`, and `NEEDS_HUMAN`. `UNVERIFIED != PASS`.
 
 Implementation must keep this phase separate from Phase 11 Local CR / Job Pack completion.
+
+Crash/restart contract:
+
+```text
+checkpoint state transition
++ event
++ latest_checkpoint pointer
+= one transaction
+```
+
+Execution lease phải bind checkpoint attempt để restart/terminal thứ hai không tạo duplicate attempt.
+
+Material `SPEC_GAP` hoặc architectural uncertainty không được Tester tự giải bằng cách sửa topology:
+
+```text
+Tester SPEC_GAP
+  -> persist evidence
+  -> pause current graph
+  -> Planner/Human
+  -> new PlanArtifact revision
+  -> Reviewer
+  -> Local CR
+  -> Job Builder
+  -> superseding ExecutionGraph
+```
+
+In-scope test adaptation bên trong checkpoint hiện tại vẫn được Tester thực hiện mà không cần replan.
 
 ---
 
