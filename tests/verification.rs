@@ -52,6 +52,8 @@ fn graph() -> ExecutionGraph {
             checklist: vec!["done".into()],
         }],
     }
+    checkpoints: vec![],
+    evidence_requirements: vec![],
 }
 
 fn setup() -> (tempfile::TempDir, Registry, i64) {
