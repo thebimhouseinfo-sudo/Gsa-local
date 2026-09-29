@@ -1201,13 +1201,33 @@ mod tests {
     }
 
     #[test]
-    fn migrates_existing_jobpack_table_with_input_output_columns() {
+    fn legacy_jobpack_contract_migration_invalidates_current_graph() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("state.db");
         let legacy = Connection::open(&path).unwrap();
         legacy
             .execute_batch(
                 r#"
+                CREATE TABLE approved_plan (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    revision INTEGER NOT NULL,
+                    plan_hash TEXT NOT NULL,
+                    execution_graph_version INTEGER NOT NULL DEFAULT 0
+                );
+                INSERT INTO approved_plan
+                    (id, revision, plan_hash, execution_graph_version)
+                VALUES (1, 1, 'legacy-hash', 7);
+
+                CREATE TABLE execution_graph (
+                    version INTEGER PRIMARY KEY,
+                    plan_revision INTEGER NOT NULL,
+                    plan_hash TEXT NOT NULL,
+                    status TEXT NOT NULL
+                );
+                INSERT INTO execution_graph
+                    (version, plan_revision, plan_hash, status)
+                VALUES (7, 1, 'legacy-hash', 'CURRENT');
+
                 CREATE TABLE execution_jobpacks (
                     graph_version INTEGER NOT NULL,
                     jobpack_id TEXT NOT NULL,
@@ -1219,6 +1239,34 @@ mod tests {
                     status TEXT NOT NULL,
                     PRIMARY KEY (graph_version, jobpack_id)
                 );
+                INSERT INTO execution_jobpacks
+                    (graph_version, jobpack_id, milestone_id, title, goal,
+                     acceptance, verification_hints, status)
+                VALUES
+                    (7, 'JP1', 'M1', 'Legacy pack', 'Legacy goal',
+                     '["accept"]', '["cargo test"]', 'PENDING');
+
+                CREATE TABLE events (
+                    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                    kind TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                );
+                INSERT INTO events (sequence, kind, payload, created_at)
+                VALUES (42, 'EXECUTION_GRAPH_REGISTERED', '{}', 1);
+
+                CREATE TABLE latest_checkpoint (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    sequence INTEGER NOT NULL,
+                    plan_revision INTEGER,
+                    milestone TEXT,
+                    jobpack TEXT,
+                    stage TEXT NOT NULL,
+                    jobpack_status TEXT
+                );
+                INSERT INTO latest_checkpoint
+                    (id, sequence, plan_revision, milestone, jobpack, stage, jobpack_status)
+                VALUES (1, 42, 1, NULL, NULL, 'graph_registered', NULL);
                 "#,
             )
             .unwrap();
@@ -1237,6 +1285,25 @@ mod tests {
 
         assert!(columns.contains("required_inputs"));
         assert!(columns.contains("expected_outputs"));
+        assert_eq!(
+            registry.execution_graph_status(7).unwrap().as_deref(),
+            Some("SUPERSEDED")
+        );
+        assert_eq!(
+            registry
+                .plan_binding()
+                .unwrap()
+                .unwrap()
+                .execution_graph_version,
+            0
+        );
+
+        let checkpoint = registry.latest_checkpoint().unwrap().unwrap();
+        assert_eq!(checkpoint.stage, "plan_approved");
+        assert_eq!(checkpoint.sequence, 43);
+        assert_eq!(checkpoint.milestone, None);
+        assert_eq!(checkpoint.jobpack, None);
+        assert_eq!(checkpoint.jobpack_status, None);
     }
 
     #[test]
