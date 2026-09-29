@@ -1,4 +1,7 @@
-use crate::checkpoint::Checkpoint;
+use crate::{
+    checkpoint::Checkpoint,
+    plan::{PlanArtifact, PlanRevision},
+};
 use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::{
@@ -12,6 +15,44 @@ pub struct PlanBinding {
     pub revision: i64,
     pub hash: String,
     pub execution_graph_version: i64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReviewActor {
+    Reviewer,
+    LocalCr,
+}
+
+impl ReviewActor {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Reviewer => "REVIEWER",
+            Self::LocalCr => "LOCAL_CR",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReviewVerdict {
+    Pass,
+    Revise,
+}
+
+impl ReviewVerdict {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Pass => "PASS",
+            Self::Revise => "REVISE",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanWorkflowState {
+    pub current_revision: Option<i64>,
+    pub reviewer_attempts: u32,
+    pub cr_attempts: u32,
+    pub status: String,
 }
 
 pub struct Registry {
@@ -47,6 +88,31 @@ impl Registry {
                 execution_graph_version INTEGER NOT NULL DEFAULT 0
             );
 
+            CREATE TABLE IF NOT EXISTS plan_revisions (
+                revision INTEGER PRIMARY KEY,
+                plan_hash TEXT NOT NULL UNIQUE,
+                content TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS plan_verdicts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                actor TEXT NOT NULL,
+                revision INTEGER NOT NULL,
+                plan_hash TEXT NOT NULL,
+                verdict TEXT NOT NULL,
+                findings TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS plan_workflow_state (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                current_revision INTEGER,
+                reviewer_attempts INTEGER NOT NULL DEFAULT 0,
+                cr_attempts INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL DEFAULT 'IDLE'
+            );
+
             CREATE TABLE IF NOT EXISTS execution_graph (
                 version INTEGER PRIMARY KEY,
                 plan_revision INTEGER NOT NULL,
@@ -79,6 +145,271 @@ impl Registry {
             "#,
         )?;
         Ok(())
+    }
+
+    pub fn begin_plan_workflow(&self) -> Result<()> {
+        self.conn.execute(
+            r#"
+            INSERT INTO plan_workflow_state
+                (id, current_revision, reviewer_attempts, cr_attempts, status)
+            VALUES (1, NULL, 0, 0, 'PLANNING')
+            ON CONFLICT(id) DO UPDATE SET
+                current_revision=NULL,
+                reviewer_attempts=0,
+                cr_attempts=0,
+                status='PLANNING'
+            "#,
+            [],
+        )?;
+        Ok(())
+    }
+
+    pub fn persist_plan_revision(&self, artifact: &PlanArtifact) -> Result<PlanRevision> {
+        artifact.validate()?;
+        let hash = artifact.hash()?;
+        let content = serde_json::to_string(artifact)?;
+        let tx = self.conn.unchecked_transaction()?;
+        let revision: i64 = tx.query_row(
+            "SELECT COALESCE(MAX(revision), 0) + 1 FROM plan_revisions",
+            [],
+            |row| row.get(0),
+        )?;
+
+        tx.execute(
+            "INSERT INTO plan_revisions (revision, plan_hash, content, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![revision, hash, content, unix_seconds()?],
+        )?;
+        tx.execute(
+            r#"
+            INSERT INTO plan_workflow_state
+                (id, current_revision, reviewer_attempts, cr_attempts, status)
+            VALUES (1, ?1, 0, 0, 'REVIEWER')
+            ON CONFLICT(id) DO UPDATE SET
+                current_revision=excluded.current_revision,
+                status='REVIEWER'
+            "#,
+            params![revision],
+        )?;
+        tx.commit()?;
+
+        Ok(PlanRevision {
+            revision,
+            hash,
+            artifact: artifact.clone(),
+        })
+    }
+
+    pub fn current_plan_revision(&self) -> Result<Option<PlanRevision>> {
+        self.conn
+            .query_row(
+                "SELECT revision, plan_hash, content FROM plan_revisions ORDER BY revision DESC LIMIT 1",
+                [],
+                |row| {
+                    let revision: i64 = row.get(0)?;
+                    let hash: String = row.get(1)?;
+                    let content: String = row.get(2)?;
+                    let artifact: PlanArtifact = serde_json::from_str(&content).map_err(|error| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            content.len(),
+                            rusqlite::types::Type::Text,
+                            Box::new(error),
+                        )
+                    })?;
+                    Ok(PlanRevision {
+                        revision,
+                        hash,
+                        artifact,
+                    })
+                },
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn record_plan_verdict(
+        &self,
+        actor: ReviewActor,
+        revision: i64,
+        hash: &str,
+        verdict: ReviewVerdict,
+        findings: &[String],
+    ) -> Result<()> {
+        let current = self
+            .current_plan_revision()?
+            .context("cannot record plan verdict without a current plan")?;
+        if current.revision != revision || current.hash != hash {
+            bail!(
+                "stale plan verdict: target r{} {} is not current r{} {}",
+                revision,
+                hash,
+                current.revision,
+                current.hash
+            );
+        }
+
+        self.conn.execute(
+            r#"
+            INSERT INTO plan_verdicts
+                (actor, revision, plan_hash, verdict, findings, created_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "#,
+            params![
+                actor.as_str(),
+                revision,
+                hash,
+                verdict.as_str(),
+                serde_json::to_string(findings)?,
+                unix_seconds()?
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn has_pass(&self, actor: ReviewActor, revision: i64, hash: &str) -> Result<bool> {
+        let found: Option<i64> = self
+            .conn
+            .query_row(
+                r#"
+                SELECT id FROM plan_verdicts
+                WHERE actor=?1 AND revision=?2 AND plan_hash=?3 AND verdict='PASS'
+                ORDER BY id DESC LIMIT 1
+                "#,
+                params![actor.as_str(), revision, hash],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(found.is_some())
+    }
+
+    pub fn workflow_state(&self) -> Result<PlanWorkflowState> {
+        self.conn
+            .query_row(
+                r#"
+                SELECT current_revision, reviewer_attempts, cr_attempts, status
+                FROM plan_workflow_state WHERE id=1
+                "#,
+                [],
+                |row| {
+                    Ok(PlanWorkflowState {
+                        current_revision: row.get(0)?,
+                        reviewer_attempts: row.get::<_, i64>(1)? as u32,
+                        cr_attempts: row.get::<_, i64>(2)? as u32,
+                        status: row.get(3)?,
+                    })
+                },
+            )
+            .optional()?
+            .context("plan workflow has not been started")
+    }
+
+    pub fn set_workflow_state(
+        &self,
+        current_revision: Option<i64>,
+        reviewer_attempts: u32,
+        cr_attempts: u32,
+        status: &str,
+    ) -> Result<()> {
+        self.conn.execute(
+            r#"
+            INSERT INTO plan_workflow_state
+                (id, current_revision, reviewer_attempts, cr_attempts, status)
+            VALUES (1, ?1, ?2, ?3, ?4)
+            ON CONFLICT(id) DO UPDATE SET
+                current_revision=excluded.current_revision,
+                reviewer_attempts=excluded.reviewer_attempts,
+                cr_attempts=excluded.cr_attempts,
+                status=excluded.status
+            "#,
+            params![
+                current_revision,
+                reviewer_attempts as i64,
+                cr_attempts as i64,
+                status
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn approve_current_plan(&self, revision: i64, hash: &str) -> Result<PlanBinding> {
+        let tx = self.conn.unchecked_transaction()?;
+        let current: Option<(i64, String)> = tx
+            .query_row(
+                "SELECT revision, plan_hash FROM plan_revisions ORDER BY revision DESC LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((current_revision, current_hash)) = current else {
+            bail!("cannot approve without a current plan");
+        };
+        if current_revision != revision || current_hash != hash {
+            bail!("cannot approve stale plan revision/hash");
+        }
+
+        for actor in [ReviewActor::Reviewer, ReviewActor::LocalCr] {
+            let pass: Option<i64> = tx
+                .query_row(
+                    r#"
+                    SELECT id FROM plan_verdicts
+                    WHERE actor=?1 AND revision=?2 AND plan_hash=?3 AND verdict='PASS'
+                    ORDER BY id DESC LIMIT 1
+                    "#,
+                    params![actor.as_str(), revision, hash],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if pass.is_none() {
+                bail!("cannot approve plan without {} PASS", actor.as_str());
+            }
+        }
+
+        tx.execute(
+            r#"
+            INSERT INTO approved_plan (id, revision, plan_hash, execution_graph_version)
+            VALUES (1, ?1, ?2, COALESCE((SELECT execution_graph_version FROM approved_plan WHERE id=1), 0))
+            ON CONFLICT(id) DO UPDATE SET
+                revision=excluded.revision,
+                plan_hash=excluded.plan_hash
+            "#,
+            params![revision, hash],
+        )?;
+        tx.execute(
+            "INSERT INTO events (kind, payload, created_at) VALUES ('PLAN_APPROVED', ?1, ?2)",
+            params![
+                serde_json::json!({"revision": revision, "hash": hash}).to_string(),
+                unix_seconds()?
+            ],
+        )?;
+        let sequence = tx.last_insert_rowid();
+        tx.execute(
+            r#"
+            INSERT INTO latest_checkpoint
+                (id, sequence, plan_revision, milestone, jobpack, stage, jobpack_status)
+            VALUES (1, ?1, ?2, NULL, NULL, 'plan_approved', NULL)
+            ON CONFLICT(id) DO UPDATE SET
+                sequence=excluded.sequence,
+                plan_revision=excluded.plan_revision,
+                milestone=NULL,
+                jobpack=NULL,
+                stage='plan_approved',
+                jobpack_status=NULL
+            "#,
+            params![sequence, revision],
+        )?;
+        tx.execute(
+            "UPDATE plan_workflow_state SET status='APPROVED' WHERE id=1",
+            [],
+        )?;
+        tx.commit()?;
+
+        Ok(PlanBinding {
+            revision,
+            hash: hash.to_owned(),
+            execution_graph_version: self
+                .plan_binding()?
+                .map(|binding| binding.execution_graph_version)
+                .unwrap_or(0),
+        })
     }
 
     pub fn set_plan_binding(
