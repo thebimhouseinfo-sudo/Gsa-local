@@ -5,6 +5,7 @@ use crate::{
     ollama::{ChatMessage, OllamaClient},
     registry::Registry,
     session::Session,
+    workflow::{PlanningOutcome, PlanningWorkflow},
 };
 use anyhow::{bail, Context, Result};
 use std::{
@@ -180,6 +181,34 @@ impl App {
 
     async fn dispatch_user_text(&mut self, text: String) -> Result<()> {
         let agent = self.session.active_agent;
+
+        if agent == AgentId::Planner {
+            println!("Planning workflow: Planner → Reviewer → Local CR");
+            let workflow = PlanningWorkflow::new(
+                &self.ollama,
+                &self.harnesses,
+                &self.registry,
+                &self.config,
+                &self.session,
+                &self.project_root,
+            );
+            match workflow.run(&text).await? {
+                PlanningOutcome::Approved(binding) => {
+                    println!(
+                        "PLAN_APPROVED revision={} hash={}",
+                        binding.revision, binding.hash
+                    );
+                }
+                PlanningOutcome::Paused { revision, .. } => {
+                    println!(
+                        "Planning workflow PAUSED after bounded review attempts (revision={:?}).",
+                        revision
+                    );
+                }
+            }
+            return Ok(());
+        }
+
         let model = match self.session.resolved_model(&self.config, agent) {
             Some(model) => model.to_owned(),
             None => self
