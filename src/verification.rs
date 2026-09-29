@@ -726,7 +726,11 @@ mod tests {
             "[package]\nname='x'\nversion='0.1.0'\n",
         )
         .unwrap();
-        fs::write(dir.path().join("tests/smoke.rs"), "#[test]\nfn smoke() {}\n").unwrap();
+        fs::write(
+            dir.path().join("tests/smoke.rs"),
+            "#[test]\nfn smoke() {}\n",
+        )
+        .unwrap();
 
         let profile = discover_profile(dir.path()).unwrap();
         assert!(profile
