@@ -664,6 +664,8 @@ impl<'a> CodingWorkflow<'a> {
             tasks = self
                 .registry
                 .jobpack_code_tasks(active_work.graph_version, &active_work.jobpack_id)?;
+            let journal_len_before_fix = tool_runtime.journal().len();
+            let previous_change_set_id = change_set_id.clone();
             checkpoint = self
                 .invoke_code_agent(
                     AgentId::InternalFix,
@@ -675,13 +677,28 @@ impl<'a> CodingWorkflow<'a> {
                     tool_runtime,
                 )
                 .await?;
-            change_set_id = self.persist_code_checkpoint(
+            let repaired_change_set_id = self.persist_code_checkpoint(
                 active_work,
                 &checkpoint,
                 tool_runtime,
                 coder_attempts,
                 reviewer_attempts,
             )?;
+            if !repair_progressed(
+                journal_len_before_fix,
+                tool_runtime.journal().len(),
+                &previous_change_set_id,
+                &repaired_change_set_id,
+            ) {
+                return self.pause(
+                    active_work,
+                    Some(previous_change_set_id),
+                    coder_attempts,
+                    reviewer_attempts,
+                    "Internal Fix produced no new source mutation/change set",
+                );
+            }
+            change_set_id = repaired_change_set_id;
         }
     }
 
@@ -832,7 +849,8 @@ impl<'a> CodingWorkflow<'a> {
                 "graph_version": active_work.graph_version,
                 "jobpack_id": &active_work.jobpack_id,
                 "change_set_id": change_set_id,
-                "mutation_journal": tool_runtime.journal()
+                "mutation_journal": tool_runtime.journal(),
+                "change_evidence": tool_runtime.review_evidence()
             },
             "coder_checkpoint": {
                 "summary": &checkpoint.summary,
@@ -895,6 +913,15 @@ impl<'a> CodingWorkflow<'a> {
             .next()
             .context("no Ollama model is configured or installed")
     }
+}
+
+fn repair_progressed(
+    journal_len_before: usize,
+    journal_len_after: usize,
+    previous_change_set_id: &str,
+    repaired_change_set_id: &str,
+) -> bool {
+    journal_len_after > journal_len_before && repaired_change_set_id != previous_change_set_id
 }
 
 fn execute_project_tool_message(
@@ -1359,6 +1386,14 @@ mod tests {
 
         let result: Result<ReviewDecision> = extract_tool_args(&message, "submit_review");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn internal_fix_requires_new_runtime_mutation_and_change_set() {
+        assert!(!repair_progressed(2, 2, "change-a", "change-a"));
+        assert!(!repair_progressed(2, 3, "change-a", "change-a"));
+        assert!(!repair_progressed(2, 2, "change-a", "change-b"));
+        assert!(repair_progressed(2, 3, "change-a", "change-b"));
     }
 
     #[test]
