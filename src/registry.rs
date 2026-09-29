@@ -1,6 +1,6 @@
 use crate::{
     checkpoint::Checkpoint,
-    execution_graph::ExecutionGraph,
+    execution_graph::{EvidenceRequirementSpec, ExecutionGraph, TestCheckpointSpec},
     plan::{PlanArtifact, PlanRevision},
     verification::{VerificationEvidence, VerificationResult},
 };
@@ -230,6 +230,62 @@ impl Registry {
                     REFERENCES execution_jobpacks(graph_version, jobpack_id) ON DELETE CASCADE,
                 FOREIGN KEY (graph_version, depends_on_jobpack_id)
                     REFERENCES execution_jobpacks(graph_version, jobpack_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS execution_test_checkpoints (
+                graph_version INTEGER NOT NULL,
+                checkpoint_id TEXT NOT NULL,
+                milestone_id TEXT NOT NULL,
+                boundary TEXT NOT NULL,
+                before_jobpack_id TEXT,
+                definition_json TEXT NOT NULL,
+                PRIMARY KEY (graph_version, checkpoint_id),
+                FOREIGN KEY (graph_version, milestone_id)
+                    REFERENCES execution_milestones(graph_version, milestone_id) ON DELETE CASCADE,
+                FOREIGN KEY (graph_version, before_jobpack_id)
+                    REFERENCES execution_jobpacks(graph_version, jobpack_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS execution_checkpoint_prerequisites (
+                graph_version INTEGER NOT NULL,
+                checkpoint_id TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                jobpack_id TEXT NOT NULL,
+                required_state TEXT NOT NULL,
+                PRIMARY KEY (graph_version, checkpoint_id, position),
+                UNIQUE (graph_version, checkpoint_id, jobpack_id),
+                FOREIGN KEY (graph_version, checkpoint_id)
+                    REFERENCES execution_test_checkpoints(graph_version, checkpoint_id) ON DELETE CASCADE,
+                FOREIGN KEY (graph_version, jobpack_id)
+                    REFERENCES execution_jobpacks(graph_version, jobpack_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS execution_evidence_outputs (
+                graph_version INTEGER NOT NULL,
+                checkpoint_id TEXT NOT NULL,
+                output_id TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                required INTEGER NOT NULL,
+                evidence_need_id TEXT,
+                definition_json TEXT NOT NULL,
+                PRIMARY KEY (graph_version, checkpoint_id, output_id),
+                FOREIGN KEY (graph_version, checkpoint_id)
+                    REFERENCES execution_test_checkpoints(graph_version, checkpoint_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS execution_evidence_requirements (
+                graph_version INTEGER NOT NULL,
+                consumer_jobpack_id TEXT NOT NULL,
+                checkpoint_id TEXT NOT NULL,
+                output_id TEXT NOT NULL,
+                required INTEGER NOT NULL,
+                definition_json TEXT NOT NULL,
+                PRIMARY KEY (graph_version, consumer_jobpack_id, checkpoint_id, output_id),
+                FOREIGN KEY (graph_version, consumer_jobpack_id)
+                    REFERENCES execution_jobpacks(graph_version, jobpack_id) ON DELETE CASCADE,
+                FOREIGN KEY (graph_version, checkpoint_id, output_id)
+                    REFERENCES execution_evidence_outputs(graph_version, checkpoint_id, output_id)
+                    ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS code_workflow_state (
@@ -764,16 +820,21 @@ impl Registry {
             bail!("stale execution graph registration: approved plan binding changed");
         }
 
-        let current_plan: Option<(i64, String)> = tx
+        let current_plan: Option<(i64, String, String)> = tx
             .query_row(
-                "SELECT revision, plan_hash FROM plan_revisions ORDER BY revision DESC LIMIT 1",
+                "SELECT revision, plan_hash, content FROM plan_revisions ORDER BY revision DESC LIMIT 1",
                 [],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()?;
-        if current_plan.as_ref() != Some(&(plan_revision, plan_hash.to_owned())) {
+        let Some((current_revision, current_hash, current_content)) = current_plan else {
+            bail!("approved plan is no longer the current plan revision");
+        };
+        if current_revision != plan_revision || current_hash != plan_hash {
             bail!("approved plan is no longer the current plan revision");
         }
+        let current_artifact: PlanArtifact = serde_json::from_str(&current_content)?;
+        graph.validate_against_plan(&current_artifact)?;
 
         let existing_current: Option<(i64, i64, String)> = tx
             .query_row(
@@ -881,6 +942,87 @@ impl Registry {
             }
         }
 
+        for checkpoint in &graph.checkpoints {
+            tx.execute(
+                r#"
+                INSERT INTO execution_test_checkpoints
+                    (graph_version, checkpoint_id, milestone_id, boundary,
+                     before_jobpack_id, definition_json)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                "#,
+                params![
+                    version,
+                    checkpoint.id,
+                    checkpoint.milestone_id,
+                    serde_json::to_value(checkpoint.boundary)?
+                        .as_str()
+                        .context("checkpoint boundary did not serialize as string")?,
+                    checkpoint.before_jobpack_id,
+                    serde_json::to_string(checkpoint)?
+                ],
+            )?;
+
+            for (position, prerequisite) in checkpoint.prerequisites.iter().enumerate() {
+                tx.execute(
+                    r#"
+                    INSERT INTO execution_checkpoint_prerequisites
+                        (graph_version, checkpoint_id, position, jobpack_id, required_state)
+                    VALUES (?1, ?2, ?3, ?4, ?5)
+                    "#,
+                    params![
+                        version,
+                        checkpoint.id,
+                        position as i64 + 1,
+                        prerequisite.jobpack_id,
+                        serde_json::to_value(prerequisite.state)?
+                            .as_str()
+                            .context("prerequisite state did not serialize as string")?
+                    ],
+                )?;
+            }
+
+            for output in &checkpoint.evidence_outputs {
+                tx.execute(
+                    r#"
+                    INSERT INTO execution_evidence_outputs
+                        (graph_version, checkpoint_id, output_id, mode,
+                         required, evidence_need_id, definition_json)
+                    VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                    "#,
+                    params![
+                        version,
+                        checkpoint.id,
+                        output.id,
+                        serde_json::to_value(output.mode)?
+                            .as_str()
+                            .context("evidence mode did not serialize as string")?,
+                        if output.required { 1 } else { 0 },
+                        output.evidence_need_id,
+                        serde_json::to_string(output)?
+                    ],
+                )?;
+            }
+        }
+
+        for requirement in &graph.evidence_requirements {
+            tx.execute(
+                r#"
+                INSERT INTO execution_evidence_requirements
+                    (graph_version, consumer_jobpack_id, checkpoint_id,
+                     output_id, required, definition_json)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                "#,
+                params![
+                    version,
+                    requirement.consumer_jobpack_id,
+                    requirement.checkpoint_id,
+                    requirement.output_id,
+                    if requirement.required { 1 } else { 0 },
+                    serde_json::to_string(requirement)?
+                ],
+            )?;
+        }
+
         let updated = tx.execute(
             r#"
             UPDATE approved_plan
@@ -969,6 +1111,67 @@ impl Registry {
             |row| row.get(0),
         )?;
         Ok((milestone_count, jobpack_count, todo_count, checklist_count))
+    }
+
+    pub fn execution_checkpoint_counts(&self, version: i64) -> Result<(i64, i64, i64, i64)> {
+        let checkpoints = self.conn.query_row(
+            "SELECT COUNT(*) FROM execution_test_checkpoints WHERE graph_version=?1",
+            params![version],
+            |row| row.get(0),
+        )?;
+        let prerequisites = self.conn.query_row(
+            "SELECT COUNT(*) FROM execution_checkpoint_prerequisites WHERE graph_version=?1",
+            params![version],
+            |row| row.get(0),
+        )?;
+        let outputs = self.conn.query_row(
+            "SELECT COUNT(*) FROM execution_evidence_outputs WHERE graph_version=?1",
+            params![version],
+            |row| row.get(0),
+        )?;
+        let requirements = self.conn.query_row(
+            "SELECT COUNT(*) FROM execution_evidence_requirements WHERE graph_version=?1",
+            params![version],
+            |row| row.get(0),
+        )?;
+        Ok((checkpoints, prerequisites, outputs, requirements))
+    }
+
+    pub fn execution_test_checkpoints(&self, version: i64) -> Result<Vec<TestCheckpointSpec>> {
+        let mut statement = self.conn.prepare(
+            r#"
+            SELECT definition_json
+            FROM execution_test_checkpoints
+            WHERE graph_version=?1
+            ORDER BY checkpoint_id
+            "#,
+        )?;
+        let rows = statement.query_map(params![version], |row| row.get::<_, String>(0))?;
+        let mut checkpoints = Vec::new();
+        for row in rows {
+            checkpoints.push(serde_json::from_str::<TestCheckpointSpec>(&row?)?);
+        }
+        Ok(checkpoints)
+    }
+
+    pub fn execution_evidence_requirements(
+        &self,
+        version: i64,
+    ) -> Result<Vec<EvidenceRequirementSpec>> {
+        let mut statement = self.conn.prepare(
+            r#"
+            SELECT definition_json
+            FROM execution_evidence_requirements
+            WHERE graph_version=?1
+            ORDER BY consumer_jobpack_id, checkpoint_id, output_id
+            "#,
+        )?;
+        let rows = statement.query_map(params![version], |row| row.get::<_, String>(0))?;
+        let mut requirements = Vec::new();
+        for row in rows {
+            requirements.push(serde_json::from_str::<EvidenceRequirementSpec>(&row?)?);
+        }
+        Ok(requirements)
     }
 
     pub fn execution_jobpack_contract(
