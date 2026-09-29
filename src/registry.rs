@@ -89,7 +89,11 @@ impl Registry {
     ) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         let current: Option<i64> = tx
-            .query_row("SELECT revision FROM approved_plan WHERE id = 1", [], |row| row.get(0))
+            .query_row(
+                "SELECT revision FROM approved_plan WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
             .optional()?;
 
         if let Some(expected) = expected_current_revision {
@@ -327,7 +331,10 @@ mod tests {
 
         let next = Checkpoint::new("reviewer");
         assert!(registry.transition(0, "stale", "{}", next).is_err());
-        assert_eq!(registry.latest_checkpoint().unwrap().unwrap().stage, "coder");
+        assert_eq!(
+            registry.latest_checkpoint().unwrap().unwrap().stage,
+            "coder"
+        );
     }
 
     #[test]
