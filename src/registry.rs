@@ -1,5 +1,6 @@
 use crate::{
     checkpoint::Checkpoint,
+    execution_graph::ExecutionGraph,
     plan::{PlanArtifact, PlanRevision},
 };
 use anyhow::{bail, Context, Result};
@@ -118,6 +119,63 @@ impl Registry {
                 plan_revision INTEGER NOT NULL,
                 plan_hash TEXT NOT NULL,
                 status TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS execution_milestones (
+                graph_version INTEGER NOT NULL,
+                milestone_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                PRIMARY KEY (graph_version, milestone_id),
+                FOREIGN KEY (graph_version) REFERENCES execution_graph(version) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS execution_jobpacks (
+                graph_version INTEGER NOT NULL,
+                jobpack_id TEXT NOT NULL,
+                milestone_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                goal TEXT NOT NULL,
+                acceptance TEXT NOT NULL,
+                verification_hints TEXT NOT NULL,
+                status TEXT NOT NULL,
+                PRIMARY KEY (graph_version, jobpack_id),
+                FOREIGN KEY (graph_version, milestone_id)
+                    REFERENCES execution_milestones(graph_version, milestone_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS execution_todos (
+                graph_version INTEGER NOT NULL,
+                todo_id TEXT NOT NULL,
+                jobpack_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                status TEXT NOT NULL,
+                PRIMARY KEY (graph_version, todo_id),
+                FOREIGN KEY (graph_version, jobpack_id)
+                    REFERENCES execution_jobpacks(graph_version, jobpack_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS execution_checklist_items (
+                graph_version INTEGER NOT NULL,
+                todo_id TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                item TEXT NOT NULL,
+                checked INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (graph_version, todo_id, position),
+                FOREIGN KEY (graph_version, todo_id)
+                    REFERENCES execution_todos(graph_version, todo_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS execution_jobpack_dependencies (
+                graph_version INTEGER NOT NULL,
+                jobpack_id TEXT NOT NULL,
+                depends_on_jobpack_id TEXT NOT NULL,
+                PRIMARY KEY (graph_version, jobpack_id, depends_on_jobpack_id),
+                FOREIGN KEY (graph_version, jobpack_id)
+                    REFERENCES execution_jobpacks(graph_version, jobpack_id) ON DELETE CASCADE,
+                FOREIGN KEY (graph_version, depends_on_jobpack_id)
+                    REFERENCES execution_jobpacks(graph_version, jobpack_id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS events (
@@ -418,8 +476,14 @@ impl Registry {
         tx.execute(
             r#"
             INSERT INTO approved_plan (id, revision, plan_hash, execution_graph_version)
-            VALUES (1, ?1, ?2, COALESCE((SELECT execution_graph_version FROM approved_plan WHERE id=1), 0))
+            VALUES (1, ?1, ?2, 0)
             ON CONFLICT(id) DO UPDATE SET
+                execution_graph_version=CASE
+                    WHEN approved_plan.revision=excluded.revision
+                     AND approved_plan.plan_hash=excluded.plan_hash
+                    THEN approved_plan.execution_graph_version
+                    ELSE 0
+                END,
                 revision=excluded.revision,
                 plan_hash=excluded.plan_hash
             "#,
@@ -462,6 +526,237 @@ impl Registry {
                 .map(|binding| binding.execution_graph_version)
                 .unwrap_or(0),
         })
+    }
+
+    pub fn register_execution_graph(
+        &self,
+        plan_revision: i64,
+        plan_hash: &str,
+        graph: &ExecutionGraph,
+    ) -> Result<i64> {
+        graph.validate()?;
+        let tx = self.conn.unchecked_transaction()?;
+
+        let approved: Option<(i64, String)> = tx
+            .query_row(
+                "SELECT revision, plan_hash FROM approved_plan WHERE id=1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((approved_revision, approved_hash)) = approved else {
+            bail!("cannot register execution graph without an approved plan");
+        };
+        if approved_revision != plan_revision || approved_hash != plan_hash {
+            bail!("stale execution graph registration: approved plan binding changed");
+        }
+
+        let current_plan: Option<(i64, String)> = tx
+            .query_row(
+                "SELECT revision, plan_hash FROM plan_revisions ORDER BY revision DESC LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        if current_plan.as_ref() != Some(&(plan_revision, plan_hash.to_owned())) {
+            bail!("approved plan is no longer the current plan revision");
+        }
+
+        let existing_current: Option<(i64, i64, String)> = tx
+            .query_row(
+                r#"
+                SELECT version, plan_revision, plan_hash
+                FROM execution_graph
+                WHERE status='CURRENT'
+                ORDER BY version DESC LIMIT 1
+                "#,
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+        if let Some((_, existing_revision, existing_hash)) = &existing_current {
+            if *existing_revision == plan_revision && existing_hash == plan_hash {
+                bail!("execution graph is already registered for this approved plan");
+            }
+        }
+
+        let version: i64 = tx.query_row(
+            "SELECT COALESCE(MAX(version), 0) + 1 FROM execution_graph",
+            [],
+            |row| row.get(0),
+        )?;
+
+        tx.execute(
+            "UPDATE execution_graph SET status='SUPERSEDED' WHERE status='CURRENT'",
+            [],
+        )?;
+        tx.execute(
+            "INSERT INTO execution_graph (version, plan_revision, plan_hash, status) VALUES (?1, ?2, ?3, 'CURRENT')",
+            params![version, plan_revision, plan_hash],
+        )?;
+
+        for milestone in &graph.milestones {
+            tx.execute(
+                r#"
+                INSERT INTO execution_milestones
+                    (graph_version, milestone_id, title, position, status)
+                VALUES (?1, ?2, ?3, ?4, 'LOCKED')
+                "#,
+                params![version, milestone.id, milestone.title, milestone.order as i64],
+            )?;
+        }
+
+        for pack in &graph.jobpacks {
+            tx.execute(
+                r#"
+                INSERT INTO execution_jobpacks
+                    (graph_version, jobpack_id, milestone_id, title, goal,
+                     acceptance, verification_hints, status)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'PENDING')
+                "#,
+                params![
+                    version,
+                    pack.id,
+                    pack.milestone_id,
+                    pack.title,
+                    pack.goal,
+                    serde_json::to_string(&pack.acceptance)?,
+                    serde_json::to_string(&pack.verification_hints)?
+                ],
+            )?;
+        }
+
+        for todo in &graph.todos {
+            tx.execute(
+                r#"
+                INSERT INTO execution_todos
+                    (graph_version, todo_id, jobpack_id, title, status)
+                VALUES (?1, ?2, ?3, ?4, 'PENDING')
+                "#,
+                params![version, todo.id, todo.jobpack_id, todo.title],
+            )?;
+            for (position, item) in todo.checklist.iter().enumerate() {
+                tx.execute(
+                    r#"
+                    INSERT INTO execution_checklist_items
+                        (graph_version, todo_id, position, item, checked)
+                    VALUES (?1, ?2, ?3, ?4, 0)
+                    "#,
+                    params![version, todo.id, position as i64 + 1, item],
+                )?;
+            }
+        }
+
+        for pack in &graph.jobpacks {
+            for dependency in &pack.depends_on {
+                tx.execute(
+                    r#"
+                    INSERT INTO execution_jobpack_dependencies
+                        (graph_version, jobpack_id, depends_on_jobpack_id)
+                    VALUES (?1, ?2, ?3)
+                    "#,
+                    params![version, pack.id, dependency],
+                )?;
+            }
+        }
+
+        let updated = tx.execute(
+            r#"
+            UPDATE approved_plan
+            SET execution_graph_version=?1
+            WHERE id=1 AND revision=?2 AND plan_hash=?3
+            "#,
+            params![version, plan_revision, plan_hash],
+        )?;
+        if updated != 1 {
+            bail!("approved plan binding changed during graph registration");
+        }
+
+        tx.execute(
+            "INSERT INTO events (kind, payload, created_at) VALUES ('EXECUTION_GRAPH_REGISTERED', ?1, ?2)",
+            params![
+                serde_json::json!({
+                    "version": version,
+                    "revision": plan_revision,
+                    "hash": plan_hash
+                })
+                .to_string(),
+                unix_seconds()?
+            ],
+        )?;
+        let sequence = tx.last_insert_rowid();
+        tx.execute(
+            r#"
+            INSERT INTO latest_checkpoint
+                (id, sequence, plan_revision, milestone, jobpack, stage, jobpack_status)
+            VALUES (1, ?1, ?2, NULL, NULL, 'graph_registered', NULL)
+            ON CONFLICT(id) DO UPDATE SET
+                sequence=excluded.sequence,
+                plan_revision=excluded.plan_revision,
+                milestone=NULL,
+                jobpack=NULL,
+                stage='graph_registered',
+                jobpack_status=NULL
+            "#,
+            params![sequence, plan_revision],
+        )?;
+        tx.commit()?;
+        Ok(version)
+    }
+
+    pub fn current_execution_graph_version(&self) -> Result<Option<i64>> {
+        self.conn
+            .query_row(
+                "SELECT version FROM execution_graph WHERE status='CURRENT' ORDER BY version DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn execution_graph_status(&self, version: i64) -> Result<Option<String>> {
+        self.conn
+            .query_row(
+                "SELECT status FROM execution_graph WHERE version=?1",
+                params![version],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn execution_graph_counts(&self, version: i64) -> Result<(i64, i64, i64, i64)> {
+        let milestone_count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM execution_milestones WHERE graph_version=?1",
+            params![version],
+            |row| row.get(0),
+        )?;
+        let jobpack_count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM execution_jobpacks WHERE graph_version=?1",
+            params![version],
+            |row| row.get(0),
+        )?;
+        let todo_count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM execution_todos WHERE graph_version=?1",
+            params![version],
+            |row| row.get(0),
+        )?;
+        let checklist_count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM execution_checklist_items WHERE graph_version=?1",
+            params![version],
+            |row| row.get(0),
+        )?;
+        Ok((milestone_count, jobpack_count, todo_count, checklist_count))
+    }
+
+    pub fn has_active_jobpack(&self, version: i64) -> Result<bool> {
+        let active: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM execution_jobpacks WHERE graph_version=?1 AND status='ACTIVE'",
+            params![version],
+            |row| row.get(0),
+        )?;
+        Ok(active > 0)
     }
 
     #[cfg(test)]
