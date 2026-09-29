@@ -295,3 +295,72 @@ fn nonzero_timeout_and_not_applicable_cannot_be_test_pass() {
         VerificationResult::NotApplicable
     );
 }
+
+#[test]
+fn successful_build_only_evidence_is_not_a_test_pass() {
+    let evidence = VerificationEvidence {
+        profile: VerificationProfile {
+            status: DiscoveryStatus::Applicable,
+            capabilities: vec![VerificationCapability::BuildOnly],
+            commands: vec![VerificationCommand {
+                id: "cargo-check".into(),
+                kind: VerificationCommandKind::Typecheck,
+                capability: VerificationCapability::BuildOnly,
+                argv: vec!["cargo".into(), "check".into()],
+                source_paths: vec!["Cargo.toml".into()],
+                config_hash: "config-hash".into(),
+            }],
+            reason: Some("no test surface".into()),
+        },
+        commands: vec![CommandEvidence {
+            command_id: "cargo-check".into(),
+            config_hash: "config-hash".into(),
+            argv: vec!["cargo".into(), "check".into()],
+            exit_code: Some(0),
+            duration_ms: 10,
+            timed_out: false,
+            blocked_reason: None,
+            stdout: String::new(),
+            stderr: String::new(),
+        }],
+        test_surface_changed: false,
+    };
+
+    assert_eq!(evidence.derived_result(), VerificationResult::NotApplicable);
+}
+
+#[test]
+fn build_only_failure_still_fails_instead_of_becoming_not_applicable() {
+    let mut evidence = VerificationEvidence {
+        profile: VerificationProfile {
+            status: DiscoveryStatus::Applicable,
+            capabilities: vec![VerificationCapability::BuildOnly],
+            commands: vec![VerificationCommand {
+                id: "cargo-check".into(),
+                kind: VerificationCommandKind::Typecheck,
+                capability: VerificationCapability::BuildOnly,
+                argv: vec!["cargo".into(), "check".into()],
+                source_paths: vec!["Cargo.toml".into()],
+                config_hash: "config-hash".into(),
+            }],
+            reason: Some("no test surface".into()),
+        },
+        commands: vec![CommandEvidence {
+            command_id: "cargo-check".into(),
+            config_hash: "config-hash".into(),
+            argv: vec!["cargo".into(), "check".into()],
+            exit_code: Some(1),
+            duration_ms: 10,
+            timed_out: false,
+            blocked_reason: None,
+            stdout: String::new(),
+            stderr: "failed".into(),
+        }],
+        test_surface_changed: false,
+    };
+
+    assert_eq!(evidence.derived_result(), VerificationResult::Fail);
+    evidence.commands[0].exit_code = None;
+    evidence.commands[0].blocked_reason = Some("sandbox unavailable".into());
+    assert_eq!(evidence.derived_result(), VerificationResult::Blocked);
+}
