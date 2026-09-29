@@ -201,9 +201,7 @@ impl App {
                         "PLAN_APPROVED revision={} hash={}",
                         plan.revision, plan.hash
                     );
-                    println!(
-                        "EXECUTION_GRAPH_REGISTERED version={graph_version}"
-                    );
+                    println!("EXECUTION_GRAPH_REGISTERED version={graph_version}");
                 }
                 PlanningOutcome::Paused { revision, .. } => {
                     println!(
