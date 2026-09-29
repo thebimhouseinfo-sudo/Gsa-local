@@ -450,7 +450,8 @@ impl Registry {
     }
 
     pub fn plan_binding(&self) -> Result<Option<PlanBinding>> {
-        self.conn
+        let binding = self
+            .conn
             .query_row(
                 "SELECT revision, plan_hash, execution_graph_version FROM approved_plan WHERE id = 1",
                 [],
@@ -462,8 +463,17 @@ impl Registry {
                     })
                 },
             )
-            .optional()
-            .map_err(Into::into)
+            .optional()?;
+
+        let Some(binding) = binding else {
+            return Ok(None);
+        };
+        if let Some(current) = self.current_plan_revision()? {
+            if current.revision != binding.revision || current.hash != binding.hash {
+                return Ok(None);
+            }
+        }
+        Ok(Some(binding))
     }
 
     pub fn acquire_lease(
