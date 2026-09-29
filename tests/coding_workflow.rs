@@ -534,4 +534,3 @@ fn code_state_rejects_out_of_order_checkpoint_and_review_attempts() {
         )
         .is_err());
 }
-
