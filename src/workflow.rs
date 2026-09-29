@@ -5,9 +5,7 @@ use crate::{
     harness::{AgentId, HarnessRegistry},
     ollama::{ChatMessage, OllamaClient, ToolCall, ToolDefinition},
     plan::{PlanArtifact, PlanRevision},
-    registry::{
-        ChecklistClaim, CodeTodoState, PlanBinding, Registry, ReviewActor, ReviewVerdict,
-    },
+    registry::{ChecklistClaim, CodeTodoState, PlanBinding, Registry, ReviewActor, ReviewVerdict},
     session::Session,
     tools::ProjectToolRuntime,
 };
@@ -769,7 +767,10 @@ impl<'a> CodingWorkflow<'a> {
                 "Repair only the supplied Reviewer findings inside the same ACTIVE Job Pack. Preserve unrelated changes. Submit a complete revised checkpoint."
             }
         });
-        let mut messages = vec![ChatMessage::system(system), ChatMessage::user(packet.to_string())];
+        let mut messages = vec![
+            ChatMessage::system(system),
+            ChatMessage::user(packet.to_string()),
+        ];
         let mut definitions = tool_runtime.tool_definitions(agent);
         definitions.push(code_checkpoint_tool());
 
@@ -787,7 +788,10 @@ impl<'a> CodingWorkflow<'a> {
                     agent.display_name()
                 );
             }
-            if calls.iter().any(|call| call.function.name == "submit_code_checkpoint") {
+            if calls
+                .iter()
+                .any(|call| call.function.name == "submit_code_checkpoint")
+            {
                 if calls.len() != 1 || calls[0].function.name != "submit_code_checkpoint" {
                     bail!("submit_code_checkpoint must be the only tool call in its response");
                 }
@@ -852,7 +856,10 @@ impl<'a> CodingWorkflow<'a> {
             if calls.is_empty() {
                 bail!("Reviewer stopped without submit_code_review");
             }
-            if calls.iter().any(|call| call.function.name == "submit_code_review") {
+            if calls
+                .iter()
+                .any(|call| call.function.name == "submit_code_review")
+            {
                 if calls.len() != 1 || calls[0].function.name != "submit_code_review" {
                     bail!("submit_code_review must be the only tool call in its response");
                 }
