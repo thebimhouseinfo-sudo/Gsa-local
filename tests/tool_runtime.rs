@@ -24,6 +24,57 @@ fn boundary_rejects_absolute_and_parent_traversal() {
         .is_err());
 }
 
+#[test]
+fn project_read_refuses_partial_large_file_content() {
+    let dir = tempdir().unwrap();
+    let large = "x".repeat(64 * 1024 + 1);
+    std::fs::write(dir.path().join("large.txt"), large).unwrap();
+    let mut runtime = ProjectToolRuntime::new(dir.path()).unwrap();
+
+    assert!(runtime
+        .execute(
+            AgentId::Coder,
+            "project_read",
+            &json!({"path":"large.txt"})
+        )
+        .is_err());
+    assert!(runtime.journal().is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn boundary_rejects_hardlink_write_that_could_mutate_outside_project() {
+    let root = tempdir().unwrap();
+    let project = root.path().join("project");
+    std::fs::create_dir(&project).unwrap();
+    let outside = root.path().join("outside.txt");
+    std::fs::write(&outside, "outside").unwrap();
+    std::fs::hard_link(&outside, project.join("linked.txt")).unwrap();
+
+    let mut runtime = ProjectToolRuntime::new(&project).unwrap();
+    let read = runtime
+        .execute(
+            AgentId::Coder,
+            "project_read",
+            &json!({"path":"linked.txt"}),
+        )
+        .unwrap();
+
+    assert!(runtime
+        .execute(
+            AgentId::Coder,
+            "project_write",
+            &json!({
+                "path":"linked.txt",
+                "content":"changed",
+                "expected_sha256":read["sha256"]
+            })
+        )
+        .is_err());
+    assert_eq!(std::fs::read_to_string(outside).unwrap(), "outside");
+    assert!(runtime.journal().is_empty());
+}
+
 #[cfg(unix)]
 #[test]
 fn boundary_rejects_symlink_escape_for_read_and_write() {
