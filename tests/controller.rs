@@ -302,3 +302,52 @@ fn verified_completion_cannot_skip_verify_state() {
 
     assert!(controller.mark_verified_milestone_complete("M1").is_err());
 }
+
+#[test]
+fn superseding_active_graph_retires_old_active_jobpack_before_new_activation() {
+    let dir = tempdir().unwrap();
+    let registry = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    let (_revision, _hash, v1) = approve_and_register(&registry);
+    registry
+        .acquire_lease(dir.path(), "owner-a", Duration::from_secs(3600))
+        .unwrap();
+
+    let controller = MilestoneController::new(&registry, dir.path(), "owner-a");
+    let first = controller.resolve_or_activate().unwrap().unwrap();
+    assert_eq!(first.jobpack_id, "JP-B");
+    assert_eq!(registry.project_active_jobpack_count().unwrap(), 1);
+
+    registry.begin_plan_workflow().unwrap();
+    let next_plan = registry.persist_plan_revision(&plan("controller-v2")).unwrap();
+    for actor in [ReviewActor::Reviewer, ReviewActor::LocalCr] {
+        registry
+            .record_plan_verdict(
+                actor,
+                next_plan.revision,
+                &next_plan.hash,
+                ReviewVerdict::Pass,
+                &[],
+            )
+            .unwrap();
+    }
+    registry
+        .approve_current_plan(next_plan.revision, &next_plan.hash)
+        .unwrap();
+
+    assert_eq!(
+        registry.jobpack_status(v1, "JP-B").unwrap().as_deref(),
+        Some("BLOCKED")
+    );
+    assert_eq!(registry.project_active_jobpack_count().unwrap(), 0);
+
+    let v2 = registry
+        .register_execution_graph(next_plan.revision, &next_plan.hash, &graph())
+        .unwrap();
+    let next = controller.resolve_or_activate().unwrap().unwrap();
+
+    assert_eq!(next.graph_version, v2);
+    assert_eq!(next.jobpack_id, "JP-B");
+    assert_eq!(registry.project_active_jobpack_count().unwrap(), 1);
+    assert_eq!(registry.active_jobpack_count(v1).unwrap(), 0);
+    assert_eq!(registry.active_jobpack_count(v2).unwrap(), 1);
+}
