@@ -646,46 +646,105 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
-    fn aggregate_ci_is_preferred_over_cargo_fallback() {
+    fn validated_ci_script_is_expanded_to_fixed_argv_commands() {
         let dir = tempdir().unwrap();
         fs::create_dir_all(dir.path().join("scripts")).unwrap();
-        fs::write(dir.path().join("scripts/ci.sh"), "cargo test\n").unwrap();
+        fs::create_dir_all(dir.path().join("tests")).unwrap();
+        fs::write(
+            dir.path().join("scripts/ci.sh"),
+            "#!/usr/bin/env bash\nset -euo pipefail\ncargo fmt --check\ncargo check\ncargo test\n",
+        )
+        .unwrap();
         fs::write(
             dir.path().join("Cargo.toml"),
             "[package]\nname='x'\nversion='0.1.0'\n",
         )
         .unwrap();
+        fs::write(dir.path().join("tests/smoke.rs"), "#[test]\nfn smoke() {}\n").unwrap();
 
         let profile = discover_profile(dir.path()).unwrap();
         assert_eq!(profile.status, DiscoveryStatus::Applicable);
-        assert_eq!(profile.commands.len(), 1);
-        assert_eq!(profile.commands[0].id, "project-ci");
         assert_eq!(
-            profile.commands[0].argv,
-            vec!["/bin/bash".to_string(), "scripts/ci.sh".to_string()]
+            profile
+                .commands
+                .iter()
+                .map(|command| command.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "project-ci-cargo-fmt",
+                "project-ci-cargo-check",
+                "project-ci-cargo-test"
+            ]
         );
+        assert!(profile
+            .commands
+            .iter()
+            .all(|command| command.argv.first().map(String::as_str) == Some("cargo")));
+        assert!(profile
+            .capabilities
+            .contains(&VerificationCapability::Integration));
     }
 
     #[test]
-    fn cargo_fallback_is_deterministic() {
+    fn cargo_without_test_surfaces_stays_build_only() {
         let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("src")).unwrap();
         fs::write(
             dir.path().join("Cargo.toml"),
             "[package]\nname='x'\nversion='0.1.0'\n",
         )
         .unwrap();
+        fs::write(dir.path().join("src/lib.rs"), "pub fn value() -> u32 { 1 }\n").unwrap();
 
         let first = discover_profile(dir.path()).unwrap();
         let second = discover_profile(dir.path()).unwrap();
         assert_eq!(first, second);
+        assert_eq!(first.capabilities, vec![VerificationCapability::BuildOnly]);
         assert_eq!(
             first
                 .commands
                 .iter()
                 .map(|command| command.id.as_str())
                 .collect::<Vec<_>>(),
-            vec!["cargo-check", "cargo-test"]
+            vec!["cargo-check"]
         );
+    }
+
+    #[test]
+    fn cargo_with_real_test_surface_adds_test_command() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("tests")).unwrap();
+        fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname='x'\nversion='0.1.0'\n",
+        )
+        .unwrap();
+        fs::write(dir.path().join("tests/smoke.rs"), "#[test]\nfn smoke() {}\n").unwrap();
+
+        let profile = discover_profile(dir.path()).unwrap();
+        assert!(profile
+            .commands
+            .iter()
+            .any(|command| command.id == "cargo-test"));
+        assert!(profile
+            .capabilities
+            .contains(&VerificationCapability::Integration));
+    }
+
+    #[test]
+    fn fake_ci_script_is_blocked_instead_of_executed() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("scripts")).unwrap();
+        fs::write(dir.path().join("scripts/ci.sh"), "echo ok\n").unwrap();
+
+        let profile = discover_profile(dir.path()).unwrap();
+        assert_eq!(profile.status, DiscoveryStatus::Blocked);
+        assert!(profile.commands.is_empty());
+        assert!(profile
+            .reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("unsupported verification command"));
     }
 
     #[test]
