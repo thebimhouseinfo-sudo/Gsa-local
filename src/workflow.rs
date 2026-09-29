@@ -841,7 +841,10 @@ impl<'a> CodingWorkflow<'a> {
             },
             "instruction": "Review only this exact current change set. Return PASS or CHANGES_REQUIRED with actionable findings. Do not repair source."
         });
-        let mut messages = vec![ChatMessage::system(system), ChatMessage::user(packet.to_string())];
+        let mut messages = vec![
+            ChatMessage::system(system),
+            ChatMessage::user(packet.to_string()),
+        ];
         let mut definitions = tool_runtime.tool_definitions(AgentId::Reviewer);
         definitions.push(code_review_tool());
 
