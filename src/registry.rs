@@ -2,6 +2,7 @@ use crate::{
     checkpoint::Checkpoint,
     execution_graph::ExecutionGraph,
     plan::{PlanArtifact, PlanRevision},
+    verification::{VerificationEvidence, VerificationResult},
 };
 use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
@@ -260,6 +261,18 @@ impl Registry {
                 change_set_id TEXT NOT NULL,
                 verdict TEXT NOT NULL,
                 findings TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS verification_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                graph_version INTEGER NOT NULL,
+                jobpack_id TEXT NOT NULL,
+                change_set_id TEXT NOT NULL,
+                result TEXT NOT NULL,
+                test_surface_changed INTEGER NOT NULL,
+                profile_json TEXT NOT NULL,
+                commands_json TEXT NOT NULL,
                 created_at INTEGER NOT NULL
             );
 
@@ -1497,6 +1510,113 @@ impl Registry {
             .query_row(
                 r#"
                 SELECT verdict FROM code_reviews
+                WHERE graph_version=?1 AND jobpack_id=?2 AND change_set_id=?3
+                ORDER BY id DESC LIMIT 1
+                "#,
+                params![graph_version, jobpack_id, change_set_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn record_verification_evidence(
+        &self,
+        project_root: &Path,
+        owner: &str,
+        graph_version: i64,
+        jobpack_id: &str,
+        change_set_id: &str,
+        evidence: &VerificationEvidence,
+    ) -> Result<VerificationResult> {
+        let tx = self.conn.unchecked_transaction()?;
+        assert_lease_owner_tx(&tx, project_root, owner)?;
+        assert_active_jobpack_binding_tx(&tx, graph_version, jobpack_id)?;
+
+        let workflow_state: Option<(Option<String>, String)> = tx
+            .query_row(
+                r#"
+                SELECT change_set_id, status
+                FROM code_workflow_state
+                WHERE id=1 AND graph_version=?1 AND jobpack_id=?2
+                "#,
+                params![graph_version, jobpack_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((state_change_set, state_status)) = workflow_state else {
+            bail!("verification target has no code workflow state");
+        };
+        if state_status != "REVIEW_PASS"
+            || state_change_set.as_deref() != Some(change_set_id)
+        {
+            bail!(
+                "verification requires exact REVIEW_PASS on change set {}; found status={} change_set={:?}",
+                change_set_id,
+                state_status,
+                state_change_set
+            );
+        }
+
+        let latest_review: Option<String> = tx
+            .query_row(
+                r#"
+                SELECT verdict FROM code_reviews
+                WHERE graph_version=?1 AND jobpack_id=?2 AND change_set_id=?3
+                ORDER BY id DESC LIMIT 1
+                "#,
+                params![graph_version, jobpack_id, change_set_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if latest_review.as_deref() != Some("PASS") {
+            bail!("verification requires exact latest code Reviewer PASS");
+        }
+
+        let result = evidence.derived_result();
+        tx.execute(
+            r#"
+            INSERT INTO verification_runs
+                (graph_version, jobpack_id, change_set_id, result,
+                 test_surface_changed, profile_json, commands_json, created_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "#,
+            params![
+                graph_version,
+                jobpack_id,
+                change_set_id,
+                result.as_str(),
+                i64::from(evidence.test_surface_changed),
+                serde_json::to_string(&evidence.profile)?,
+                serde_json::to_string(&evidence.commands)?,
+                unix_seconds()?
+            ],
+        )?;
+        append_event_tx(
+            &tx,
+            "VERIFICATION_RESULT",
+            &serde_json::json!({
+                "graph_version": graph_version,
+                "jobpack": jobpack_id,
+                "change_set_id": change_set_id,
+                "result": result.as_str(),
+                "test_surface_changed": evidence.test_surface_changed
+            }),
+        )?;
+        tx.commit()?;
+        Ok(result)
+    }
+
+    pub fn latest_verification_result(
+        &self,
+        graph_version: i64,
+        jobpack_id: &str,
+        change_set_id: &str,
+    ) -> Result<Option<String>> {
+        self.conn
+            .query_row(
+                r#"
+                SELECT result FROM verification_runs
                 WHERE graph_version=?1 AND jobpack_id=?2 AND change_set_id=?3
                 ORDER BY id DESC LIMIT 1
                 "#,
