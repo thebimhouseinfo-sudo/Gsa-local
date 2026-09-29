@@ -318,7 +318,9 @@ fn superseding_active_graph_retires_old_active_jobpack_before_new_activation() {
     assert_eq!(registry.project_active_jobpack_count().unwrap(), 1);
 
     registry.begin_plan_workflow().unwrap();
-    let next_plan = registry.persist_plan_revision(&plan("controller-v2")).unwrap();
+    let next_plan = registry
+        .persist_plan_revision(&plan("controller-v2"))
+        .unwrap();
     for actor in [ReviewActor::Reviewer, ReviewActor::LocalCr] {
         registry
             .record_plan_verdict(
