@@ -407,3 +407,131 @@ fn later_revise_is_latest_for_the_same_exact_target() {
         Some("PASS")
     );
 }
+
+#[test]
+fn code_state_rejects_out_of_order_checkpoint_and_review_attempts() {
+    let (dir, registry, version) = setup();
+    registry
+        .begin_code_workflow(dir.path(), "owner-a", version, "JP1")
+        .unwrap();
+
+    registry
+        .record_code_checkpoint(
+            dir.path(),
+            "owner-a",
+            version,
+            "JP1",
+            "change-1",
+            "first checkpoint",
+            &[],
+            &[],
+            &journal(),
+            1,
+            0,
+        )
+        .unwrap();
+
+    assert!(registry
+        .record_code_checkpoint(
+            dir.path(),
+            "owner-a",
+            version,
+            "JP1",
+            "change-duplicate",
+            "duplicate checkpoint",
+            &[],
+            &[],
+            &journal(),
+            2,
+            0,
+        )
+        .is_err());
+
+    assert!(registry
+        .record_code_review(
+            dir.path(),
+            "owner-a",
+            version,
+            "JP1",
+            "change-1",
+            ReviewVerdict::Pass,
+            &[],
+            1,
+            2,
+        )
+        .is_err());
+
+    registry
+        .record_code_review(
+            dir.path(),
+            "owner-a",
+            version,
+            "JP1",
+            "change-1",
+            ReviewVerdict::Revise,
+            &["fix it".into()],
+            1,
+            1,
+        )
+        .unwrap();
+
+    assert!(registry
+        .record_code_review(
+            dir.path(),
+            "owner-a",
+            version,
+            "JP1",
+            "change-1",
+            ReviewVerdict::Pass,
+            &[],
+            1,
+            2,
+        )
+        .is_err());
+
+    registry
+        .record_code_checkpoint(
+            dir.path(),
+            "owner-a",
+            version,
+            "JP1",
+            "change-2",
+            "fixed checkpoint",
+            &[],
+            &[],
+            &journal(),
+            2,
+            1,
+        )
+        .unwrap();
+    registry
+        .record_code_review(
+            dir.path(),
+            "owner-a",
+            version,
+            "JP1",
+            "change-2",
+            ReviewVerdict::Pass,
+            &[],
+            2,
+            2,
+        )
+        .unwrap();
+
+    assert!(registry
+        .record_code_checkpoint(
+            dir.path(),
+            "owner-a",
+            version,
+            "JP1",
+            "change-after-pass",
+            "must be rejected",
+            &[],
+            &[],
+            &journal(),
+            3,
+            2,
+        )
+        .is_err());
+}
+
