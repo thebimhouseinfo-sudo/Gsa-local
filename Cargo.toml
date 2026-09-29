@@ -1,0 +1,24 @@
+[package]
+name = "gsa-local"
+version = "0.1.0"
+edition = "2021"
+description = "Local GSA runtime backed by Ollama"
+license = "MIT"
+
+[[bin]]
+name = "gsa"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+dirs = "5.0"
+futures-util = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.40", features = ["macros", "rt-multi-thread"] }
+toml = "0.8"
+
+[dev-dependencies]
+tempfile = "3.12"
