@@ -262,59 +262,66 @@ pub fn discover_profile(project_root: &Path) -> Result<VerificationProfile> {
     let root = project_root
         .canonicalize()
         .with_context(|| format!("failed to canonicalize {}", project_root.display()))?;
+    let rust_tests = detect_rust_test_surfaces(&root)?;
 
     let ci = root.join("scripts/ci.sh");
     if ci.is_file() {
         let source_paths = verification_config_paths(&root, &["scripts/ci.sh"])?;
         let config_hash = hash_config_paths(&root, &source_paths)?;
-        return Ok(VerificationProfile {
-            status: DiscoveryStatus::Applicable,
-            capabilities: vec![
-                VerificationCapability::BuildOnly,
-                VerificationCapability::Unit,
-                VerificationCapability::Integration,
-            ],
-            commands: vec![VerificationCommand {
-                id: "project-ci".into(),
-                kind: VerificationCommandKind::AggregateCi,
-                capability: VerificationCapability::Integration,
-                argv: vec!["/bin/bash".into(), "scripts/ci.sh".into()],
-                source_paths,
-                config_hash,
-            }],
-            reason: None,
-        });
+        let content = fs::read_to_string(&ci)
+            .context("scripts/ci.sh must be UTF-8 text for deterministic verification discovery")?;
+        return discover_validated_ci_script(
+            &content,
+            source_paths,
+            config_hash,
+            rust_tests,
+        );
     }
 
     let cargo = root.join("Cargo.toml");
     if cargo.is_file() {
         let source_paths = verification_config_paths(&root, &["Cargo.toml"])?;
         let config_hash = hash_config_paths(&root, &source_paths)?;
+        let mut capabilities = vec![VerificationCapability::BuildOnly];
+        let mut commands = vec![VerificationCommand {
+            id: "cargo-check".into(),
+            kind: VerificationCommandKind::Typecheck,
+            capability: VerificationCapability::BuildOnly,
+            argv: vec!["cargo".into(), "check".into()],
+            source_paths: source_paths.clone(),
+            config_hash: config_hash.clone(),
+        }];
+
+        if rust_tests.unit || rust_tests.integration {
+            if rust_tests.unit {
+                capabilities.push(VerificationCapability::Unit);
+            }
+            if rust_tests.integration {
+                capabilities.push(VerificationCapability::Integration);
+            }
+            commands.push(VerificationCommand {
+                id: "cargo-test".into(),
+                kind: VerificationCommandKind::Test,
+                capability: if rust_tests.integration {
+                    VerificationCapability::Integration
+                } else {
+                    VerificationCapability::Unit
+                },
+                argv: vec!["cargo".into(), "test".into()],
+                source_paths,
+                config_hash,
+            });
+        }
+
         return Ok(VerificationProfile {
             status: DiscoveryStatus::Applicable,
-            capabilities: vec![
-                VerificationCapability::BuildOnly,
-                VerificationCapability::Unit,
-            ],
-            commands: vec![
-                VerificationCommand {
-                    id: "cargo-check".into(),
-                    kind: VerificationCommandKind::Typecheck,
-                    capability: VerificationCapability::BuildOnly,
-                    argv: vec!["cargo".into(), "check".into()],
-                    source_paths: source_paths.clone(),
-                    config_hash: config_hash.clone(),
-                },
-                VerificationCommand {
-                    id: "cargo-test".into(),
-                    kind: VerificationCommandKind::Test,
-                    capability: VerificationCapability::Unit,
-                    argv: vec!["cargo".into(), "test".into()],
-                    source_paths,
-                    config_hash,
-                },
-            ],
-            reason: None,
+            capabilities,
+            commands,
+            reason: if rust_tests.unit || rust_tests.integration {
+                None
+            } else {
+                Some("Cargo project has no discovered Rust test surfaces; verification is BUILD_ONLY".into())
+            },
         });
     }
 
@@ -338,6 +345,193 @@ pub fn discover_profile(project_root: &Path) -> Result<VerificationProfile> {
         commands: Vec::new(),
         reason: Some("no supported deterministic build/test configuration was discovered".into()),
     })
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct RustTestSurfaces {
+    unit: bool,
+    integration: bool,
+}
+
+fn discover_validated_ci_script(
+    content: &str,
+    source_paths: Vec<String>,
+    config_hash: String,
+    rust_tests: RustTestSurfaces,
+) -> Result<VerificationProfile> {
+    let mut commands = Vec::new();
+    let mut capabilities = BTreeSet::new();
+
+    for raw in content.lines() {
+        let line = raw.trim();
+        if line.is_empty()
+            || line.starts_with('#')
+            || matches!(line, "set -e" | "set -eu" | "set -euo pipefail")
+        {
+            continue;
+        }
+
+        let (id, kind, capability, argv) = match line {
+            "cargo fmt --check" => (
+                "project-ci-cargo-fmt",
+                VerificationCommandKind::Lint,
+                VerificationCapability::BuildOnly,
+                vec!["cargo".into(), "fmt".into(), "--check".into()],
+            ),
+            "cargo check" => (
+                "project-ci-cargo-check",
+                VerificationCommandKind::Typecheck,
+                VerificationCapability::BuildOnly,
+                vec!["cargo".into(), "check".into()],
+            ),
+            "cargo test" if rust_tests.unit || rust_tests.integration => (
+                "project-ci-cargo-test",
+                VerificationCommandKind::Test,
+                if rust_tests.integration {
+                    VerificationCapability::Integration
+                } else {
+                    VerificationCapability::Unit
+                },
+                vec!["cargo".into(), "test".into()],
+            ),
+            "cargo test" => continue,
+            _ => {
+                return Ok(VerificationProfile {
+                    status: DiscoveryStatus::Blocked,
+                    capabilities: Vec::new(),
+                    commands: Vec::new(),
+                    reason: Some(format!(
+                        "scripts/ci.sh contains unsupported verification command: {line}"
+                    )),
+                });
+            }
+        };
+
+        if commands.iter().any(|command: &VerificationCommand| command.id == id) {
+            continue;
+        }
+        capabilities.insert(VerificationCapability::BuildOnly);
+        if kind == VerificationCommandKind::Test {
+            if rust_tests.unit {
+                capabilities.insert(VerificationCapability::Unit);
+            }
+            if rust_tests.integration {
+                capabilities.insert(VerificationCapability::Integration);
+            }
+        }
+        commands.push(VerificationCommand {
+            id: id.into(),
+            kind,
+            capability,
+            argv,
+            source_paths: source_paths.clone(),
+            config_hash: config_hash.clone(),
+        });
+    }
+
+    if commands.is_empty() {
+        return Ok(VerificationProfile {
+            status: DiscoveryStatus::Blocked,
+            capabilities: Vec::new(),
+            commands: Vec::new(),
+            reason: Some(
+                "scripts/ci.sh contains no recognized deterministic verification commands".into(),
+            ),
+        });
+    }
+
+    Ok(VerificationProfile {
+        status: DiscoveryStatus::Applicable,
+        capabilities: capabilities.into_iter().collect(),
+        commands,
+        reason: if rust_tests.unit || rust_tests.integration {
+            None
+        } else {
+            Some(
+                "scripts/ci.sh is valid but no Rust test surfaces were discovered; verification is BUILD_ONLY"
+                    .into(),
+            )
+        },
+    })
+}
+
+fn detect_rust_test_surfaces(root: &Path) -> Result<RustTestSurfaces> {
+    let integration = contains_rust_file(&root.join("tests"), 256)?;
+    let unit = rust_sources_contain_test_marker(&root.join("src"), 256)?;
+    Ok(RustTestSurfaces { unit, integration })
+}
+
+fn contains_rust_file(root: &Path, max_files: usize) -> Result<bool> {
+    if !root.exists() {
+        return Ok(false);
+    }
+    let mut pending = vec![root.to_path_buf()];
+    let mut seen = 0usize;
+    while let Some(dir) = pending.pop() {
+        let meta = fs::symlink_metadata(&dir)?;
+        if meta.file_type().is_symlink() || !meta.is_dir() {
+            continue;
+        }
+        for entry in fs::read_dir(&dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            let meta = fs::symlink_metadata(&path)?;
+            if meta.file_type().is_symlink() {
+                continue;
+            }
+            if meta.is_dir() {
+                pending.push(path);
+            } else if meta.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+                seen += 1;
+                if seen > max_files {
+                    bail!("Rust test-surface discovery exceeded bounded file count");
+                }
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn rust_sources_contain_test_marker(root: &Path, max_files: usize) -> Result<bool> {
+    if !root.exists() {
+        return Ok(false);
+    }
+    let mut pending = vec![root.to_path_buf()];
+    let mut seen = 0usize;
+    while let Some(dir) = pending.pop() {
+        let meta = fs::symlink_metadata(&dir)?;
+        if meta.file_type().is_symlink() || !meta.is_dir() {
+            continue;
+        }
+        for entry in fs::read_dir(&dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            let meta = fs::symlink_metadata(&path)?;
+            if meta.file_type().is_symlink() {
+                continue;
+            }
+            if meta.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            if !meta.is_file() || path.extension().and_then(|ext| ext.to_str()) != Some("rs") {
+                continue;
+            }
+            seen += 1;
+            if seen > max_files {
+                bail!("Rust unit-test discovery exceeded bounded file count");
+            }
+            if meta.len() > 512 * 1024 {
+                continue;
+            }
+            let content = fs::read_to_string(&path).unwrap_or_default();
+            if content.contains("#[test]") || content.contains("#[cfg(test)]") {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 pub fn is_test_surface(path: &str) -> bool {
