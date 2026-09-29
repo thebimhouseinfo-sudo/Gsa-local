@@ -1135,6 +1135,45 @@ mod tests {
     }
 
     #[test]
+    fn migrates_existing_jobpack_table_with_input_output_columns() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("state.db");
+        let legacy = Connection::open(&path).unwrap();
+        legacy
+            .execute_batch(
+                r#"
+                CREATE TABLE execution_jobpacks (
+                    graph_version INTEGER NOT NULL,
+                    jobpack_id TEXT NOT NULL,
+                    milestone_id TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    goal TEXT NOT NULL,
+                    acceptance TEXT NOT NULL,
+                    verification_hints TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    PRIMARY KEY (graph_version, jobpack_id)
+                );
+                "#,
+            )
+            .unwrap();
+        drop(legacy);
+
+        let registry = Registry::open_at(&path).unwrap();
+        let mut statement = registry
+            .conn
+            .prepare("PRAGMA table_info(execution_jobpacks)")
+            .unwrap();
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<std::result::Result<HashSet<_>, _>>()
+            .unwrap();
+
+        assert!(columns.contains("required_inputs"));
+        assert!(columns.contains("expected_outputs"));
+    }
+
+    #[test]
     fn duplicate_plan_hashes_are_allowed_across_revisions() {
         let (_dir, registry) = registry();
         registry.begin_plan_workflow().unwrap();
