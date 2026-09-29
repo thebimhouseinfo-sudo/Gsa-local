@@ -1193,6 +1193,46 @@ impl Registry {
         assert_active_jobpack_binding_tx(&tx, graph_version, jobpack_id)?;
         validate_checklist_claims_tx(&tx, graph_version, jobpack_id, claims)?;
 
+        let workflow_state: Option<(i64, i64, String)> = tx
+            .query_row(
+                r#"
+                SELECT coder_attempts, reviewer_attempts, status
+                FROM code_workflow_state
+                WHERE id=1 AND graph_version=?1 AND jobpack_id=?2
+                "#,
+                params![graph_version, jobpack_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+        let Some((state_coder_attempts, state_reviewer_attempts, state_status)) =
+            workflow_state
+        else {
+            bail!("code workflow state is missing for active Job Pack");
+        };
+        let checkpoint_transition_ok = match state_status.as_str() {
+            "CODER" => {
+                state_coder_attempts == 0
+                    && state_reviewer_attempts == 0
+                    && coder_attempts == 1
+                    && reviewer_attempts == 0
+            }
+            "INTERNAL_FIX" => {
+                coder_attempts as i64 == state_coder_attempts + 1
+                    && reviewer_attempts as i64 == state_reviewer_attempts
+            }
+            _ => false,
+        };
+        if !checkpoint_transition_ok {
+            bail!(
+                "invalid code checkpoint transition from {} ({}/{}) to ({}/{})",
+                state_status,
+                state_coder_attempts,
+                state_reviewer_attempts,
+                coder_attempts,
+                reviewer_attempts
+            );
+        }
+
         tx.execute(
             r#"
             INSERT INTO code_checkpoints
@@ -1264,26 +1304,39 @@ impl Registry {
         let (plan_revision, milestone_id) =
             assert_active_jobpack_binding_tx(&tx, graph_version, jobpack_id)?;
 
-        let state: Option<(String, String)> = tx
+        let state: Option<(String, i64, i64, String)> = tx
             .query_row(
                 r#"
-                SELECT change_set_id, status
+                SELECT change_set_id, coder_attempts, reviewer_attempts, status
                 FROM code_workflow_state
                 WHERE id=1 AND graph_version=?1 AND jobpack_id=?2
                 "#,
                 params![graph_version, jobpack_id],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .optional()?;
-        let Some((state_change_set, state_status)) = state else {
+        let Some((
+            state_change_set,
+            state_coder_attempts,
+            state_reviewer_attempts,
+            state_status,
+        )) = state
+        else {
             bail!("code workflow state is missing for active Job Pack");
         };
-        if state_change_set != change_set_id || state_status != "REVIEWER" {
+        if state_change_set != change_set_id
+            || state_status != "REVIEWER"
+            || coder_attempts as i64 != state_coder_attempts
+            || reviewer_attempts as i64 != state_reviewer_attempts + 1
+        {
             bail!(
-                "stale code review target: expected REVIEWER on change set {}, found {} on {}",
-                change_set_id,
+                "stale code review target/attempt: expected REVIEWER {} on change set {} after attempts {}/{}, received {}/{}",
                 state_status,
-                state_change_set
+                state_change_set,
+                state_coder_attempts,
+                state_reviewer_attempts,
+                coder_attempts,
+                reviewer_attempts
             );
         }
 
