@@ -7,11 +7,19 @@ use crate::{
     session::Session,
 };
 use anyhow::{bail, Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::path::Path;
+use std::{
+    fs,
+    io::Read,
+    path::{Path, PathBuf},
+};
 
 const DEFAULT_MAX_ATTEMPTS: u32 = 5;
+const MAX_CONTEXT_PATHS: usize = 500;
+const MAX_CONTEXT_FILES: usize = 200;
+const MAX_CONTEXT_BYTES: usize = 128 * 1024;
+const MAX_FILE_BYTES: usize = 16 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlanningStage {
@@ -87,6 +95,24 @@ impl PlanningRoute {
     pub fn after_internal_fix(&mut self) {
         self.stage = PlanningStage::Reviewer;
     }
+
+    pub fn unchanged_revision(&mut self) {
+        self.stage = PlanningStage::Paused;
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ProjectContext {
+    paths: Vec<String>,
+    text_files: Vec<ProjectContextFile>,
+    truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ProjectContextFile {
+    path: String,
+    content: String,
+    truncated: bool,
 }
 
 pub struct PlanningWorkflow<'a> {
@@ -128,6 +154,7 @@ impl<'a> PlanningWorkflow<'a> {
     pub async fn run(&self, requirement: &str) -> Result<PlanningOutcome> {
         self.registry.begin_plan_workflow()?;
         let mut route = PlanningRoute::new(self.max_attempts);
+        let project_context = build_project_context(self.project_root)?;
 
         let artifact = self
             .invoke_plan_agent(
@@ -135,6 +162,7 @@ impl<'a> PlanningWorkflow<'a> {
                 requirement,
                 None,
                 &[],
+                &project_context,
                 "Create the first Implementation Plan revision.",
             )
             .await?;
@@ -146,7 +174,9 @@ impl<'a> PlanningWorkflow<'a> {
             }
             self.persist_route(&route, Some(current.revision))?;
 
-            let review = self.invoke_reviewer(requirement, &current).await?;
+            let review = self
+                .invoke_reviewer(requirement, &current, &project_context)
+                .await?;
             let review_verdict = if review.verdict == "PASS" {
                 ReviewVerdict::Pass
             } else if review.verdict == "CHANGES_REQUIRED" {
@@ -173,9 +203,14 @@ impl<'a> PlanningWorkflow<'a> {
                         requirement,
                         Some(&current),
                         &review.findings,
+                        &project_context,
                         "Revise the plan to resolve Reviewer findings. Produce a new complete plan.",
                     )
                     .await?;
+                if revised.hash()? == current.hash {
+                    route.unchanged_revision();
+                    return self.pause(&route, Some(current.revision));
+                }
                 current = self.registry.persist_plan_revision(&revised)?;
                 continue;
             }
@@ -185,7 +220,9 @@ impl<'a> PlanningWorkflow<'a> {
             }
             self.persist_route(&route, Some(current.revision))?;
 
-            let cr = self.invoke_cr(requirement, &current).await?;
+            let cr = self
+                .invoke_cr(requirement, &current, &project_context)
+                .await?;
             let cr_verdict = if cr.verdict == "PASS" {
                 ReviewVerdict::Pass
             } else if cr.verdict == "REVISE" {
@@ -220,9 +257,14 @@ impl<'a> PlanningWorkflow<'a> {
                     requirement,
                     Some(&current),
                     &cr.findings,
+                    &project_context,
                     "Repair only the CR findings inside the existing planning scope. Return a complete revised plan.",
                 )
                 .await?;
+            if fixed.hash()? == current.hash {
+                route.unchanged_revision();
+                return self.pause(&route, Some(current.revision));
+            }
             current = self.registry.persist_plan_revision(&fixed)?;
             route.after_internal_fix();
         }
@@ -256,12 +298,14 @@ impl<'a> PlanningWorkflow<'a> {
         requirement: &str,
         current: Option<&PlanRevision>,
         findings: &[String],
+        project_context: &ProjectContext,
         instruction: &str,
     ) -> Result<PlanArtifact> {
         let mut packet = json!({
             "original_requirement": requirement,
             "instruction": instruction,
             "project_root": self.project_root.display().to_string(),
+            "project_context": project_context,
             "findings": findings,
         });
         if let Some(current) = current {
@@ -282,9 +326,11 @@ impl<'a> PlanningWorkflow<'a> {
         &self,
         requirement: &str,
         current: &PlanRevision,
+        project_context: &ProjectContext,
     ) -> Result<ReviewDecision> {
         let packet = json!({
             "original_requirement": requirement,
+            "project_context": project_context,
             "target": {
                 "revision": current.revision,
                 "hash": current.hash,
@@ -302,9 +348,15 @@ impl<'a> PlanningWorkflow<'a> {
         extract_tool_args(&response, "submit_review")
     }
 
-    async fn invoke_cr(&self, requirement: &str, current: &PlanRevision) -> Result<CrDecision> {
+    async fn invoke_cr(
+        &self,
+        requirement: &str,
+        current: &PlanRevision,
+        project_context: &ProjectContext,
+    ) -> Result<CrDecision> {
         let packet = json!({
             "original_requirement": requirement,
+            "project_context": project_context,
             "target": {
                 "revision": current.revision,
                 "hash": current.hash,
@@ -360,6 +412,132 @@ impl<'a> PlanningWorkflow<'a> {
             .next()
             .context("no Ollama model is configured or installed")
     }
+}
+
+fn build_project_context(root: &Path) -> Result<ProjectContext> {
+    let root = root.canonicalize()?;
+    let mut pending = vec![root.clone()];
+    let mut paths = Vec::new();
+    let mut text_files = Vec::new();
+    let mut total_bytes = 0usize;
+    let mut truncated = false;
+
+    while let Some(dir) = pending.pop() {
+        let mut entries = match fs::read_dir(&dir) {
+            Ok(entries) => entries.filter_map(|entry| entry.ok()).collect::<Vec<_>>(),
+            Err(_) => continue,
+        };
+        entries.sort_by_key(|entry| entry.file_name());
+
+        for entry in entries.into_iter().rev() {
+            let path = entry.path();
+            let file_type = match entry.file_type() {
+                Ok(file_type) => file_type,
+                Err(_) => continue,
+            };
+            if file_type.is_symlink() {
+                continue;
+            }
+
+            let relative = match path.strip_prefix(&root) {
+                Ok(relative) => relative,
+                Err(_) => continue,
+            };
+            if should_skip(relative) {
+                continue;
+            }
+            let relative_text = relative.to_string_lossy().replace('\\', "/");
+
+            if file_type.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            if !file_type.is_file() {
+                continue;
+            }
+
+            if paths.len() < MAX_CONTEXT_PATHS {
+                paths.push(relative_text.clone());
+            } else {
+                truncated = true;
+            }
+
+            if text_files.len() >= MAX_CONTEXT_FILES || total_bytes >= MAX_CONTEXT_BYTES {
+                truncated = true;
+                continue;
+            }
+
+            let mut file = match fs::File::open(&path) {
+                Ok(file) => file,
+                Err(_) => continue,
+            };
+            let budget = MAX_FILE_BYTES.min(MAX_CONTEXT_BYTES.saturating_sub(total_bytes));
+            if budget == 0 {
+                truncated = true;
+                continue;
+            }
+            let mut bytes = Vec::new();
+            if file
+                .by_ref()
+                .take((budget + 1) as u64)
+                .read_to_end(&mut bytes)
+                .is_err()
+            {
+                continue;
+            }
+            let file_truncated = bytes.len() > budget;
+            if file_truncated {
+                bytes.truncate(budget);
+            }
+            let Ok(content) = String::from_utf8(bytes) else {
+                continue;
+            };
+            total_bytes += content.len();
+            text_files.push(ProjectContextFile {
+                path: relative_text,
+                content,
+                truncated: file_truncated,
+            });
+            truncated |= file_truncated;
+        }
+    }
+
+    paths.sort();
+    text_files.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(ProjectContext {
+        paths,
+        text_files,
+        truncated,
+    })
+}
+
+fn should_skip(relative: &Path) -> bool {
+    const SKIP_DIRS: &[&str] = &[
+        ".git",
+        ".gsa",
+        "target",
+        "node_modules",
+        ".next",
+        "dist",
+        "build",
+    ];
+    if relative
+        .components()
+        .any(|component| SKIP_DIRS.contains(&component.as_os_str().to_string_lossy().as_ref()))
+    {
+        return true;
+    }
+
+    let name = relative
+        .file_name()
+        .map(|name| name.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    name == ".env"
+        || name.starts_with(".env.")
+        || name == ".npmrc"
+        || name == "credentials.json"
+        || name == "id_rsa"
+        || name == "id_ed25519"
 }
 
 #[derive(Debug, Deserialize)]
@@ -479,6 +657,35 @@ mod tests {
         assert_eq!(route.stage, PlanningStage::InternalFix);
         route.after_internal_fix();
         assert_eq!(route.stage, PlanningStage::Reviewer);
+    }
+
+    #[test]
+    fn unchanged_revision_routes_to_paused() {
+        let mut route = PlanningRoute::new(5);
+        route.unchanged_revision();
+        assert_eq!(route.stage, PlanningStage::Paused);
+    }
+
+    #[test]
+    fn project_context_is_bounded_and_excludes_runtime_state() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::create_dir_all(dir.path().join(".gsa/state")).unwrap();
+        std::fs::create_dir_all(dir.path().join("target")).unwrap();
+        std::fs::write(dir.path().join("src/main.rs"), "fn main() {}").unwrap();
+        std::fs::write(dir.path().join(".gsa/state/secret.txt"), "secret").unwrap();
+        std::fs::write(dir.path().join("target/generated.rs"), "generated").unwrap();
+        std::fs::write(dir.path().join(".env"), "TOKEN=secret").unwrap();
+
+        let context = build_project_context(dir.path()).unwrap();
+        assert!(context.paths.iter().any(|path| path == "src/main.rs"));
+        assert!(!context.paths.iter().any(|path| path.contains(".gsa")));
+        assert!(!context.paths.iter().any(|path| path.contains("target")));
+        assert!(!context.paths.iter().any(|path| path == ".env"));
+        assert!(context
+            .text_files
+            .iter()
+            .any(|file| file.path == "src/main.rs" && file.content.contains("fn main")));
     }
 
     #[test]
