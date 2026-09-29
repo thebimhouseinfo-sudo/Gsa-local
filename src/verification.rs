@@ -96,16 +96,6 @@ impl VerificationResult {
             Self::Blocked => "BLOCKED",
         }
     }
-
-    pub fn parse(value: &str) -> Result<Self> {
-        match value {
-            "TEST_PASS" => Ok(Self::TestPass),
-            "FAIL" => Ok(Self::Fail),
-            "NOT_APPLICABLE" => Ok(Self::NotApplicable),
-            "BLOCKED" => Ok(Self::Blocked),
-            other => bail!("unknown verification result {other}"),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -126,16 +116,6 @@ pub struct VerificationEvidence {
     pub profile: VerificationProfile,
     pub commands: Vec<CommandEvidence>,
     pub test_surface_changed: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RecordedVerification {
-    pub id: i64,
-    pub graph_version: i64,
-    pub jobpack_id: String,
-    pub change_set_id: String,
-    pub result: VerificationResult,
-    pub evidence: VerificationEvidence,
 }
 
 impl VerificationEvidence {
@@ -218,18 +198,6 @@ impl<'a> VerificationController<'a> {
         change_set_id: &str,
         changed_paths: &[String],
     ) -> Result<VerificationResult> {
-        Ok(self
-            .verify_record(graph_version, jobpack_id, change_set_id, changed_paths)?
-            .result)
-    }
-
-    pub fn verify_record(
-        &self,
-        graph_version: i64,
-        jobpack_id: &str,
-        change_set_id: &str,
-        changed_paths: &[String],
-    ) -> Result<RecordedVerification> {
         let profile = discover_profile(self.project_root)?;
         let mut evidence = VerificationEvidence {
             profile: profile.clone(),
@@ -287,7 +255,7 @@ impl<'a> VerificationController<'a> {
             }
         }
 
-        self.registry.record_verification_run(
+        self.registry.record_verification_evidence(
             self.project_root,
             self.lease_owner,
             graph_version,
