@@ -201,14 +201,54 @@ impl<'a> VerificationController<'a> {
 
         if profile.status == DiscoveryStatus::Applicable {
             for command in &profile.commands {
-                ensure_command_config_current(self.project_root, command)?;
-                let observation =
-                    self.runner
-                        .run(self.project_root, command, DEFAULT_TIMEOUT)?;
-                ensure_command_config_current(self.project_root, command)?;
+                let before = ensure_command_config_current(self.project_root, command);
+                if let Err(error) = before {
+                    evidence.commands.push(CommandEvidence {
+                        command_id: command.id.clone(),
+                        config_hash: command.config_hash.clone(),
+                        argv: command.argv.clone(),
+                        exit_code: None,
+                        duration_ms: 0,
+                        timed_out: false,
+                        blocked_reason: Some(format!(
+                            "verification command became stale before execution: {error:#}"
+                        )),
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    });
+                    break;
+                }
+
+                let mut observation = match self.runner.run(
+                    self.project_root,
+                    command,
+                    DEFAULT_TIMEOUT,
+                ) {
+                    Ok(observation) => observation,
+                    Err(error) => ProcessObservation {
+                        exit_code: None,
+                        duration_ms: 0,
+                        timed_out: false,
+                        blocked_reason: Some(format!(
+                            "verification process runner failed: {error:#}"
+                        )),
+                        stdout: String::new(),
+                        stderr: String::new(),
+                    },
+                };
+
+                if let Err(error) = ensure_command_config_current(self.project_root, command) {
+                    observation.blocked_reason = Some(format!(
+                        "verification config changed during execution: {error:#}"
+                    ));
+                }
+                let blocked = observation.blocked_reason.is_some();
                 evidence
                     .commands
                     .push(command_evidence(command, observation));
+                if blocked {
+                    break;
+                }
             }
         }
 
