@@ -1,3 +1,4 @@
+pub mod agent_runtime;
 pub mod app;
 pub mod checkpoint;
 pub mod cli;
