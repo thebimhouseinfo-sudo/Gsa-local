@@ -357,11 +357,7 @@ mod tests {
             .execute("UPDATE execution_lease SET acquired_at = 0", [])
             .unwrap();
 
-        let result = registry.acquire_lease(
-            dir.path(),
-            "pid:999999",
-            Duration::from_secs(0),
-        );
+        let result = registry.acquire_lease(dir.path(), "pid:999999", Duration::from_secs(0));
         assert!(result.is_err());
     }
 
