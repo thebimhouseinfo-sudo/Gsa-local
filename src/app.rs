@@ -7,9 +7,8 @@ use crate::{
     ollama::{ChatMessage, OllamaClient},
     registry::Registry,
     session::Session,
-    tester::{TesterOutcome, TesterWorkflow},
     tools::ProjectToolRuntime,
-    verification::{VerificationController, VerificationResult},
+    verification::VerificationController,
     workflow::{CodingOutcome, CodingWorkflow, PlanningOutcome, PlanningWorkflow},
 };
 use anyhow::{bail, Context, Result};
@@ -264,11 +263,10 @@ impl App {
                 &self.project_root,
                 &self.lease_owner,
             );
-            loop {
-                match workflow
-                    .run(&text, &active_work, &mut self.tool_runtime)
-                    .await?
-                {
+            match workflow
+                .run(&text, &active_work, &mut self.tool_runtime)
+                .await?
+            {
                 CodingOutcome::ReviewPass { change_set_id } => {
                     println!(
                         "CODE_REVIEW_PASS jobpack={} change_set={}",
@@ -285,119 +283,19 @@ impl App {
                         &self.project_root,
                         &self.lease_owner,
                     )
-                    .verify_record(
+                    .verify(
                         active_work.graph_version,
                         &active_work.jobpack_id,
                         &change_set_id,
                         &changed_paths,
                     )?;
                     println!(
-                        "VERIFICATION_RESULT jobpack={} change_set={} run={} result={}",
+                        "VERIFICATION_RESULT jobpack={} change_set={} result={}",
                         active_work.jobpack_id,
                         change_set_id,
-                        verification.id,
-                        verification.result.as_str()
+                        verification.as_str()
                     );
-
-                    match verification.result {
-                        VerificationResult::Fail => {
-                            self.registry.route_post_review_failure_to_internal_fix(
-                                &self.project_root,
-                                &self.lease_owner,
-                                active_work.graph_version,
-                                &active_work.jobpack_id,
-                                &change_set_id,
-                                verification.id,
-                                "VERIFICATION_FAIL",
-                                &["deterministic verification failed".into()],
-                            )?;
-                            println!(
-                                "VERIFICATION_FAIL_ROUTED jobpack={} change_set={} -> INTERNAL_FIX",
-                                active_work.jobpack_id, change_set_id
-                            );
-                            continue;
-                        }
-                        VerificationResult::Blocked => {
-                            println!(
-                                "TESTER_BLOCKED jobpack={} reason=deterministic verification blocked",
-                                active_work.jobpack_id
-                            );
-                            break;
-                        }
-                        VerificationResult::NotApplicable => {
-                            println!(
-                                "TESTER_SKIPPED jobpack={} reason=verification not applicable/build-only",
-                                active_work.jobpack_id
-                            );
-                            println!("Job Pack remains ACTIVE pending CR and later gates.");
-                            break;
-                        }
-                        VerificationResult::TestPass => {
-                            let tester = TesterWorkflow::new(
-                                &self.ollama,
-                                &self.harnesses,
-                                &self.registry,
-                                &self.config,
-                                &self.session,
-                                &self.project_root,
-                                &self.lease_owner,
-                            );
-                            match tester
-                                .run(&active_work, &verification, &mut self.tool_runtime)
-                                .await?
-                            {
-                                TesterOutcome::Pass { tester_run_id } => {
-                                    println!(
-                                        "TESTER_PASS jobpack={} tester_run={}",
-                                        active_work.jobpack_id, tester_run_id
-                                    );
-                                    println!("Job Pack remains ACTIVE pending CR and later gates.");
-                                    break;
-                                }
-                                TesterOutcome::Fail {
-                                    tester_run_id,
-                                    findings,
-                                } => {
-                                    println!(
-                                        "TESTER_FAIL_ROUTED jobpack={} tester_run={} findings={} -> INTERNAL_FIX",
-                                        active_work.jobpack_id,
-                                        tester_run_id,
-                                        findings.join(" | ")
-                                    );
-                                    continue;
-                                }
-                                TesterOutcome::Blocked {
-                                    tester_run_id,
-                                    reason,
-                                } => {
-                                    println!(
-                                        "TESTER_BLOCKED jobpack={} tester_run={:?} reason={}",
-                                        active_work.jobpack_id, tester_run_id, reason
-                                    );
-                                    break;
-                                }
-                                TesterOutcome::NotApplicable {
-                                    tester_run_id,
-                                    reason,
-                                } => {
-                                    println!(
-                                        "TESTER_NOT_APPLICABLE jobpack={} tester_run={:?} reason={}",
-                                        active_work.jobpack_id, tester_run_id, reason
-                                    );
-                                    println!("Job Pack remains ACTIVE pending CR and later gates.");
-                                    break;
-                                }
-                                TesterOutcome::SkippedNotApplicable { reason } => {
-                                    println!(
-                                        "TESTER_SKIPPED jobpack={} reason={}",
-                                        active_work.jobpack_id, reason
-                                    );
-                                    println!("Job Pack remains ACTIVE pending CR and later gates.");
-                                    break;
-                                }
-                            }
-                        }
-                    }
+                    println!("Job Pack remains ACTIVE pending Tester/CR and later gates.");
                 }
                 CodingOutcome::Paused {
                     change_set_id,
@@ -407,8 +305,6 @@ impl App {
                         "Coding workflow PAUSED jobpack={} change_set={:?}: {}",
                         active_work.jobpack_id, change_set_id, reason
                     );
-                    break;
-                }
                 }
             }
             return Ok(());
