@@ -212,11 +212,17 @@ fn newer_approved_plan_graph_supersedes_older_graph() {
         .unwrap();
 
     assert_eq!(
-        registry.execution_graph_status(first_version).unwrap().as_deref(),
+        registry
+            .execution_graph_status(first_version)
+            .unwrap()
+            .as_deref(),
         Some("SUPERSEDED")
     );
     assert_eq!(
-        registry.execution_graph_status(second_version).unwrap().as_deref(),
+        registry
+            .execution_graph_status(second_version)
+            .unwrap()
+            .as_deref(),
         Some("CURRENT")
     );
     assert_eq!(
