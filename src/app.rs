@@ -264,10 +264,11 @@ impl App {
                 &self.project_root,
                 &self.lease_owner,
             );
-            match workflow
-                .run(&text, &active_work, &mut self.tool_runtime)
-                .await?
-            {
+            loop {
+                match workflow
+                    .run(&text, &active_work, &mut self.tool_runtime)
+                    .await?
+                {
                 CodingOutcome::ReviewPass { change_set_id } => {
                     println!(
                         "CODE_REVIEW_PASS jobpack={} change_set={}",
@@ -314,12 +315,14 @@ impl App {
                                 "VERIFICATION_FAIL_ROUTED jobpack={} change_set={} -> INTERNAL_FIX",
                                 active_work.jobpack_id, change_set_id
                             );
+                            continue;
                         }
                         VerificationResult::Blocked => {
                             println!(
                                 "TESTER_BLOCKED jobpack={} reason=deterministic verification blocked",
                                 active_work.jobpack_id
                             );
+                            break;
                         }
                         VerificationResult::NotApplicable => {
                             println!(
@@ -327,6 +330,7 @@ impl App {
                                 active_work.jobpack_id
                             );
                             println!("Job Pack remains ACTIVE pending CR and later gates.");
+                            break;
                         }
                         VerificationResult::TestPass => {
                             let tester = TesterWorkflow::new(
@@ -348,6 +352,7 @@ impl App {
                                         active_work.jobpack_id, tester_run_id
                                     );
                                     println!("Job Pack remains ACTIVE pending CR and later gates.");
+                                    break;
                                 }
                                 TesterOutcome::Fail {
                                     tester_run_id,
@@ -359,6 +364,7 @@ impl App {
                                         tester_run_id,
                                         findings.join(" | ")
                                     );
+                                    continue;
                                 }
                                 TesterOutcome::Blocked {
                                     tester_run_id,
@@ -368,6 +374,7 @@ impl App {
                                         "TESTER_BLOCKED jobpack={} tester_run={:?} reason={}",
                                         active_work.jobpack_id, tester_run_id, reason
                                     );
+                                    break;
                                 }
                                 TesterOutcome::NotApplicable {
                                     tester_run_id,
@@ -378,6 +385,7 @@ impl App {
                                         active_work.jobpack_id, tester_run_id, reason
                                     );
                                     println!("Job Pack remains ACTIVE pending CR and later gates.");
+                                    break;
                                 }
                                 TesterOutcome::SkippedNotApplicable { reason } => {
                                     println!(
@@ -385,6 +393,7 @@ impl App {
                                         active_work.jobpack_id, reason
                                     );
                                     println!("Job Pack remains ACTIVE pending CR and later gates.");
+                                    break;
                                 }
                             }
                         }
@@ -398,6 +407,8 @@ impl App {
                         "Coding workflow PAUSED jobpack={} change_set={:?}: {}",
                         active_work.jobpack_id, change_set_id, reason
                     );
+                    break;
+                }
                 }
             }
             return Ok(());
