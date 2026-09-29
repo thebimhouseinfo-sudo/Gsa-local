@@ -49,7 +49,9 @@ impl<'a> CheckpointResolver<'a> {
                     revision,
                     binding.revision
                 ),
-                None => bail!("checkpoint references a plan revision but no approved plan binding exists"),
+                None => bail!(
+                    "checkpoint references a plan revision but no approved plan binding exists"
+                ),
             }
         }
 
