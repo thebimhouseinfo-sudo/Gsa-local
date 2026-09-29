@@ -1021,39 +1021,64 @@ error handling
 
 # VERIFICATION / LOCAL CI / TESTER
 
-## 31. Verification không chỉ nằm cuối Job Pack
+## 31. Test Checkpoint là planning artifact
 
-Trong quá trình dev, một function hoặc nhóm function có thể đạt mức:
+Tester không tự xuất hiện chỉ vì code vừa Reviewer PASS hoặc vì Verification Controller phát hiện project có test.
+
+Checkpoint placement là dữ liệu do Planner/Job Builder chuẩn bị trong Execution Graph.
+
+Ví dụ:
 
 ```text
-buildable
-testable
-integration-testable
-browser-testable
+JP-08
+  Dev A
+   ↓
+  Reviewer PASS
+
+  Dev B
+   ↓
+  Reviewer PASS
+   ↓
+  TEST CHECKPOINT CP-01
+      modes: VERIFY + MEASURE
+      outputs:
+        - api_ready_state
+        - startup_latency_ms
+
+  Dev C
+   ↓
+  requires CP-01.startup_latency_ms
 ```
 
-Khi đó Tester có thể nhảy vào ngay.
-
-Không cần đợi Job Pack hoàn tất toàn bộ.
+Nếu không có declared checkpoint thì Reviewer PASS chỉ kết thúc vòng review hiện tại; Tester không tự chạy.
 
 ---
 
-## 32. Verification Controller
+## 32. Verification Controller đổi vai trò
 
-Sau meaningful development checkpoint:
+Verification Controller vẫn giữ giá trị của Phase 9:
 
 ```text
-Coder
- ↓
-Reviewer PASS
- ↓
-Verification Controller
+discover build/test/lint/typecheck capability
+run deterministic approved commands
+capture exit code/stdout/stderr/timing
+prevent model-created false PASS
 ```
 
-Controller đánh giá:
+Nhưng Verification Controller **không còn authority quyết định Tester placement**.
+
+Nó là một deterministic capability/evidence primitive dùng cho:
 
 ```text
-NOT_READY
+Coder lightweight self-check
+declared VERIFY checkpoint
+declared MEASURE/PROBE adapter khi phù hợp
+final verification
+```
+
+Các capability như:
+
+```text
 BUILD_ONLY
 UNIT_TESTABLE
 INTEGRATION_TESTABLE
@@ -1061,119 +1086,229 @@ BROWSER_TESTABLE
 FULL_TESTABLE
 ```
 
----
-
-## 33. Build-only checkpoint
-
-Nếu mới chỉ build được:
-
-```text
-BUILD_ONLY
- ↓
-Local CI Runner
- ↓
-build
-```
-
-Không cần gọi Tester Agent nếu deterministic build đã đủ.
+chỉ mô tả cái gì runtime có thể kiểm chứng, không có nghĩa Tester phải chạy ngay.
 
 ---
 
-## 34. Testable checkpoint
+## 33. Build-only self-check
 
-Nếu thật sự test được:
+Nếu coding checkpoint chỉ build được:
 
 ```text
 Coder
  ↓
+lightweight deterministic build/self-check
+ ↓
 Reviewer
- ↓
-Build
- ↓
+```
+
+Không cần Tester nếu Execution Graph không có Test Checkpoint tại boundary đó.
+
+Build evidence vẫn được lưu để Reviewer/CR/Tester dùng khi cần.
+
+---
+
+## 34. Declared Test Checkpoint
+
+Khi execution đạt một checkpoint đã khai báo:
+
+```text
+reviewed target
+   ↓
+CHECKPOINT DUE
+   ↓
 Tester
 ```
 
-Nếu fail:
+Checkpoint có thể gồm:
+
+```text
+VERIFY
+MEASURE
+PROBE
+```
+
+VERIFY hỏi:
+
+```text
+sản phẩm có đáp ứng goal/acceptance không?
+```
+
+MEASURE hỏi:
+
+```text
+giá trị thực tế là bao nhiêu?
+behavior phân bố thế nào?
+```
+
+PROBE hỏi:
+
+```text
+assumption kiến trúc này có đúng trên runtime thật không?
+```
+
+MEASURE/PROBE không tự tạo PASS/FAIL nếu plan không định nghĩa threshold.
+
+---
+
+## 35. Tester Agent
+
+Tester là checkpoint subsystem độc lập.
+
+Tester có quyền:
+
+```text
+read product source
+read approved plan / checkpoint contract
+write Tester-owned tests/fixtures/artifacts
+execute bounded tests/probes
+collect measurements
+produce OBSERVED evidence
+report implications/limitations
+```
+
+Tester không có quyền:
+
+```text
+write product source
+write product config/deployment config
+choose checkpoint placement
+invent missing acceptance criteria
+invent measurement thresholds
+make final product architecture decisions
+```
+
+Tester-owned workspace:
+
+```text
+.gsa/tester/<graph>/<checkpoint>/<attempt>/
+```
+
+Coder/Internal Fix không được sửa workspace này để ép test PASS.
+
+---
+
+## 36. Empirical evidence là first-class dependency
+
+Một checkpoint có thể không chỉ gate chất lượng mà còn cung cấp dữ liệu thật cho phase sau.
+
+Ví dụ:
+
+```text
+PROBE CP-SESSION
+  observe:
+    token stable in same chat?
+    token changes in new chat?
+    runtime restart effect?
+    drawing change effect?
+```
+
+Output không phải một câu model tự kết luận.
+
+Registry phải lưu structured observations:
+
+```text
+dimension
+sample index
+changed boundary/event
+target revision/change_set
+observable runtime/tool identity
+observed value
+unit
+limitations
+evidence refs
+```
+
+Job Pack sau có thể khai báo:
+
+```text
+requires:
+  CP-SESSION.session_binding_behavior
+```
+
+Runtime chỉ inject evidence tương thích có provenance:
+
+```text
+OBSERVED
+```
+
+`IMPLICATION` và `UNRESOLVED` không được dùng thay giá trị đo bắt buộc.
+
+Nếu thiếu required OBSERVED evidence:
+
+```text
+BLOCKED / PLAN_GAP
+```
+
+không được tự bịa biến để tiếp tục.
+
+---
+
+## 37. Tester failure và retest
+
+Nếu Tester xác định:
+
+```text
+PRODUCT_FAILURE
+```
+
+flow là:
 
 ```text
 Tester FAIL
  ↓
 Coder/Internal Fix
  ↓
-Reviewer
+lightweight self-check
  ↓
-Build/Test again
+Reviewer
+ ↓ PASS
+Tester RETEST same checkpoint
 ```
 
-Nếu pass:
+Tester không sửa product source.
+
+Nếu lỗi thuộc test:
 
 ```text
-resume current Job Pack
+TEST_FAILURE
 ```
 
-Coder tiếp tục phần còn lại.
+Tester có thể sửa test artifact trong workspace riêng rồi chạy lại trong giới hạn attempt.
+
+Nếu lỗi thuộc environment/capability:
+
+```text
+ENVIRONMENT_FAILURE
+NOT_READY
+INTEGRATION_NOT_READY
+```
+
+không được chuyển thành product FAIL/PASS giả.
 
 ---
 
-## 35. Tester Agent
+## 38. Local CI evidence
 
-Tester chỉ tham gia khi reasoning hoặc interaction mang lại giá trị.
-
-Tester source implementation là **read-only**. Tester không sửa code. Khi phát hiện failure, Tester ghi evidence và route về Coder/Internal Fix.
-
-Ví dụ:
-
-```text
-browser flow
-runtime interaction
-UI behavior
-multi-step CLI behavior
-semantic verification
-```
-
-Không dùng model để hỏi build có pass không nếu exit code đã trả lời được.
-
----
-
-## 36. Local CI
-
-GitHub có CI infrastructure sẵn. GSA Local phải có Local CI Runner.
-
-Local CI tìm trước các script của project:
-
-```text
-npm test
-npm run build
-npm run lint
-cargo test
-pytest
-go test
-...
-```
-
-Nếu project chưa có đủ verification, Coder có thể đề xuất task-specific verification scripts.
-
-Script do model tạo **không tự động trở thành trusted evidence**. Reviewer/Tester phải kiểm mục tiêu và phạm vi của script; Local CI Runner chỉ ghi evidence từ execution thật.
-
----
-
-## 37. Local CI evidence
-
-Không tin model nói "Tests passed."
+Local CI vẫn là deterministic evidence source.
 
 Runtime ghi:
 
 ```text
-command
+command / adapter id
+argv
+cwd policy
 exit_code
 stdout/stderr
-timestamp
+duration
+timeout
 artifact/version
+target binding
 ```
 
-Chỉ evidence thật mới được coi là test/build pass.
+Không tin model nói "Tests passed."
 
-Test states:
+States deterministic:
 
 ```text
 TEST_PASS
@@ -1182,45 +1317,19 @@ TEST_NOT_APPLICABLE
 TEST_BLOCKED
 ```
 
-`TEST_NOT_APPLICABLE` không phải PASS.
+`TEST_NOT_APPLICABLE != PASS`.
 
-`TEST_BLOCKED` phải được lưu như limitation.
+`TEST_BLOCKED != PASS`.
 
----
-
-## 38. Multiple checkpoints trong một Job Pack
-
-Ví dụ:
+Tester mode outcomes là contract riêng:
 
 ```text
-JP-08
-
-Dev A
- ↓
-Reviewer
-
-Dev B
- ↓
-Reviewer
- ↓
-Build
- ↓
-Test PASS
-
-Dev C
- ↓
-Reviewer
- ↓
-Integration Test PASS
-
-Dev D
- ↓
-Reviewer
-
-Final JP Verification
+VERIFY  -> PASS / FAIL / BLOCKED / NEEDS_HUMAN
+MEASURE -> COMPLETE / BLOCKED / NEEDS_HUMAN
+PROBE   -> COMPLETE / BLOCKED / NEEDS_HUMAN
 ```
 
-Tester xuất hiện khi test bắt đầu có ý nghĩa.
+UNVERIFIED không bao giờ trở thành PASS.
 
 ---
 
@@ -1731,7 +1840,7 @@ Stale verdict không thể approve revision mới.
 
 ## Phase 6 — Job Builder + Registration
 
-Implement:
+Core đã implement:
 
 ```text
 TODO
@@ -1746,13 +1855,29 @@ graph validation
 supersede old graph
 ```
 
-Acceptance: Job Builder không thay đổi Implementation Plan và không register graph cho stale plan revision.
+Tester architecture extension:
+
+```text
+TestCheckpointSpec
+VERIFY / MEASURE / PROBE
+named evidence outputs
+EvidenceRequirement
+experiment dimensions
+downstream evidence consumers
+submit_execution_graph schema update
+```
+
+Acceptance mới:
+- Job Builder không thay đổi Implementation Plan;
+- không register graph cho stale plan revision;
+- không tự bịa checkpoint, threshold hoặc measured value;
+- evidence need từ approved plan phải được chuyển thành explicit checkpoint/evidence dependency hoặc trả PLAN_GAP.
 
 ---
 
 ## Phase 7 — Milestone + Job Pack Controller
 
-Implement:
+Core đã implement:
 
 ```text
 Milestone lock/unlock
@@ -1763,16 +1888,31 @@ active-work resolver
 milestone completion preconditions
 ```
 
-Acceptance: không jump milestone; đúng một Job Pack ACTIVE.
+Tester architecture extension:
+
+```text
+declared checkpoint boundary resolution
+checkpoint DUE/RUNNING/SATISFIED/BLOCKED/NEEDS_HUMAN
+EvidenceRequirement resolution
+OBSERVED evidence injection into ActiveWork
+checkpoint-aware resume
+```
+
+Acceptance mới:
+- không jump milestone;
+- đúng một Job Pack ACTIVE;
+- không jump qua required Test Checkpoint;
+- không activate consumer work khi required empirical evidence còn thiếu/stale/incompatible.
 
 ---
 
 ## Phase 8 — Coder ↔ Reviewer Workflow
 
-Implement:
+Core giữ nguyên:
 
 ```text
 Coder scoped to active Job Pack
+lightweight self-check
 Reviewer read-only review
 Internal Fix routing
 TODO/checklist state
@@ -1780,13 +1920,19 @@ goal recheck
 diff/scope evidence
 ```
 
-Acceptance: Coder không tự chọn Job Pack và Reviewer findings luôn bind vào đúng artifact/revision.
+Tester architecture extension:
+- ActiveWork/Coder context nhận required OBSERVED evidence;
+- thiếu required evidence thì block thay vì Coder tự đoán;
+- Coder/Internal Fix bị chặn khỏi Tester-owned workspace;
+- repair sau Tester PRODUCT_FAILURE vẫn phải quay qua Reviewer trước RETEST.
+
+Acceptance: Coder không tự chọn Job Pack, không tự bịa missing runtime inputs, và Reviewer findings luôn bind vào đúng artifact/revision.
 
 ---
 
 ## Phase 9 — Verification Controller + Local CI
 
-Implement:
+Core giữ nguyên:
 
 ```text
 stack/config detection
@@ -1798,7 +1944,13 @@ TEST_PASS / FAIL / NOT_APPLICABLE / BLOCKED
 task-specific test-script review
 ```
 
-Acceptance: model claim không thể tạo PASS nếu deterministic evidence không tồn tại.
+Semantic change từ Tester architecture:
+- Verification Controller không quyết định Tester placement;
+- capability detection chỉ mô tả verification surface hiện có;
+- deterministic verification là primitive dùng bởi Coder self-check, declared Test Checkpoints và final verification;
+- Test Checkpoint placement chỉ đến từ approved Execution Graph.
+
+Acceptance: model claim không thể tạo PASS nếu deterministic evidence không tồn tại, và capability discovery không tự tạo undeclared Tester checkpoint.
 
 ---
 
