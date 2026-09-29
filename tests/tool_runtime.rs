@@ -32,11 +32,7 @@ fn project_read_refuses_partial_large_file_content() {
     let mut runtime = ProjectToolRuntime::new(dir.path()).unwrap();
 
     assert!(runtime
-        .execute(
-            AgentId::Coder,
-            "project_read",
-            &json!({"path":"large.txt"})
-        )
+        .execute(AgentId::Coder, "project_read", &json!({"path":"large.txt"}))
         .is_err());
     assert!(runtime.journal().is_empty());
 }
