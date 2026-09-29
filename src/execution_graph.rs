@@ -152,7 +152,12 @@ impl ExecutionGraph {
         }
 
         for milestone in &self.milestones {
-            if packs_per_milestone.get(milestone.id.as_str()).copied().unwrap_or(0) == 0 {
+            if packs_per_milestone
+                .get(milestone.id.as_str())
+                .copied()
+                .unwrap_or(0)
+                == 0
+            {
                 bail!("milestone {} is empty", milestone.id);
             }
         }
