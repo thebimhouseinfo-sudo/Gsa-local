@@ -15,6 +15,7 @@ fn sample(goal: &str) -> PlanArtifact {
         sequence: vec!["Planner".into(), "Reviewer".into(), "Local CR".into()],
         risks: vec!["Stale verdict".into()],
         acceptance_direction: vec!["Only current Reviewer+CR PASS can approve".into()],
+        evidence_needs: vec![],
     }
 }
 
