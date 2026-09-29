@@ -90,7 +90,7 @@ impl Registry {
 
             CREATE TABLE IF NOT EXISTS plan_revisions (
                 revision INTEGER PRIMARY KEY,
-                plan_hash TEXT NOT NULL UNIQUE,
+                plan_hash TEXT NOT NULL,
                 content TEXT NOT NULL,
                 created_at INTEGER NOT NULL
             );
