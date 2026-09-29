@@ -126,9 +126,7 @@ impl VerificationEvidence {
             DiscoveryStatus::Applicable => {}
         }
 
-        if self.profile.commands.is_empty()
-            || self.commands.len() != self.profile.commands.len()
-        {
+        if self.profile.commands.is_empty() || self.commands.len() != self.profile.commands.len() {
             return VerificationResult::Blocked;
         }
 
@@ -219,23 +217,20 @@ impl<'a> VerificationController<'a> {
                     break;
                 }
 
-                let mut observation = match self.runner.run(
-                    self.project_root,
-                    command,
-                    DEFAULT_TIMEOUT,
-                ) {
-                    Ok(observation) => observation,
-                    Err(error) => ProcessObservation {
-                        exit_code: None,
-                        duration_ms: 0,
-                        timed_out: false,
-                        blocked_reason: Some(format!(
-                            "verification process runner failed: {error:#}"
-                        )),
-                        stdout: String::new(),
-                        stderr: String::new(),
-                    },
-                };
+                let mut observation =
+                    match self.runner.run(self.project_root, command, DEFAULT_TIMEOUT) {
+                        Ok(observation) => observation,
+                        Err(error) => ProcessObservation {
+                            exit_code: None,
+                            duration_ms: 0,
+                            timed_out: false,
+                            blocked_reason: Some(format!(
+                                "verification process runner failed: {error:#}"
+                            )),
+                            stdout: String::new(),
+                            stderr: String::new(),
+                        },
+                    };
 
                 if let Err(error) = ensure_command_config_current(self.project_root, command) {
                     observation.blocked_reason = Some(format!(
@@ -461,8 +456,11 @@ mod tests {
         let dir = tempdir().unwrap();
         fs::create_dir_all(dir.path().join("scripts")).unwrap();
         fs::write(dir.path().join("scripts/ci.sh"), "cargo test\n").unwrap();
-        fs::write(dir.path().join("Cargo.toml"), "[package]\nname='x'\nversion='0.1.0'\n")
-            .unwrap();
+        fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname='x'\nversion='0.1.0'\n",
+        )
+        .unwrap();
 
         let profile = discover_profile(dir.path()).unwrap();
         assert_eq!(profile.status, DiscoveryStatus::Applicable);
