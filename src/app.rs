@@ -44,8 +44,8 @@ impl App {
             &lease_owner,
             Duration::from_secs(6 * 60 * 60),
         )?;
-        let active_work =
-            MilestoneController::new(&registry, &project_root, &lease_owner).resolve_or_activate()?;
+        let active_work = MilestoneController::new(&registry, &project_root, &lease_owner)
+            .resolve_or_activate()?;
 
         Ok(Self {
             project_root,
@@ -100,10 +100,7 @@ impl App {
         println!("Agent: {}", self.session.active_agent);
         println!("Commands: /agent  /model  /config");
         if let Some(work) = &self.active_work {
-            println!(
-                "Work: {} / {}",
-                work.milestone_id, work.jobpack_id
-            );
+            println!("Work: {} / {}", work.milestone_id, work.jobpack_id);
         }
         println!("Ctrl-D to exit.");
     }
