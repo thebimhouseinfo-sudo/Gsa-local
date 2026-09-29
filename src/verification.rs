@@ -475,8 +475,11 @@ mod tests {
     #[test]
     fn cargo_fallback_is_deterministic() {
         let dir = tempdir().unwrap();
-        fs::write(dir.path().join("Cargo.toml"), "[package]\nname='x'\nversion='0.1.0'\n")
-            .unwrap();
+        fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname='x'\nversion='0.1.0'\n",
+        )
+        .unwrap();
 
         let first = discover_profile(dir.path()).unwrap();
         let second = discover_profile(dir.path()).unwrap();
