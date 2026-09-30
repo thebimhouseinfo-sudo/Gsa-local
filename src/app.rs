@@ -202,12 +202,9 @@ impl App {
                 .iter()
                 .map(|capability| capability.as_str().to_owned())
                 .collect::<Vec<_>>();
-            let next = MilestoneController::new(
-                &self.registry,
-                &self.project_root,
-                &self.lease_owner,
-            )
-            .resolve_next(&available_capabilities)?;
+            let next =
+                MilestoneController::new(&self.registry, &self.project_root, &self.lease_owner)
+                    .resolve_next(&available_capabilities)?;
 
             match next {
                 None => return Ok(None),
