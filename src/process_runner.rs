@@ -598,7 +598,7 @@ mod tests {
         let passed = runner
             .run(
                 dir.path(),
-                &command("pass", vec!["/bin/true".into()]),
+                &command("pass", vec!["true".into()]),
                 Duration::from_secs(1),
             )
             .unwrap();
@@ -608,7 +608,7 @@ mod tests {
         let failed = runner
             .run(
                 dir.path(),
-                &command("fail", vec!["/bin/false".into()]),
+                &command("fail", vec!["false".into()]),
                 Duration::from_secs(1),
             )
             .unwrap();
@@ -618,7 +618,7 @@ mod tests {
         let timed_out = runner
             .run(
                 dir.path(),
-                &command("timeout", vec!["/bin/sleep".into(), "1".into()]),
+                &command("timeout", vec!["sleep".into(), "1".into()]),
                 Duration::from_millis(50),
             )
             .unwrap();
