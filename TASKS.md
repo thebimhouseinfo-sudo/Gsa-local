@@ -217,19 +217,21 @@ Gate:
 - [ ] Tester may emit SPEC_GAP/PLAN_GAP evidence but cannot modify checkpoint topology.
 - [ ] Material gap pauses current graph.
 - [ ] Route to Planner/Human for a new PlanArtifact revision.
-- [ ] New topology requires Reviewer again; CR remains Human-invoked only and is never auto-dispatched.
+- [ ] New topology requires Reviewer PASS followed by automatic Local CR on the exact plan revision/hash before Job Builder may register the superseding graph.
 - [ ] Job Builder registers a superseding graph only after approval.
 - [ ] Non-material in-scope test adaptation does not force replanning.
 
-## G. Phase 11 impact — Job Pack completion / Human-invoked CR backstop
+## G. Phase 11 impact — Task/Checkpoint completion + automatic Local CR
 
 Do not implement yet.
 
 Required future updates:
-- [ ] If Human invokes CR, its packet includes checkpoint evidence relevant to the exact Job Pack/revision.
-- [ ] Job Pack completion rejects unsatisfied required checkpoints.
-- [ ] Job Pack completion rejects unresolved required empirical evidence.
-- [ ] CR is never auto-dispatched; CR evidence alone cannot mark DONE.
+- [ ] Local CR runs automatically at Task terminal boundaries and at declared integration/checkpoint boundaries, after required Reviewer/verification/Tester evidence for that boundary is available.
+- [ ] CR receives a fresh/stateless packet bound to the exact Task/Job Pack/revision/change_set plus required checkpoint evidence.
+- [ ] CR does not run inside every Coder edit/self-check iteration; the normal repair loop remains Coder -> self-check -> Reviewer/Internal Fix until the boundary is mature.
+- [ ] CR finding routes back through owner repair -> self-check -> Reviewer -> affected verification/Tester checkpoint -> CR; no Fix -> CR shortcut.
+- [ ] Job Pack completion rejects unsatisfied required checkpoints, unresolved required empirical evidence, or missing required CR PASS for its terminal boundary.
+- [ ] CR evidence alone cannot mark DONE; Orchestrator/Registry terminalizes only after all declared gates are compatible.
 
 ## H. Phase 12 impact — Milestone verification / resume
 
@@ -343,13 +345,25 @@ Therefore:
 5. Create a replacement remaining-work Job/graph for T-ORCHESTRATION onward under the migrated governance and recovery contracts.
 6. Map adopted prior tasks/runs/change sets into that replacement Job explicitly.
 7. Only after the replacement plan passes Reviewer may coding resume.
-8. CR remains Human-invoked only.
+8. Local CR remains automatic at mature Task/checkpoint/plan-finalization boundaries, never inside each edit loop; CR must use fresh/stateless exact-target evidence.
 
 Operational note:
 - current control plane does not yet support SUSPENDED_BY_REBASELINE; do not manually edit J-177F JSON to fake that state;
 - the Human stop + this reviewed plan act as the operational freeze until Phase 14/15 runtime support exists.
 
 This bridge applies the Rebaseline/Salvage contract now while Phase 14/15 later automate it.
+
+## J2. Local CR boundary contract
+
+Local CR is an independent model/contract, not Coder self-review and not the normal Reviewer repair loop.
+
+- [ ] Planning: Planner <-> Reviewer until PASS, then automatic Local CR on exact revision/hash before PLAN_APPROVED.
+- [ ] Code Task: Coder -> lightweight self-check -> Reviewer/Internal Fix loop; after Task is mature and required verification/Tester checkpoint evidence is ready, automatic Local CR runs before Task terminalization.
+- [ ] Declared integration/milestone checkpoints may also require automatic Local CR after their required evidence gates.
+- [ ] CR PASS is exact-target/revision/change_set bound and stale CR evidence cannot satisfy a newer target.
+- [ ] CR finding never routes directly to CR retry: repair -> self-check -> Reviewer -> affected verification/Tester -> CR.
+- [ ] CR runs fresh/stateless from durable source/evidence and does not inherit Coder/Reviewer hidden reasoning.
+- [ ] Human remains authority for material product/architecture decisions, but Human invocation is not required to dispatch Local CR.
 
 ## K. Workflow Recovery / Rebaseline v2 migration
 
