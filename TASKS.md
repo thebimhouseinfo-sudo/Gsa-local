@@ -519,7 +519,7 @@ Dependencies: L2.
 - [ ] Resolve visual_authority_source before UI implementation: EXISTING_APPROVED_SHELL / EXISTING_DESIGN_SYSTEM / DESIGNER_SPEC / HUMAN_DIRECTION.
 - [ ] UI Coder must not invent unresolved material visual decisions.
 - [ ] If current shell/design system/Human direction is sufficient, UI Coder may proceed directly.
-- [ ] Otherwise Designer supplies visual direction/specification before or during the UI Coder loop.
+- [ ] Otherwise Designer supplies material visual direction/specification before UI Coder mutates the affected source; only non-material refinement may be clarified during the UI Coder loop.
 - [ ] Designer output is a design contract, not a dependency on any fixed design application.
 - [ ] Human subjective acceptance remains separate from objective browser verification.
 
@@ -530,7 +530,7 @@ Dependencies: L3.
 - [ ] UI Coder may substantially improve layout/responsive/header/cards/navigation/typography/states directly in source.
 - [ ] A broken/non-runnable application is a repair/integration issue, not authority to discard the shell.
 - [ ] Discarding/rebuilding/replacing an existing shell requires explicit Human approval.
-- [ ] After Human approves a rebuild, the new shell is still prototyped and refined in runnable source with agent-browser; no separate design-tool workflow is introduced.
+- [ ] After Human approves a rebuild, freeze/rebaseline/salvage the affected existing shell/work first; only then may UI Coder replace it in runnable source with agent-browser.
 - [ ] Greenfield also uses the same source + browser UI workflow; complexity only changes Designer/Human checkpoint depth, not the execution technology.
 
 ### L5 — asset and visual-resource contract
@@ -542,18 +542,18 @@ Dependencies: L4.
 - [ ] Asset generation/acquisition remains capability-gated and independently attributable.
 - [ ] No specific icon/font/asset provider is mandatory in the core workflow.
 
-## M. UI Coder browser-driven workflow
+## N. UI Coder browser-driven workflow
 
-### M1 — dedicated UI Coder state machine
-Dependencies: L5, N2.
+### N1 — dedicated UI Coder state machine
+Dependencies: L5, M2.
 
 - [ ] Add UI_GROUND -> UI_IMPLEMENT -> UI_RENDER -> UI_INSPECT -> UI_REFINE loop -> UI_SELF_CHECK -> REVIEW -> UI_TEST_CHECKPOINT -> HUMAN_REVIEW? -> UI_ACCEPTED.
 - [ ] UI_REFINE may loop without Reviewer while UI Coder is still inside the same approved visual/source scope.
 - [ ] Material UX/flow/state/architecture changes leave the refine loop and route back to Planner/Human.
 - [ ] Human-approved shell rebuild remains explicit durable context throughout the Run.
 
-### M2 — source + browser development loop
-Dependencies: M1.
+### N2 — source + browser development loop
+Dependencies: N1.
 
 - [ ] UI Coder changes runnable source, starts/uses the real app, then inspects the rendered result with agent-browser.
 - [ ] Use snapshot/screenshot/diff/interaction/viewport evidence as development feedback.
@@ -561,27 +561,30 @@ Dependencies: M1.
 - [ ] Compile/test success alone never proves UI completion.
 - [ ] UI Coder browser evidence is development/self-check evidence only; it cannot satisfy Tester PASS.
 
-### M3 — UI Coder workspace
-Dependencies: M1.
+### N3 — UI Coder workspace
+Dependencies: N1.
 
 - [ ] Give UI Coder a dedicated design/workspace area separate from production source ownership, e.g. .ui-design/ or equivalent runtime workspace.
 - [ ] Workspace may contain briefs, references, screenshots, comparisons, asset manifests, prompts, tokens, notes and temporary prototypes.
+- [ ] Workspace drafts/prototypes are non-runtime and must not be imported, bundled or served by the product directly.
+- [ ] Any asset promoted from UI workspace into production moves through the canonical product asset path with provenance and required approval/evidence.
 - [ ] Draft/prototype material is non-authoritative until implemented/reviewed in product source.
 - [ ] Preserve direct links/paths from browser captures and visual references into the active UI Run.
 - [ ] Resume reconstructs the UI Coder stage and relevant workspace refs without relying on chat history.
 
-### M4 — shell-build/rebuild workflow
-Dependencies: M1, L4.
+### N4 — shell-build/rebuild workflow
+Dependencies: N1, L4, K7.
 
-- [ ] For greenfield shell creation or Human-approved existing-shell rebuild, use real source as the prototype surface.
+- [ ] For greenfield shell creation, use real source as the prototype surface.
+- [ ] For an existing-shell rebuild, require Human approval plus completed Rebaseline/Salvage classification before destructive shell replacement begins.
 - [ ] Designer/Human may define visual direction before implementation; UI Coder realizes it directly in source.
 - [ ] UI Coder repeatedly render/inspect/refine with agent-browser until the shell reaches UI_SELF_CHECK.
 - [ ] Human may review runnable screenshots/live result at meaningful shell checkpoints.
 - [ ] Do not create a parallel mockup authority that can drift from production source.
 
-## N. Vercel agent-browser for UI Coder and Tester
+## M. Vercel agent-browser for UI Coder and Tester
 
-### N1 — shared browser executor
+### M1 — shared browser executor
 Dependencies: K10 and rebaselined Tester checkpoint subsystem.
 
 - [ ] Add Vercel agent-browser MCP as the primary browser observation/execution layer for Local UI work.
@@ -591,15 +594,15 @@ Dependencies: K10 and rebaselined Tester checkpoint subsystem.
 - [ ] Enforce open -> wait -> snapshot -> interact -> re-snapshot -> observe -> screenshot/report discipline.
 - [ ] Treat stale element refs as TEST_FAILURE in Tester runs and invalid development refs in UI Coder loops.
 
-### N2 — standalone Local agent-browser PROBE
-Dependencies: N1.
+### M2 — standalone Local agent-browser PROBE
+Dependencies: M1.
 
 - [ ] Prove launch, target open, load wait, snapshot, click/fill, re-snapshot, viewport handling, screenshot, diff where required, evidence path, console/page error collection and deterministic cleanup.
 - [ ] Probe state/session save/load only where required.
 - [ ] Prove separate UI Coder and Tester sessions can target the same runnable app without sharing verification authority.
 - [ ] Missing required operation => INTEGRATION_NOT_READY; tool presence never implies FUNCTIONAL.
 
-### N3 — Tester browser evidence workspace
+### M3 — Tester browser evidence workspace
 Dependencies: N2.
 
 - [ ] Store Tester browser sessions/snapshots/screenshots/diffs/console evidence in Tester-owned workspace.
@@ -607,8 +610,8 @@ Dependencies: N2.
 - [ ] Bind artifacts to checkpoint, exact runnable target, viewport and browser operation identity.
 - [ ] Surface direct screenshot/diff paths to Human; no manual directory hunting.
 
-### N4 — Tester UI checkpoint semantics
-Dependencies: N2, N3.
+### M4 — Tester UI checkpoint semantics
+Dependencies: M2, M3.
 
 - [ ] Tester independently plans the checkpoint.
 - [ ] Verify the exact runnable source target with an independent agent-browser session.
@@ -620,7 +623,7 @@ Dependencies: N2, N3.
 ## O. UI review / Human loop / SHELL_READY
 
 ### O1 — normal UI change flow
-Dependencies: M2, N4.
+Dependencies: N2, M4.
 
 - [ ] Planner/Designer visual authority -> UI Coder source/browser loop -> UI_SELF_CHECK -> Reviewer -> Tester independent agent-browser.
 - [ ] Human evidence review is added only where product plan or subjective visual acceptance requires it.
@@ -628,7 +631,7 @@ Dependencies: M2, N4.
 - [ ] Material UX/flow/state/shell-architecture changes route to Planner/Human.
 
 ### O2 — shell creation/rebuild flow
-Dependencies: M4, N4.
+Dependencies: N4, M4.
 
 - [ ] Greenfield shell creation or Human-approved shell rebuild uses the same source/browser loop.
 - [ ] Use representative content and responsive states while the shell is still cheap to change.
@@ -661,7 +664,7 @@ Dependencies: L2.
 - [ ] Existing shell remains the baseline unless Human explicitly approves a shell rebuild.
 
 ### P2 — UI Update Pack execution
-Dependencies: P1, L3, M2, N4.
+Dependencies: P1, L3, N2, M4.
 
 - [ ] Planner groups coherent requirements by affected shell/surface.
 - [ ] Designer resolves material visual direction when current authority is insufficient.
@@ -674,7 +677,7 @@ Dependencies: P1, L3, M2, N4.
 Core UI workflow must remain functional with source + agent-browser alone. Additional providers/skills are optional extensions.
 
 ### Q1 — provider abstraction
-Dependencies: M2.
+Dependencies: N2.
 
 - [ ] Add capability slots/selection rules rather than hard-coding one UI resource provider.
 - [ ] Candidate future capabilities may include icon libraries, font libraries, component libraries, open/stock asset sources, image generation, SVG/vector tooling and asset optimization.
@@ -682,14 +685,14 @@ Dependencies: M2.
 - [ ] Record provider/version/source identity for generated or imported durable assets when relevant.
 
 ### Q2 — UI skills
-Dependencies: M2.
+Dependencies: N2.
 
 - [ ] Add specialized skills progressively: responsive/layout, accessibility, design-token handling, framework-specific UI, visual-regression interpretation and asset integration.
 - [ ] Skills extend UI Coder reasoning/implementation but do not change Human/Reviewer/Tester authority.
 - [ ] Capability/skill availability is discovered, not assumed.
 
 ## R. UI architecture pilot
-Dependencies: K10, L5, M4, N4, O4, P2.
+Dependencies: K10, L5, N4, M4, O4, P2.
 
 - [ ] Run one brownfield UI Coder browser-loop pilot against an existing shell.
 - [ ] Run one simple greenfield shell pilot entirely in runnable source.
