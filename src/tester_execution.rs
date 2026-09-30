@@ -151,6 +151,28 @@ pub struct TesterExecutionObservation {
 }
 
 impl TesterExecutionObservation {
+    fn blocked(
+        execution_id: String,
+        request: &TesterExecutionStepRequest,
+        reason: impl Into<String>,
+    ) -> Self {
+        Self {
+            fence_key: execution_id.clone(),
+            execution_id,
+            step_id: request.step_id.clone(),
+            adapter_id: request.adapter.adapter_id().into(),
+            replay_safety: request.replay_safety,
+            status: TesterExecutionStatus::Blocked,
+            exit_code: None,
+            duration_ms: 0,
+            timed_out: false,
+            blocked_reason: Some(reason.into()),
+            stdout: String::new(),
+            stderr: String::new(),
+            evidence_refs: vec![],
+        }
+    }
+
     fn from_process(
         execution_id: String,
         request: &TesterExecutionStepRequest,
@@ -309,17 +331,25 @@ impl<'a> TesterExecutionRuntime<'a> {
         )?;
         self.execution_count += 1;
 
-        let observation = match &request.adapter {
+        let observation_result = match &request.adapter {
             TesterAdapterRequest::WorkspacePython { script_path, args } => {
-                self.run_workspace_script(&request, "python3", script_path, args)?
+                self.run_workspace_script(&request, "python3", script_path, args)
             }
             TesterAdapterRequest::WorkspaceNode { script_path, args } => {
-                self.run_workspace_script(&request, "node", script_path, args)?
+                self.run_workspace_script(&request, "node", script_path, args)
             }
             TesterAdapterRequest::ProjectVerification {
                 jobpack_id,
                 change_set_id,
-            } => self.run_project_verification(&request, jobpack_id, change_set_id)?,
+            } => self.run_project_verification(&request, jobpack_id, change_set_id),
+        };
+        let observation = match observation_result {
+            Ok(observation) => observation,
+            Err(error) => TesterExecutionObservation::blocked(
+                execution_id,
+                &request,
+                format!("Tester adapter execution blocked: {error:#}"),
+            ),
         };
 
         self.registry.complete_tester_execution_step(
