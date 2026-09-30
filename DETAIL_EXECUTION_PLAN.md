@@ -189,7 +189,7 @@ Rules:
 Environment premise under review:
 - Local has a stronger Vercel agent-browser development/inspection surface than GSA Online;
 - therefore Local may prefer BROWSER_FIRST more often;
-- Online may rationally prefer DESIGN_FIRST/Penpot more often while browser capability is weaker;
+- Online may rationally prefer a heavier pre-code visual-design workflow while browser capability is weaker;
 - this difference is valid only if shared role authority, Tester independence, evidence semantics and Human visual acceptance remain common;
 - Planner must route from observed runtime capability plus design risk, not from deployment label alone.
 
