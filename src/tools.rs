@@ -324,6 +324,11 @@ impl ProjectToolRuntime {
             bail!("project_write content exceeds {} bytes", MAX_WRITE_BYTES);
         }
         let relative = normalize_relative(&args.path)?;
+        if is_tester_workspace_path(&relative) {
+            bail!(
+                "project_write cannot modify Tester-owned workspace paths under .gsa/tester"
+            );
+        }
         let display = relative.to_string_lossy().replace('\\', "/");
         let target = self.root.join(&relative);
         let parent = target.parent().context("write target has no parent")?;
@@ -540,6 +545,17 @@ fn normalize_display(raw: &str) -> Result<String> {
     Ok(normalize_relative(raw)?
         .to_string_lossy()
         .replace('\\', "/"))
+}
+
+fn is_tester_workspace_path(path: &Path) -> bool {
+    let mut components = path.components().filter_map(|component| match component {
+        Component::Normal(part) => part.to_str(),
+        _ => None,
+    });
+    matches!(
+        (components.next(), components.next()),
+        (Some(".gsa"), Some("tester"))
+    )
 }
 
 fn should_skip(relative: &Path) -> bool {
