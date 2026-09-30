@@ -621,31 +621,52 @@ impl<'a> TesterWorkflow<'a> {
                 if calls.len() != 1 || calls[0].function.name != "submit_tester_report" {
                     bail!("submit_tester_report must be the only tool call in its response");
                 }
-                let report: TesterReportSubmission =
-                    serde_json::from_value(calls[0].function.arguments.clone())
-                        .context("invalid submit_tester_report arguments")?;
-                validate_report_execution_coverage(
-                    &report,
-                    execution.has_completed_execution(),
-                )?;
-                let attempt = TesterAttemptEvidence {
-                    graph_version,
-                    checkpoint_id: checkpoint.id.clone(),
-                    attempt_id: attempt_id.to_owned(),
-                    target: target.clone(),
-                    mode_results: report.mode_results,
-                    classifications: report.classifications,
-                    experiment: report.experiment,
-                    outputs: report.outputs,
-                    limitations: report.limitations,
-                };
-                attempt.validate_against_checkpoint(checkpoint)?;
-                self.registry.record_tester_attempt_evidence(
-                    self.project_root,
-                    self.lease_owner,
-                    &attempt,
-                )?;
-                return Ok(attempt);
+                let report_result = (|| -> Result<TesterAttemptEvidence> {
+                    let report: TesterReportSubmission =
+                        serde_json::from_value(calls[0].function.arguments.clone())
+                            .context("invalid submit_tester_report arguments")?;
+                    validate_report_execution_coverage(
+                        &report,
+                        execution.has_completed_execution(),
+                    )?;
+                    let attempt = TesterAttemptEvidence {
+                        graph_version,
+                        checkpoint_id: checkpoint.id.clone(),
+                        attempt_id: attempt_id.to_owned(),
+                        target: target.clone(),
+                        mode_results: report.mode_results,
+                        classifications: report.classifications,
+                        experiment: report.experiment,
+                        outputs: report.outputs,
+                        limitations: report.limitations,
+                    };
+                    attempt.validate_against_checkpoint(checkpoint)?;
+                    self.registry.record_tester_attempt_evidence(
+                        self.project_root,
+                        self.lease_owner,
+                        &attempt,
+                    )?;
+                    Ok(attempt)
+                })();
+
+                match report_result {
+                    Ok(attempt) => return Ok(attempt),
+                    Err(error) if round + 1 < MAX_TESTER_TOOL_ROUNDS => {
+                        messages.push(ChatMessage::tool(
+                            "submit_tester_report",
+                            json!({
+                                "ok": false,
+                                "error": format!("{error:#}"),
+                                "instruction": "Correct the report or gather missing evidence inside the same checkpoint scope, then resubmit."
+                            })
+                            .to_string(),
+                        ));
+                        continue;
+                    }
+                    Err(error) => {
+                        return Err(error).context("Tester report remained invalid after bounded retries");
+                    }
+                }
             }
 
             if round + 1 >= MAX_TESTER_TOOL_ROUNDS {
