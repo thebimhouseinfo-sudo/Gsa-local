@@ -262,7 +262,7 @@ Add negative coverage:
 
 ## J. Cross-cutting Resume / Recovery hardening
 
-Lessons source: WORKFLOW_RESUME_LESSONS.md.
+Lessons source: WORKFLOW_LESSONS_LEARNED.md.
 
 ### J1 — shared ResumeDecision contract
 - [ ] Add a runtime-owned ResumeDecision / RecoveryClassification model.
