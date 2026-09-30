@@ -200,10 +200,11 @@ Deliverables:
 - UI_FIRST / UX_FIRST product classification;
 - visual_authority_source contract;
 - existing-shell preservation by default;
-- explicit Human approval before shell discard/rebuild/replacement;
+- explicit Human approval plus Rebaseline/Salvage before shell discard/rebuild/replacement;
 - greenfield/rebuild source-first execution;
 - UI Coder state machine: UI_GROUND -> UI_IMPLEMENT -> UI_RENDER -> UI_INSPECT -> UI_REFINE -> UI_SELF_CHECK;
-- dedicated UI workspace for references/screenshots/comparisons/assets/prompts/tokens/notes.
+- dedicated UI workspace for references/screenshots/comparisons/assets/prompts/tokens/notes;
+- UI workspace is non-runtime; promoted production assets use canonical product paths with provenance/approval.
 
 Gate:
 - UI Coder can implement/refine real UI without inventing unresolved visual decisions and without a parallel mockup authority.
@@ -243,7 +244,7 @@ Greenfield or Human-approved shell rebuild:
 - SHELL_READY.
 
 Gate:
-- no existing shell is discarded without Human approval;
+- no existing shell is discarded without Human approval plus completed Rebaseline/Salvage;
 - no shell baseline is accepted from mockup-only evidence;
 - SHELL_READY requires runnable-source evidence.
 
