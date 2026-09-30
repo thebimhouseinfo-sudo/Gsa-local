@@ -260,6 +260,73 @@ Add negative coverage:
 - [ ] retest using old target evidence;
 - [ ] restart duplicating checkpoint attempt.
 
+## J. Cross-cutting Resume / Recovery hardening
+
+Lessons source: WORKFLOW_RESUME_LESSONS.md.
+
+### J1 — shared ResumeDecision contract
+- [ ] Add a runtime-owned ResumeDecision / RecoveryClassification model.
+- [ ] Resolve durable Project/Job/Task-or-JobPack/Run/workflow-stage state before choosing an agent.
+- [ ] Resolve live source ref/revision and compare it with the last durable source target.
+- [ ] Return exactly one next action: RESUME_CODER / RESUME_REVIEWER / RESUME_INTERNAL_FIX / RESUME_TESTER_ATTEMPT / RUN_REQUIRED_VERIFICATION / COMPLETE_RUN / WAIT_EXPLICIT_NEXT_TASK_START / BLOCKED_NEEDS_HUMAN.
+- [ ] Conversation history must not be required to locate the next execution step.
+
+### J2 — source versus durable-state reconciliation
+- [ ] Classify source-ahead work as DURABLE_KNOWN / ADOPTABLE_SAME_SCOPE / SUPERSEDED_BY_NEW_PLAN / OUT_OF_SCOPE / UNKNOWN_REQUIRES_HUMAN.
+- [ ] Persist an adoption/reconciliation record before recovered source is treated as current work.
+- [ ] Never adopt a newer commit only because it is newer.
+- [ ] Preserve the Human distinction between obsolete interrupted work and legitimate same-scope interrupted work.
+
+### J3 — immutable Run identity and split target binding
+- [ ] Run id/handle/path/parent lineage are runtime-owned and immutable.
+- [ ] Separate immutable input_target from observed result_target.
+- [ ] Reviewer/Goal Recheck bind to result_target.
+- [ ] Remove any workflow need to manually rewrite target_revision/target_ref after a source mutation.
+
+### J4 — canonical gate evidence
+- [ ] Maintain canonical latest Goal Recheck / Review / Test / required CI pointers per active Run or workflow unit.
+- [ ] New exact-target evidence supersedes the canonical pointer transactionally while append-only history remains preserved.
+- [ ] Completion gates consume canonical semantic state rather than model-maintained ref arrays.
+- [ ] Required UNVERIFIED/BLOCKED verification prevents terminal PASS.
+
+### J5 — Local workflow entry resolvers
+- [ ] Add resolve_planning_entry(); begin_plan_workflow may initialize only absent/new planning state.
+- [ ] Add resolve_code_entry(); begin_code_workflow may initialize only absent/new code state.
+- [ ] Resume REVIEWER/INTERNAL_FIX/PAUSED/REVIEW_PASS from durable state without resetting attempts/checklists/TODO/change-set identity.
+- [ ] Reconstruct the exact next agent packet from Registry after process restart.
+- [ ] Persist any minimal mutation/evidence digest required to reconstruct safe continuation without storing chat transcript/hidden reasoning.
+
+### J6 — Online interrupted-Run recovery
+- [ ] Add an open-Run/resume resolver distinct from Project lifecycle resume.
+- [ ] Resolve RESUME_EXISTING / START_RECOVERY_CHILD / START_NEW_RUN / BLOCKED_RECONCILIATION_REQUIRED / ALREADY_TERMINAL.
+- [ ] Detect orphan/incomplete Run, Verification and Handoff records after interrupted writes.
+- [ ] Reject path/content Run identity mismatch before persistence.
+
+### J7 — Handoff is not activation
+- [ ] Add explicit activation_policy = EXPLICIT_START / AUTO_CONTINUE.
+- [ ] Phase/task boundaries default to EXPLICIT_START unless the approved plan explicitly permits auto-continue.
+- [ ] Handoff availability must never by itself activate the next Task/phase.
+
+### J8 — structured evidence lifecycle
+- [ ] Add CURRENT / SUPERSEDED / INVALIDATED evidence state with revision applicability.
+- [ ] Preserve historical evidence while excluding stale evidence from current plan/job/resume packets.
+- [ ] Human decisions that invalidate old assumptions must produce explicit evidence invalidation instead of prose cleanup only.
+
+### J9 — restart test matrix
+- [ ] Restart during every Planner/Reviewer/CR/Internal-Fix state.
+- [ ] Restart during Coder before mutation, after mutation, after checkpoint and before Reviewer.
+- [ ] Restart after Reviewer PASS but before required deterministic verification.
+- [ ] Restart at Tester DUE/RUNNING/PREPARED/report/BLOCKED/SATISFIED states.
+- [ ] Restart with source ahead of durable state.
+- [ ] Restart with stale/unknown Run target.
+- [ ] Restart with Handoff available while next Task requires explicit start.
+- [ ] Assert no reset, duplicate non-idempotent action, skipped gate, stale evidence reuse or wrong next role.
+
+Gate:
+- a fresh process can recover the exact next safe action from durable state + live source alone;
+- no manual JSON identity/target/ref repair is required;
+- resume never silently advances into the next Human-bounded Task/phase.
+
 ## Execution order before coding resumes
 
 1. Reconcile architecture docs and superseded partial Phase 10 code assumptions.
