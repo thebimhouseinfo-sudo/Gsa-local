@@ -2391,6 +2391,27 @@ NEXT MILESTONE
 Đây là baseline kiến trúc của **GSA Local**.
 
 
+# IMMEDIATE REBASELINE BOUNDARY — BEFORE T-ORCHESTRATION
+
+This boundary applies now. It is an operational use of the Human Rebaseline/Salvage contract before the future runtime automation exists.
+
+Current state:
+- J-177F is IN_PROGRESS on an older durable planning revision.
+- T-EXECUTION has reached a reviewed + CI-passing implementation boundary.
+- T-ORCHESTRATION has not started.
+- Human has materially changed workflow architecture, resume semantics, CR governance and future UI/Tester architecture.
+
+Required action before any additional coding:
+1. Freeze J-177F execution at the current boundary; do not start T-ORCHESTRATION under the stale topology.
+2. Capture live SourceTargetSet and all durable review/CI/Tester evidence relevant to work completed through T-EXECUTION.
+3. Classify completed work and evidence through Rebaseline/Salvage; preserve source by default.
+4. Treat T-EXECUTION and its prerequisites as candidates for adoption, not automatic discard and not automatic authority under the new graph.
+5. Create a replacement remaining-work Job/graph for T-ORCHESTRATION onward under the migrated contracts.
+6. Record adopted_from_runs/change_sets/evidence and required reverification in the replacement plan.
+7. Reviewer must PASS the replacement plan before coding resumes.
+8. CR remains Human-invoked only.
+
+Current control plane has no SUSPENDED_BY_REBASELINE state. Do not bypass this by manually editing J-177F JSON; the Human stop and reviewed replacement plan are the temporary governance bridge.
 # UI / RECOVERY ARCHITECTURE REBASELINE — FUTURE PHASES
 
 Authoritative design inputs for this replan are read-only:
@@ -2404,12 +2425,17 @@ These phases are added to the total architecture plan. They do not expand the cu
 Goal: make restart/recovery a deterministic runtime operation rather than model inference.
 
 Required:
+- Project resolution before Job/Run resolution;
 - authoritative WorkCursor / ResumeDescriptor;
 - START vs RESUME vs RECOVER distinction;
 - plan/hash/graph-version binding;
 - multi-repo SourceTargetSet;
 - canonical current gate evidence;
 - crash-consistent transition idempotency;
+- parent/child Run reconciliation with explicit continuation/correction/review/retest/recovery/supersession lineage;
+- machine-readable GateDiagnostic for every blocked completion/resume gate;
+- workflow-level replay policy for Run/Verification/Handoff/source/Job/CI/deploy/Penpot/browser actions;
+- early deterministic-verification readiness state;
 - source mutation write-ahead identity;
 - monotonic attempt budgets;
 - durable Human EXPLICIT_START boundary;
@@ -2443,6 +2469,23 @@ Exit:
 - no old-epoch mutation;
 - integration happens at bounded reviewed/verified boundaries rather than after unbounded commit accumulation.
 
+## Migration coverage gate — workflow lessons
+
+| Contract family | Plan owner |
+|---|---|
+| Resume identity / exact target / no chat-history dependency | Phase 14 WorkCursor/ResumeDescriptor |
+| Transactional finalization / idempotency | Phase 14 transition identity |
+| Parent-child Run reconciliation | Phase 14 Run lineage |
+| Gate mismatch diagnostics / canonical evidence | Phase 14 GateDiagnostic + current evidence pointer |
+| Workflow replay + verification readiness | Phase 14 replay/readiness contract |
+| Project-before-Job resolution | Phase 14 resolver |
+| Lease fencing | Phase 14 lease contract |
+| Mutation WAL | Phase 14 mutation identity |
+| Schema migration | Phase 14 durable-state versioning |
+| Human architecture interruption | Immediate rebaseline bridge + Phase 15 automation |
+| Bounded integration | Phase 15 AcceptedIntegrationBaseline |
+
+Coverage is complete only when each family has runtime acceptance tests or an explicit Human governance gate; prose reference alone is insufficient.
 ## Phase 16 — UI Planning / Designer / Design Readiness
 
 Goal: bring Local to the newer UI architecture model.
@@ -2466,7 +2509,7 @@ Exit:
 Important evidence premise:
 - generic UI Coder + Penpot capability already PASSed in prior GSA capability testing;
 - do not repeat the broad capability experiment unless applicability becomes stale;
-- before Local makes that PASS a runtime dependency, bind a durable prior evidence reference when available, or record the Human-provided accepted capability fact with an explicit applicability boundary.
+- before Local makes that PASS a runtime dependency: use UPSTREAM_OBSERVED_REF when durable upstream evidence exists; otherwise record HUMAN_ACCEPTED_EXTERNAL as a planning premise only. Neither substitutes for Local integration OBSERVED evidence.
 
 Goal: bind that proven capability into the Local runtime.
 
@@ -2489,7 +2532,8 @@ Goal: use Vercel agent-browser MCP as the primary browser execution layer while 
 
 Required:
 - standalone Local PROBE of launch/open/wait/snapshot/interact/re-snapshot/viewport/screenshot/console/error/cleanup capabilities;
-- agent-browser checkpoints require a browser-inspectable prototype/runnable target; non-browser Penpot artifacts use Penpot readback/export evidence plus Human review instead of synthetic browser PASS;
+- agent-browser checkpoints require a browser-inspectable prototype/runnable target;
+- non-browser Penpot checkpoints use an immutable PenpotEvidenceBundle produced by connector/runtime readback/export (or capability-gated Tester read-only Penpot access) plus Human review; UI Coder self-report is not independent verification evidence;
 - Tester-owned browser evidence workspace;
 - explicit screenshot/artifact paths for Human;
 - exact target/design/viewport evidence applicability;
@@ -2526,6 +2570,21 @@ Required:
 Exit:
 - broad UI scale-out starts only from a verified shell baseline.
 
+## Phase dependency gates
+
+```text
+Immediate operational rebaseline
+  -> replacement remaining-work Job
+  -> Phase 14 Recovery foundations
+  -> Phase 15 automated Rebaseline/Integration
+  -> Phase 16 UI planning/design foundation
+  -> Phase 17 Local Penpot binding
+  -> Phase 18 agent-browser executor + PROBE
+  -> Phase 19 Human design/source/SHELL_READY loop
+  -> Phase 20 UI Update Packs + pilots
+```
+
+Cross-cutting gate: Phase 19 browser checkpoints cannot activate until Phase 18 PROBE is FUNCTIONAL/GOAL_MET for the required operation set. Source implementation cannot activate before the exact UI DESIGN APPROVED baseline where UI Design Phase is required.
 ## Phase 20 — UX_FIRST UI Update Packs + Pilots
 
 Goal: prevent both per-feature redesign and permanent temporary UI.
