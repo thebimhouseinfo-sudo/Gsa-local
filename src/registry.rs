@@ -9,7 +9,7 @@ use crate::{
         TesterEvidenceOutputRecord, TesterEvidenceRef, TesterTargetBinding,
         VerificationObservationField,
     },
-    tester_execution::TesterExecutionObservation,
+    tester_execution::{TesterExecutionObservation, TesterExecutionStepRequest},
     tester_workspace::TesterWorkspaceRuntime,
     verification::{CommandEvidence, VerificationEvidence, VerificationResult},
 };
@@ -2077,6 +2077,23 @@ impl Registry {
         target.validate_against_checkpoint(&checkpoint)?;
         validate_tester_target_tx(&tx, graph_version, target)?;
         let target_fingerprint = target.fingerprint(graph_version, checkpoint_id)?;
+        let parsed_request: TesterExecutionStepRequest =
+            serde_json::from_value(request_json.clone())
+                .context("invalid persisted Tester execution request")?;
+        let expected_fence = parsed_request.fence_key(
+            graph_version,
+            checkpoint_id,
+            attempt_id,
+            &target_fingerprint,
+        )?;
+        if parsed_request.step_id != step_id
+            || parsed_request.adapter.adapter_id() != adapter_id
+            || parsed_request.replay_safety != replay_safety
+            || expected_fence != fence_key
+            || execution_id != expected_fence
+        {
+            bail!("Tester execution request metadata does not match deterministic fence");
+        }
 
         tx.execute(
             r#"
