@@ -1039,3 +1039,381 @@ If a name can resolve to multiple Projects, return explicit candidates and block
 
 This is especially important for Online GSA, where durable Project Memory for many repositories shares one Memory Repo.
 
+
+
+---
+
+# 30. Online GSA needs an authoritative active-Run / WorkCursor index
+
+The Online control plane can create and complete Runs, but there is no first-class Run-list/open-Run resolver in the current tool surface.
+
+That means a resumed session may need to discover execution state by scanning durable files or reconstructing lineage from Git history.
+
+That is not sufficient for deterministic resume.
+
+The control plane should maintain one runtime-owned **WorkCursor** per active Job / execution scope.
+
+Recommended structure:
+
+```text
+WorkCursor
+  project_id
+  job_id
+  active_task_ref?
+  active_run_id?
+  active_run_role?
+  workflow_stage
+  pending_gate
+  current_input_target
+  current_output_target?
+  latest_handoff_ref?
+  continuation_policy
+  cursor_version
+```
+
+Properties:
+
+- exactly one authoritative cursor for one active Job execution lineage;
+- updated through compare-and-swap / serialized transition;
+- points to the Run that currently owns continuation;
+- terminal child Runs may exist without becoming the continuation owner unless the cursor is explicitly advanced;
+- historical Runs remain immutable audit records;
+- resume reads the cursor first rather than searching for the newest Run.
+
+If several IN_PROGRESS Runs exist because of partial persistence or older behavior, recovery must reconcile them before assigning the cursor.
+
+This provides the durable answer to:
+
+```text
+Which Run owns the next action?
+```
+
+---
+
+# 31. Planning resume requires the same protection as Coding resume
+
+The current Local planning entry path calls `begin_plan_workflow()` unconditionally.
+
+That operation resets:
+
+- current planning revision pointer;
+- Reviewer attempt count;
+- Local CR attempt count;
+- workflow status back to PLANNING.
+
+Therefore Planning has the same restart hazard already identified for Coding.
+
+Local needs a resume-aware planning entry resolver:
+
+```text
+resolve_planning_entry()
+```
+
+Suggested decisions:
+
+```text
+no planning state
+  -> START_PLANNING
+
+PLANNING with no persisted revision
+  -> RESUME_PLANNER
+
+REVIEWER
+  -> RESUME_REVIEWER on exact persisted revision/hash
+
+PLANNER after CHANGES_REQUIRED
+  -> RESUME_PLAN_FIX with exact findings
+
+LOCAL_CR
+  -> RESUME_LOCAL_CR on exact reviewed revision/hash
+
+INTERNAL_FIX
+  -> RESUME_PLAN_INTERNAL_FIX
+
+JOB_BUILDER
+  -> resume Job Builder / graph registration boundary
+
+PAUSED
+  -> explicit recovery policy
+
+APPROVED / graph registered
+  -> do not restart planning
+```
+
+The same rule applies as Coding:
+
+> An initializer may only initialize absent/new state. It may not be used as the normal entrypoint for a recoverable workflow.
+
+Planning revision counters and review budgets must survive process restart.
+
+---
+
+# 32. Resume packets must be reconstructible without chat/model history
+
+Local currently keeps session/model message history in process memory, and individual workflow loops build transient message packets.
+
+After process restart those message buffers are gone.
+
+That is acceptable only if the next safe workflow action can be reconstructed entirely from durable structured state.
+
+Do **not** make chat transcript persistence a requirement.
+
+Instead persist the minimal resume inputs needed to deterministically rebuild the next agent packet:
+
+```text
+workflow stage
+exact plan/job/task/jobpack
+input target
+current output/change_set
+latest findings
+latest accepted checkpoint
+attempt counters
+required evidence refs
+pending gate
+continuation policy
+```
+
+Then:
+
+```text
+durable structured state
+  + current source truth
+  + current harness
+  -> regenerated agent packet
+```
+
+Conversation history may improve explanation, but must never be required for correctness.
+
+This also prevents hidden reasoning or stale conversational assumptions from becoming an execution dependency.
+
+---
+
+# 33. Multi-file durable transitions need transaction identity, not only ordered writes
+
+Online GSA deliberately persists durable state through multiple GitHub writes:
+
+- Run;
+- Verification;
+- Handoff;
+- terminal Run replacement;
+- Job lifecycle updates.
+
+Ordering these writes carefully is necessary, but not sufficient for crash recovery.
+
+Every logical durable transition should have a stable **transition_id / idempotency_key**.
+
+Recommended pattern:
+
+```text
+TransitionIntent
+  transition_id
+  operation_kind
+  project_id
+  job_id
+  run_id?
+  expected_precondition
+  intended_objects[]
+  status = PREPARED | COMMITTED | ABORTED
+```
+
+Recovery behavior:
+
+```text
+no intent
+  -> transition never started
+
+PREPARED + some objects exist
+  -> reconcile and finish idempotently
+
+PREPARED + conflicting objects
+  -> BLOCKED_RECONCILIATION_REQUIRED
+
+COMMITTED
+  -> replay returns existing result, creates nothing new
+```
+
+The idempotency key should be accepted by operations that create:
+- Run;
+- Verification;
+- Handoff;
+- external verification request.
+
+This generalizes the earlier `finalize_run()` lesson from one completion path into a full crash-consistency contract.
+
+---
+
+# 34. Local lease ownership needs fencing, not PID identity alone
+
+The current Local lease owner is based on:
+
+```text
+pid:<process_id>
+```
+
+and stale-owner liveness is checked using the PID.
+
+PID alone is not a durable process identity:
+
+- operating systems can reuse PIDs;
+- a restarted process may receive the same PID as a dead prior owner;
+- an unrelated process can make an old PID appear alive;
+- ownership takeover needs protection against stale writers, not only stale detection.
+
+Recommended lease contract:
+
+```text
+Lease
+  owner_nonce
+  process_id
+  process_start_identity
+  lease_epoch / fencing_token
+  acquired_at
+  heartbeat_at
+  work_cursor
+```
+
+On takeover:
+
+1. runtime proves the previous lease is recoverable/stale;
+2. increments a monotonic fencing token;
+3. new owner receives that token;
+4. every mutating Registry transition requires the current fencing token.
+
+An old process with a stale token must be rejected even if it continues running.
+
+The lease should therefore protect both:
+
+```text
+single active process
++
+single authoritative mutation epoch
+```
+
+This is necessary for safe resume after crashes, PID reuse, long suspension, or competing terminals.
+
+---
+
+# 35. External operations need durable continuation identity
+
+Some workflow steps outlive the chat/process that started them:
+
+- CI runs;
+- deployment;
+- browser/runtime test jobs;
+- remote builds;
+- approvals;
+- other provider-side operations.
+
+A restart must not blindly start them again.
+
+Persist an `ExternalOperation` record:
+
+```text
+ExternalOperation
+  operation_id
+  provider
+  provider_operation_id
+  operation_kind
+  target_revision
+  requested_by_run
+  replay_policy
+  status
+  started_at
+  last_observed_at
+  result_ref?
+```
+
+Resume behavior:
+
+```text
+RUNNING
+  -> inspect the same provider_operation_id
+
+SUCCEEDED
+  -> consume existing result
+
+FAILED
+  -> route failure
+
+UNKNOWN
+  -> reconcile before retry
+
+NON_IDEMPOTENT + uncertain
+  -> NEEDS_HUMAN / explicit recovery
+```
+
+Example:
+
+If GitHub Actions run `#78` is already executing for revision X, a resumed session should observe run `#78` rather than dispatching another identical CI run unless retry policy explicitly allows it.
+
+External operation identity should be included in the WorkCursor / pending gate state.
+
+---
+
+# 36. Retry and attempt budgets are monotonic across resume
+
+Bounded loops only protect the system if restart cannot reset their counters.
+
+The following counters must be durable and monotonic for the same logical workflow lineage:
+
+- Planner revision/review attempts;
+- Reviewer attempts;
+- Local CR attempts;
+- Coder/Internal Fix attempts;
+- Tester tool/report correction rounds where recovery spans process boundaries;
+- retest attempts;
+- recovery attempts when bounded.
+
+Resume must restore the current budget state.
+
+It must never do:
+
+```text
+restart process
+  -> attempt counter = 0
+  -> retry same failing loop indefinitely
+```
+
+A new budget may begin only when runtime creates a genuinely new logical workflow lineage, such as:
+
+- approved new Plan revision;
+- explicitly superseding Run;
+- new Tester target/attempt;
+- Human-authorized retry class.
+
+The transition that resets a budget must be explicit and auditable.
+
+---
+
+# 37. Human stop / continuation intent must be durable at the WorkCursor level
+
+Section 26 establishes that Handoff is not authorization to activate the next Task.
+
+The review adds one stronger requirement:
+
+The Human continuation policy must not live only inside an optional Handoff, because a resumed session may resolve work before reading or producing that Handoff.
+
+Persist the boundary on the authoritative WorkCursor / execution boundary:
+
+```text
+continuation_policy
+  EXPLICIT_START
+  AUTO_CONTINUE
+
+stop_after_task?
+stop_after_gate?
+human_gate_ref?
+```
+
+When the policy is `EXPLICIT_START`:
+
+```text
+prior Task PASS
+  -> cursor = WAITING_EXPLICIT_START
+  -> no next Task activation
+```
+
+A later "continue" becomes an explicit state transition, not an interpretation of old conversational intent.
+
+This prevents a new session from crossing a Human-requested stop boundary simply because the previous Task already produced a valid Handoff.
+
