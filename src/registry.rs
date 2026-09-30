@@ -1824,7 +1824,7 @@ impl Registry {
         let checkpoint_json = checkpoint_json.context("Tester checkpoint definition is missing")?;
         let checkpoint: TestCheckpointSpec = serde_json::from_str(&checkpoint_json)?;
         attempt.validate_against_checkpoint(&checkpoint)?;
-        validate_tester_target_tx(&tx, attempt)?;
+        validate_tester_target_tx(&tx, attempt.graph_version, &attempt.target)?;
 
         validate_tester_evidence_refs(&tx, project_root, attempt)?;
 
@@ -2666,9 +2666,10 @@ impl Registry {
 
 fn validate_tester_target_tx(
     tx: &Transaction<'_>,
-    attempt: &TesterAttemptEvidence,
+    graph_version: i64,
+    target_binding: &TesterTargetBinding,
 ) -> Result<()> {
-    for target in &attempt.target.prerequisites {
+    for target in &target_binding.prerequisites {
         match target.state {
             PrerequisiteState::ReviewPass => {
                 let workflow_state: Option<(Option<String>, String)> = tx
@@ -2678,7 +2679,7 @@ fn validate_tester_target_tx(
                         FROM code_workflow_state
                         WHERE id=1 AND graph_version=?1 AND jobpack_id=?2
                         "#,
-                        params![attempt.graph_version, target.jobpack_id],
+                        params![graph_version, target.jobpack_id],
                         |row| Ok((row.get(0)?, row.get(1)?)),
                     )
                     .optional()?;
@@ -2707,7 +2708,7 @@ fn validate_tester_target_tx(
                         WHERE graph_version=?1 AND jobpack_id=?2
                         ORDER BY id DESC LIMIT 1
                         "#,
-                        params![attempt.graph_version, target.jobpack_id],
+                        params![graph_version, target.jobpack_id],
                         |row| Ok((row.get(0)?, row.get(1)?)),
                     )
                     .optional()?;
@@ -2736,7 +2737,7 @@ fn validate_tester_target_tx(
                         FROM execution_jobpacks
                         WHERE graph_version=?1 AND jobpack_id=?2
                         "#,
-                        params![attempt.graph_version, target.jobpack_id],
+                        params![graph_version, target.jobpack_id],
                         |row| row.get(0),
                     )
                     .optional()?;
@@ -2755,7 +2756,7 @@ fn validate_tester_target_tx(
                         WHERE graph_version=?1 AND jobpack_id=?2
                         ORDER BY id DESC LIMIT 1
                         "#,
-                        params![attempt.graph_version, target.jobpack_id],
+                        params![graph_version, target.jobpack_id],
                         |row| Ok((row.get(0)?, row.get(1)?)),
                     )
                     .optional()?;
