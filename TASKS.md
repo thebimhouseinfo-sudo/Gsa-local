@@ -360,6 +360,8 @@ Local CR is an independent model/contract, not Coder self-review and not the nor
 - [ ] Planning: Planner <-> Reviewer until PASS, then automatic Local CR on exact revision/hash before PLAN_APPROVED.
 - [ ] Code Task: Coder -> lightweight self-check -> Reviewer/Internal Fix loop; after Task is mature and required verification/Tester checkpoint evidence is ready, automatic Local CR runs before Task terminalization.
 - [ ] Declared integration/milestone checkpoints may also require automatic Local CR after their required evidence gates.
+- [ ] Coalesce overlapping boundaries: when a Task terminal and declared checkpoint refer to the same exact target/change_set, dispatch one CR packet with the union of required evidence, not duplicate CR runs.
+- [ ] Persist a CRBoundaryKey (boundary identity + exact target/revision/change_set + plan/graph identity) so retry/resume cannot dispatch the same CR boundary twice.
 - [ ] CR PASS is exact-target/revision/change_set bound and stale CR evidence cannot satisfy a newer target.
 - [ ] CR finding never routes directly to CR retry: repair -> self-check -> Reviewer -> affected verification/Tester -> CR.
 - [ ] CR runs fresh/stateless from durable source/evidence and does not inherit Coder/Reviewer hidden reasoning.
