@@ -226,7 +226,7 @@ Gate:
 Do not implement yet.
 
 Required future updates:
-- [ ] Local CR runs automatically at Task terminal boundaries and at declared integration/checkpoint boundaries, after required Reviewer/verification/Tester evidence for that boundary is available.
+- [ ] Local CR runs automatically at every executable Task/Job Pack terminal boundary and every declared CR review checkpoint, after required Reviewer/verification/Tester evidence for that boundary is available.
 - [ ] CR receives a fresh/stateless packet bound to the exact Task/Job Pack/revision/change_set plus required checkpoint evidence.
 - [ ] CR does not run inside every Coder edit/self-check iteration; the normal repair loop remains Coder -> self-check -> Reviewer/Internal Fix until the boundary is mature.
 - [ ] CR finding routes back through owner repair -> self-check -> Reviewer -> affected verification/Tester checkpoint -> CR; no Fix -> CR shortcut.
@@ -358,12 +358,13 @@ This bridge applies the Rebaseline/Salvage contract now while Phase 14/15 later 
 Local CR is an independent model/contract, not Coder self-review and not the normal Reviewer repair loop.
 
 - [ ] Planning: Planner <-> Reviewer until PASS, then automatic Local CR on exact revision/hash before PLAN_APPROVED.
-- [ ] Code Task: Coder -> lightweight self-check -> Reviewer/Internal Fix loop; after Task is mature and required verification/Tester checkpoint evidence is ready, automatic Local CR runs before Task terminalization.
-- [ ] Declared integration/milestone checkpoints may also require automatic Local CR after their required evidence gates.
+- [ ] Code Task: Coder -> lightweight self-check -> Reviewer/Internal Fix loop; after Task is mature and required verification/Tester checkpoint evidence is ready, automatic Local CR runs before Task terminalization. In the current Local runtime, the executable Task terminal maps to the current Job Pack terminal boundary; do not add a new persistent Task entity solely for CR.
+- [ ] Every declared CR review checkpoint runs automatic Local CR after its required evidence gates. Low-level measurement/probe checkpoints do not imply CR unless they are also declared review boundaries.
 - [ ] Coalesce overlapping boundaries: when a Task terminal and declared checkpoint refer to the same exact target/change_set, dispatch one CR packet with the union of required evidence, not duplicate CR runs.
 - [ ] Persist a CRBoundaryKey (boundary identity + exact target/revision/change_set + plan/graph identity) so retry/resume cannot dispatch the same CR boundary twice.
-- [ ] CR PASS is exact-target/revision/change_set bound and stale CR evidence cannot satisfy a newer target.
+- [ ] CR PASS is exact-target/revision/change_set/boundary-evidence bound and stale CR evidence cannot satisfy a newer target.
 - [ ] CR finding never routes directly to CR retry: repair -> self-check -> Reviewer -> affected verification/Tester -> CR.
+- [ ] If a Task/Job Pack terminal coincides with a declared CR review checkpoint and both bind the same exact target/change_set/evidence set, coalesce them into one CR run; any target/evidence mutation invalidates that CR and requires a new run.
 - [ ] CR runs fresh/stateless from durable source/evidence and does not inherit Coder/Reviewer hidden reasoning.
 - [ ] Human remains authority for material product/architecture decisions, but Human invocation is not required to dispatch Local CR.
 
