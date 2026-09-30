@@ -217,9 +217,25 @@ Target operations include:
 - prepare prototype/reference for Tester and Human;
 - use design-to-code output where useful.
 
-Penpot capability must first be PROBED.
+UI Coder + Penpot capability has already been empirically tested by GSA and PASSed.
 
-Readiness progression:
+Therefore the future Local plan must NOT repeat the full capability experiment merely to prove that the new UI Coder can use Penpot.
+
+Treat that PASS as an upstream capability evidence input.
+
+The Local adoption gate is narrower: prove that the already-capable UI Coder/Penpot workflow can be bound correctly into the Local runtime.
+
+Local-specific integration evidence should cover:
+- Local connector/tool reachability;
+- Local invocation path;
+- stable Penpot project/file identity exposed to Local;
+- artifact/readback availability from a fresh Local session/process;
+- export/artifact paths usable by Local workflow;
+- resume/recovery binding;
+- Human/Tester inspectability from the Local workflow;
+- failure classification when the external Penpot capability is temporarily unavailable.
+
+The readiness model remains:
 
 ~~~text
 DISCOVERED
@@ -229,14 +245,7 @@ DISCOVERED
 -> GOAL_MET
 ~~~
 
-Before Penpot becomes a mandatory dependency, Local must empirically prove at least:
-- create/open design;
-- edit design;
-- read back design state;
-- preserve project/file identity;
-- export required assets;
-- recover/resume after a new Local session/process;
-- expose an inspectable prototype/reference to Tester/Human.
+but the already-completed GSA capability PASS should satisfy the generic UI Coder/Penpot capability question unless later evidence shows the capability changed or the Local integration adds a materially different execution surface.
 
 ---
 
@@ -934,24 +943,37 @@ Designer/UI Coder should receive a coherent pack rather than unrelated styling r
 
 ---
 
-# 31. Standalone capability probes before full adoption
+# 31. Capability evidence before full adoption
 
-Before this target architecture becomes mandatory, run standalone capability validation.
+Do not repeat capability work that GSA has already completed successfully.
 
-## Penpot probe
+## UI Coder + Penpot
 
-Prove:
-- project/file create/open;
-- edit;
-- readback;
-- component/state creation;
-- responsive frame handling;
-- asset export;
-- stable object/file identity;
-- artifact retrieval after new Local session;
-- inspectable prototype/reference.
+Status for future Local planning:
+
+~~~text
+generic UI Coder + Penpot capability = OBSERVED / PASS from prior GSA capability test
+~~~
+
+Reuse that evidence as an input.
+
+Only test the Local-specific integration boundary:
+- connector/reachability from Local;
+- exact tool invocation surface;
+- Penpot identity binding;
+- resume/readback from new Local process/session;
+- artifact/export path handling;
+- Human/Tester access from Local.
+
+Re-run the broad UI Coder/Penpot capability experiment only when:
+- upstream capability changes materially;
+- evidence applicability no longer matches;
+- Local uses a materially different UI Coder/Penpot execution surface;
+- regression evidence indicates the prior PASS is stale.
 
 ## agent-browser probe
+
+agent-browser remains a new Local Tester execution dependency and must be proven in the Local environment.
 
 Prove:
 - MCP/tool availability;
@@ -974,39 +996,37 @@ Do not design later phases around unsupported operations.
 
 ---
 
-# 32. Tester should test UI Coder capability itself
+# 32. Reuse the completed UI Coder capability test; test the Local integration instead
 
-For initial rollout, Tester independently verifies UI Coder + Penpot capability before Planner assumes it.
+The generic UI Coder + Penpot capability experiment has already PASSed and should not be repeated as a prerequisite.
 
-Target standalone pilot:
+For GSA Local, Tester should instead validate the integration assumptions that are unique to Local.
+
+Target Local-specific pilot:
 
 ~~~text
 Planner:
-  declares which UI Coder capabilities must be known
+  imports the existing UI Coder/Penpot capability evidence
+  declares the Local integration facts still unknown
 
 Tester:
-  -> creates capability test plan
-  -> defines tasks UI Coder must perform
-  -> defines required returned artifacts/evidence
-
-UI Coder:
-  -> performs Penpot tasks
-
-Tester:
-  -> independently inspects outputs
-  -> uses agent-browser/screenshot capability where applicable
-  -> measures what is actually usable
-  -> returns capability matrix
+  -> creates a Local integration test plan
+  -> verifies Local can invoke/reach the UI Coder/Penpot surface
+  -> verifies Penpot artifact identity/readback/resume
+  -> verifies outputs are accessible to Tester/Human
+  -> uses agent-browser where a runnable/prototype surface is appropriate
+  -> returns Local integration evidence
 
 Planner:
-  -> uses observed capability matrix for later topology
+  -> consumes both:
+       prior UI Coder/Penpot capability PASS
+       +
+       Local integration evidence
 ~~~
 
-This tests both:
-- Tester independence;
-- UI Coder/Penpot real capability.
+This avoids duplicate testing while preserving capability honesty.
 
-It should be standalone before deeply wiring Planner orchestration.
+If applicability of the prior capability evidence is later invalidated, Tester may schedule a targeted revalidation rather than blindly trusting it.
 
 ---
 
@@ -1104,8 +1124,8 @@ A. Rebaseline Local architecture contracts
 B. Add role/workflow model for Designer + UX/UI Coder
 C. Add UI_FIRST/UX_FIRST planning contract
 D. Add Design Coverage/readiness records
-E. Integrate Penpot capability into UI Coder
-F. Run standalone UI Coder/Penpot capability PROBE
+E. Bind the already-PASSed UI Coder/Penpot capability into Local
+F. Run Local-specific Penpot integration/readback/resume validation
 G. Integrate Vercel agent-browser MCP into Tester executor
 H. Run standalone Tester/agent-browser capability PROBE
 I. Add UI Design TestCheckpoint + Human design loop
