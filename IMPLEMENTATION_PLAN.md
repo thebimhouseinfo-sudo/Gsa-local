@@ -1371,16 +1371,18 @@ UNVERIFIED không bao giờ trở thành PASS.
 Khi tất cả TODO/checklist hoàn thành:
 
 ```text
-Job Pack implementation complete
+Task/Job Pack implementation mature
        ↓
 Reviewer PASS
        ↓
-Final verification if applicable
+Required Verification / Tester checkpoint evidence
        ↓
-CR
+CR boundary resolver
+       ↓
+one exact-target Local CR
 ```
 
-CR chỉ chạy khi Task/Job Pack/checkpoint boundary đủ trưởng thành: Coder/Reviewer loop đã ổn và required verification/Tester evidence của boundary đã sẵn sàng.
+CR chỉ chạy khi Task/Job Pack/checkpoint boundary đủ trưởng thành: Coder/Reviewer loop đã ổn và required verification/Tester evidence của boundary đã sẵn sàng. Nếu Task terminal trùng một declared checkpoint trên cùng exact target/change_set, runtime coalesce thành một CR boundary duy nhất.
 
 ---
 
@@ -1409,7 +1411,7 @@ Không cho `Fix → CR` mà bỏ qua Reviewer/verification.
 
 ## 41. Job Pack completion
 
-Local CR evidence does not directly mutate Job Pack state.
+Local CR evidence does not directly mutate Job Pack state. CR dispatch is idempotent by CRBoundaryKey = boundary identity + plan/graph identity + exact target/revision/change_set; overlapping Task/checkpoint boundaries on the same key share one CR result.
 
 Runtime thực hiện:
 
