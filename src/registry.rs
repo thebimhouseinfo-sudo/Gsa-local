@@ -2647,6 +2647,34 @@ fn validate_tester_target_tx(
     for target in &attempt.target.prerequisites {
         match target.state {
             PrerequisiteState::ReviewPass => {
+                let workflow_state: Option<(Option<String>, String)> = tx
+                    .query_row(
+                        r#"
+                        SELECT change_set_id, status
+                        FROM code_workflow_state
+                        WHERE id=1 AND graph_version=?1 AND jobpack_id=?2
+                        "#,
+                        params![attempt.graph_version, target.jobpack_id],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .optional()?;
+                let Some((state_change_set, state_status)) = workflow_state else {
+                    bail!(
+                        "Tester target prerequisite {} has no current code workflow state",
+                        target.jobpack_id
+                    );
+                };
+                if state_status != "REVIEW_PASS"
+                    || state_change_set.as_deref() != target.change_set_id.as_deref()
+                {
+                    bail!(
+                        "Tester target prerequisite {} is not current REVIEW_PASS: status={} change_set={:?}",
+                        target.jobpack_id,
+                        state_status,
+                        state_change_set
+                    );
+                }
+
                 let latest: Option<(String, String)> = tx
                     .query_row(
                         r#"
