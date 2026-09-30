@@ -2517,14 +2517,14 @@ GSA Local
 
 GSA Online
   more limited browser feedback/runtime interaction
-  -> DESIGN_FIRST / Penpot may be justified more often
+  -> a heavier pre-code visual-design workflow may be justified more often
 ```
 
 This difference is **not workflow drift** when both variants preserve the same authority, evidence and Human-review contracts. Planner must treat available runtime/browser capability as a first-class routing input.
 
 The same product/UI request may therefore legitimately choose different execution modes in Online and Local when the observable tool capability differs.
 
-If Online browser capability improves later, its Penpot reliance may decrease without requiring a change to the shared UI governance model. Likewise, Local may escalate to Penpot whenever pre-code visual architecture materially reduces risk.
+If Online browser capability improves later, its reliance on separate pre-code design tooling may decrease without changing the shared UI governance model. Local does not require a fixed design-authoring application.
 
 ## Phase 16 — UI Planning + Visual Authority
 
