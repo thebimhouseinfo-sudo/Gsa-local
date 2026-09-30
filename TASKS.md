@@ -326,23 +326,30 @@ Gate:
 - no manual JSON identity/target/ref repair is required;
 - resume never silently advances into the next Human-bounded Task/phase.
 
-## Execution order before coding resumes
+## Execution boundary before any coding resumes
 
-1. Reconcile architecture docs and superseded partial Phase 10 code assumptions.
-2. Add PlanArtifact EvidenceNeed + submit_plan contract.
-3. Update ExecutionGraph + Job Builder checkpoint/evidence topology, including multi-JobPack/milestone prerequisites.
-4. Update Registry checkpoint/evidence/applicability state.
-5. Update Controller checkpoint/evidence dependency resolution.
-6. Update harness contracts.
-7. Build Tester workspace + evidence model.
-8. Build Tester sandbox/execution loop.
-9. Add checkpoint orchestration + transactional resume.
-10. Add retest + downstream evidence injection.
-11. Add SPEC_GAP → new plan revision → Reviewer/CR → superseding graph path.
-12. Run regression/CI.
-13. Reviewer.
-14. Stop. Do not enter Phase 11 automatically.
+Current Human-directed architecture change is itself a rebaseline event.
 
+Current safe boundary:
+- T-EXECUTION has passed review + executable CI evidence.
+- T-ORCHESTRATION has not started.
+- J-177F durable planning_revision 2 remains IN_PROGRESS and contains stale pre-migration governance semantics.
+
+Therefore:
+1. FREEZE J-177F before T-ORCHESTRATION. Do not execute additional J-177F tasks under the old topology.
+2. Capture the live SourceTargetSet and exact evidence refs for work completed through T-EXECUTION.
+3. Classify completed work as ADOPT_AS_IS / ADOPT_REVIEW_REQUIRED / ADAPT / SUPERSEDED; preserve source by default.
+4. Revalidate T-EXECUTION and prerequisite evidence only on dimensions materially affected by the new architecture; do not discard valid CI/review evidence wholesale.
+5. Create a replacement remaining-work Job/graph for T-ORCHESTRATION onward under the migrated governance and recovery contracts.
+6. Map adopted prior tasks/runs/change sets into that replacement Job explicitly.
+7. Only after the replacement plan passes Reviewer may coding resume.
+8. CR remains Human-invoked only.
+
+Operational note:
+- current control plane does not yet support SUSPENDED_BY_REBASELINE; do not manually edit J-177F JSON to fake that state;
+- the Human stop + this reviewed plan act as the operational freeze until Phase 14/15 runtime support exists.
+
+This bridge applies the Rebaseline/Salvage contract now while Phase 14/15 later automate it.
 
 ## K. Workflow Recovery / Rebaseline v2 migration
 
@@ -350,44 +357,84 @@ Sources (read-only):
 - WORKFLOW_LESSONS_LEARNED.md
 - GSA_LOCAL_UI_TESTER_TARGET_ARCHITECTURE.md
 
+These tasks are future runtime architecture work. The immediate operational rebaseline above must happen before any more coding; K tasks later automate that behavior.
+
+### K0 — project-first resolution
+Dependencies: none.
+- [ ] Resolve exact Project identity and registered PRIMARY/source repository before any Job/Run selection.
+- [ ] Ambiguous Project resolution returns explicit candidates and blocks execution.
+- [ ] Never infer Project from newest Job/Run or conversation recency.
+
 These tasks are future architecture work and MUST NOT be pulled into the active J-177F Tester implementation unless a dependency is explicitly required.
 
 ### K1 — authoritative WorkCursor / ResumeDescriptor
+Dependencies: K0.
+
 - [ ] Add one runtime-owned WorkCursor per active Job execution lineage.
 - [ ] Bind Project, Job, plan revision/hash, execution graph version, Task/JobPack, active Run, workflow stage, pending gate, continuation policy and SourceTargetSet.
 - [ ] Resume reads WorkCursor first; it must not infer the active Run by newest timestamp/commit.
 - [ ] Reconcile multiple legacy IN_PROGRESS Runs before assigning the cursor.
 
 ### K2 — start vs resume vs recover
+Dependencies: K1.
+
 - [ ] Separate START / RESUME / RECOVER operations.
 - [ ] Planning and Coding entry resolvers must inspect durable state before any begin_* initializer.
 - [ ] begin_* may initialize only genuinely absent/new state.
 - [ ] Attempt/review/checklist/TODO/change-set counters survive restart.
 
 ### K3 — crash-consistent durable transitions
+Dependencies: K1, K2.
+
 - [ ] Introduce transition_id/idempotency_key for Run/Verification/Handoff/finalization writes.
 - [ ] Make interrupted partial persistence recoverable without duplicate durable records.
 - [ ] Add durable ExternalOperation identity for CI, Penpot and browser operations.
 - [ ] Repeated finalization converges to one terminal state.
 
+### K3a — parent/child Run reconciliation
+Dependencies: K1, K3.
+- [ ] Model CONTINUATION / CORRECTION / REVIEW / RETEST / RECOVERY / SUPERSEDING_RUN lineage.
+- [ ] Child terminalization reconciles the parent into COMPLETED / SUPERSEDED_BY_CHILD / FAILED / explicit-active-next-stage.
+- [ ] No zombie IN_PROGRESS parent remains after ownership of continuation moves to a child.
+
+### K3b — machine-readable gate diagnostics
+Dependencies: K1, K3.
+- [ ] Every blocked completion/resume gate returns GateDiagnostic with expected producer/run/target/result/lifecycle and observed refs/state.
+- [ ] Agent never needs to guess whether mismatch is run id, target, producer, verification, lifecycle, path or freshness.
+- [ ] GateDiagnostic is durable enough to reconstruct the next repair/recovery action.
+
+### K3c — workflow replay policy + verification readiness
+Dependencies: K1, K3.
+- [ ] Classify workflow operations: IDEMPOTENT / IDEMPOTENT_BY_KEY / CHANGESET_BOUND / CAS_SERIALIZED / NON_IDEMPOTENT.
+- [ ] Run creation, Verification/Handoff creation, source mutation, Job transitions, CI/deploy/browser/Penpot operations each declare replay policy.
+- [ ] Discover deterministic verification readiness early: command, execution surface, provider, OS/network constraints and AVAILABLE / NOT_CONFIGURED / ENVIRONMENT_BLOCKED / NOT_APPLICABLE.
+- [ ] Verifier is read-only to product source by default; verification failure routes to Coder rather than auto-format/commit/push.
 ### K4 — source mutation write-ahead
+Dependencies: K1, K3c.
+
 - [ ] Add MutationIntent PREPARED/APPLIED/CHECKPOINTED/ABORTED.
 - [ ] Bind expected-before and intended-after hashes.
 - [ ] Use atomic replace where applicable.
 - [ ] Recover source-ahead mutations without forensic guesswork.
 
 ### K5 — lease fencing
+Dependencies: K1, K2.
+
 - [ ] Replace PID-only lease identity with owner nonce + process identity + monotonic fencing token/epoch.
 - [ ] Every mutating Registry transition validates the current fencing token.
 - [ ] Stale owners cannot mutate after takeover.
 
 ### K6 — schema evolution
+Dependencies: K1.
+
 - [ ] Add durable schema/version compatibility contract.
 - [ ] Migrations are ordered, idempotent and transactionally recorded.
 - [ ] Compatible migrations preserve active workflow identity/budgets/evidence lineage.
 - [ ] Semantic incompatibility routes to explicit stale/rebaseline state rather than silent reset.
 
 ### K7 — Human architecture rebaseline + salvage
+Dependencies: K1, K2, K3a, K6, K9.
+
 - [ ] Add HUMAN_REBASELINE_REQUIRED / REBASELINING workflow boundary.
 - [ ] FREEZE affected work and capture source/Run/evidence snapshot.
 - [ ] Classify prior work: ADOPT_AS_IS / ADOPT_REVIEW_REQUIRED / ADAPT_TO_NEW_CONTRACT / PARTIAL_SALVAGE / SUPERSEDED / REVERT_REQUIRED / FOREIGN_TASK / USER_OWNED / UNKNOWN.
@@ -396,6 +443,8 @@ These tasks are future architecture work and MUST NOT be pulled into the active 
 - [ ] Old Runs receive explicit rebaseline/supersession semantics; no blanket revert/reset.
 
 ### K8 — bounded integration checkpoints
+Dependencies: K1, K7, K9.
+
 - [ ] Add AcceptedIntegrationBaseline at coherent reviewed/verified boundaries.
 - [ ] Distinguish READY_FOR_INTEGRATION from AUTHORIZED_TO_MERGE.
 - [ ] Direct-main repositories still record stable accepted revisions.
@@ -403,12 +452,16 @@ These tasks are future architecture work and MUST NOT be pulled into the active 
 - [ ] Architecture rebaseline uses the latest accepted baseline as a stable anchor.
 
 ### K9 — multi-repo SourceTargetSet
+Dependencies: K1.
+
 - [ ] Replace singular source-target assumptions with SourceTargetSet.
 - [ ] Bind review/evidence to exact repo/ref/revision combinations.
 - [ ] Bind WorkCursor to plan_revision + plan_hash + graph_version.
 - [ ] Detect PARTIAL_SOURCE_ADVANCE / STALE_GRAPH_BINDING / SOURCE_SET_CONFLICT.
 
 ### K10 — recovery regression matrix
+Dependencies: K0-K9.
+
 - [ ] Restart before/after mutation, checkpoint, Reviewer, Internal Fix, Verification and Handoff.
 - [ ] Recover partial durable writes idempotently.
 - [ ] Recover source-ahead known-lineage work.
@@ -416,27 +469,53 @@ These tasks are future architecture work and MUST NOT be pulled into the active 
 - [ ] Preserve monotonic retry/attempt budgets across restart.
 - [ ] Ensure Human stop/EXPLICIT_START remains durable.
 
+## K11. Workflow-lessons migration coverage
+
+| Lessons | Owner | Required executable contract |
+|---|---|---|
+| 1-6, 9, 12, 16-18, 20-25, 30-32, 37, 40 | K0-K2, K9 | WorkCursor/ResumeDecision, exact target lineage, no chat-history dependency, SourceTargetSet |
+| 7, 33 | K3 | transition identity + idempotent finalization |
+| 8 | K3a | parent/child Run reconciliation, no zombie Run |
+| 11, 28 | K3b + canonical evidence | machine-readable blocking diagnostics + runtime current evidence pointer |
+| 14, 19, 27, 35-36 | K3c | workflow replay policy, verification readiness, ExternalOperation, monotonic budgets |
+| 13, 34 | K5 | execution identity + fencing token |
+| 26 | K1/K2 | durable EXPLICIT_START / activation policy |
+| 29 | K0 | Project resolution before Job resolution |
+| 38 | K4 | mutation write-ahead |
+| 39 | K6 | durable schema migration |
+| 41 | immediate bridge + K7 | Human Rebaseline/Salvage |
+| 42 | K8 | AcceptedIntegrationBaseline / bounded integration |
+
+Gate: no lesson is considered migrated merely because it is mentioned in prose; each row must terminate in a runtime contract, test or explicit Human governance boundary.
 ## L. UI / Design architecture rebaseline
 
 Target source: GSA_LOCAL_UI_TESTER_TARGET_ARCHITECTURE.md.
 
 ### L1 — role/workflow model
+Dependencies: K10.
+
 - [ ] Add Designer plus UX Coder/UI Coder specialization contracts.
 - [ ] Preserve Planner functional intent, Designer visual intent, Coder source HOW.
 - [ ] Preserve Tester independence and Human subjective acceptance authority.
 
 ### L2 — UI_FIRST / UX_FIRST planning contract
+Dependencies: L1.
+
 - [ ] Planner classifies every UI-bearing Project/Job as UI_FIRST or UX_FIRST.
 - [ ] Define UX execution contract before visual architecture.
 - [ ] UX_FIRST supports approved TEMPORARY_UI + durable UI requirement collection.
 - [ ] Changing classification is a material Human decision.
 
 ### L3 — design readiness model
+Dependencies: L2.
+
 - [ ] Add Design Coverage, DESIGN_READY, UI DESIGN APPROVED and SHELL_READY semantics.
 - [ ] Bind design baselines to exact design/source/evidence refs.
 - [ ] Material design changes supersede prior baseline explicitly.
 
 ### L4 — asset contract
+Dependencies: L3.
+
 - [ ] Distinguish Penpot-native shell assets, reviewed generated-asset contracts and deep-content assets.
 - [ ] Preserve reviewed asset ID/filename/prompt/usage/ratio contracts.
 - [ ] Do not let UI Coder replace explicit generated artwork contracts with generic primitives without approval.
@@ -446,10 +525,14 @@ Target source: GSA_LOCAL_UI_TESTER_TARGET_ARCHITECTURE.md.
 Generic UI Coder + Penpot capability has already PASSed in prior GSA capability testing. Do NOT repeat the broad capability experiment by default.
 
 Before Local relies on that PASS:
-- [ ] Capture/import the durable prior capability evidence reference when available, or explicitly record the Human-provided accepted capability fact plus its applicability boundary.
+- [ ] If durable upstream evidence exists, store it as UPSTREAM_OBSERVED_REF with explicit applicability.
+- [ ] If only the Human-provided accepted fact is available, store HUMAN_ACCEPTED_EXTERNAL as a planning premise, not as OBSERVED runtime verification.
+- [ ] Either form may skip the broad generic re-probe by Human decision, but neither satisfies Local reachability/readback/resume integration evidence.
 - [ ] Revalidate only if evidence applicability becomes stale or Local uses a materially different execution surface.
 
 ### M1 — Local Penpot binding
+Dependencies: K10, L4.
+
 - [ ] Integrate the already-capable UI Coder/Penpot surface into Local.
 - [ ] Verify Local reachability/invocation only.
 - [ ] Persist Penpot project/file/object identity needed for resume.
@@ -457,12 +540,16 @@ Before Local relies on that PASS:
 - [ ] Treat upstream Penpot evidence as reusable only while applicability remains valid.
 
 ### M2 — UI Design Phase
+Dependencies: M1, L3.
+
 - [ ] Insert UI DESIGN PHASE after DESIGN_READY/review and before source UI implementation when required.
 - [ ] Require full screen coverage + representative content coverage.
 - [ ] Allow Penpot components/tokens/responsive variants/assets/design-to-code as implementation aids.
 - [ ] Do not narrow existing UI Coder source responsibilities.
 
 ### M3 — design baseline persistence
+Dependencies: M2.
+
 - [ ] Persist ui_design_baseline_id + Penpot identity/version + coverage + asset refs + Tester refs + Human approval.
 - [ ] Resume exact UI_DESIGN / WAITING_HUMAN_DESIGN / UI_DESIGN_APPROVED stage.
 - [ ] Human Rebaseline invalidates obsolete design authority without deleting reusable artifacts.
@@ -470,23 +557,31 @@ Before Local relies on that PASS:
 ## N. Tester + Vercel agent-browser MCP
 
 ### N1 — executor integration
+Dependencies: K10 and rebaselined Tester checkpoint subsystem.
+
 - [ ] Add Vercel agent-browser MCP as primary browser executor for Local Tester.
 - [ ] Keep Tester as the reasoning agent; browser MCP is execution only.
 - [ ] Enforce open -> snapshot -> interact -> re-snapshot -> observe -> screenshot/report discipline.
 - [ ] Treat stale element refs as TEST_FAILURE.
 
 ### N2 — standalone agent-browser PROBE
+Dependencies: N1.
+
 - [ ] Prove launch, target open, load wait, snapshot, click/fill, re-snapshot, viewport handling, screenshot, evidence path, console/page error collection and deterministic cleanup.
 - [ ] Probe state/session save/load only where required.
 - [ ] Missing operation => INTEGRATION_NOT_READY; tool presence never implies FUNCTIONAL.
 
 ### N3 — Tester evidence workspace
+Dependencies: N2.
+
 - [ ] Store browser sessions/snapshots/screenshots/diffs/console evidence in Tester-owned workspace.
 - [ ] Product source remains read-only.
 - [ ] Bind artifacts to checkpoint, exact target/design baseline, viewport and browser operation identity.
 - [ ] Surface direct screenshot paths to Human; no manual directory hunting.
 
 ### N4 — UI checkpoint semantics
+Dependencies: N2, N3, M2.
+
 - [ ] Tester independently plans the UI checkpoint.
 - [ ] Use agent-browser only when the checkpoint has a browser-inspectable prototype or runnable target.
 - [ ] If the Penpot artifact is not browser-inspectable, use Penpot readback/export evidence plus Human review; do not fabricate browser verification.
@@ -497,21 +592,29 @@ Before Local relies on that PASS:
 ## O. Human design loop / SHELL_READY
 
 ### O1 — Human design loop
+Dependencies: M3, N4.
+
 - [ ] UI Coder + Penpot -> Tester evidence -> Human -> UI Coder revision -> Tester retest.
 - [ ] Routine visual refinements stay inside the loop.
 - [ ] Material flow/state/topology/asset/architecture changes trigger Planner/Rebaseline.
 
 ### O2 — source binding
+Dependencies: O1, M3.
+
 - [ ] UI source implementation must bind to UI DESIGN APPROVED baseline.
 - [ ] Penpot design-to-code is an accelerator, not canonical source.
 - [ ] Coder self-check + Reviewer remain required.
 
 ### O3 — representative shell pilot
+Dependencies: O2, N4.
+
 - [ ] Implement representative real-content pilot before scale-out.
 - [ ] Include long/short/media/error/loading/responsive stress cases.
 - [ ] Tester verifies runnable shell with agent-browser.
 
 ### O4 — SHELL_READY
+Dependencies: O3.
+
 - [ ] SHELL_READY requires runtime evidence, not design approval alone.
 - [ ] SHELL_READY becomes an AcceptedIntegrationBaseline candidate.
 - [ ] Only after SHELL_READY may broad screen/content scale-out proceed.
@@ -519,15 +622,21 @@ Before Local relies on that PASS:
 ## P. UX_FIRST UI Update Packs
 
 ### P1 — durable UI requirements
+Dependencies: O4, L2.
+
 - [ ] Record UIRequirement with source Job/Task, affected surface, reason, evidence and provisional UI ref.
 - [ ] Temporary UI is explicitly provisional.
 
 ### P2 — UI Update Pack
+Dependencies: P1.
+
 - [ ] Planner groups coherent requirements by affected shell/surface.
 - [ ] Designer -> UI Coder/Penpot -> Tester -> Human -> source refinement.
 - [ ] Avoid redesign after every UX change and avoid permanent temporary UI.
 
 ## Q. UI architecture pilot
+Dependencies: K10, L4, M3, N4, O4, P2.
+
 
 - [ ] Run one real UI_FIRST pilot.
 - [ ] Run one UX_FIRST/update-pack pilot when appropriate.
