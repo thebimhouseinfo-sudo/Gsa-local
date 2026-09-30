@@ -61,8 +61,8 @@ pub fn available_tester_capabilities(
     let tester_runner = TesterSandboxRunner::production();
     let verification_runner = LocalProcessRunner::production();
     let verification_profile = discover_profile(project_root)?;
-    let project_verification =
-        verification_runner.is_available() && verification_profile.status == DiscoveryStatus::Applicable;
+    let project_verification = verification_runner.is_available()
+        && verification_profile.status == DiscoveryStatus::Applicable;
 
     let availability = TesterCapabilityAvailability {
         workspace_python: tester_runner.executable_available("python3"),
