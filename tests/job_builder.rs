@@ -73,9 +73,9 @@ fn valid_graph() -> ExecutionGraph {
                 checklist: vec!["Implement".into(), "Verify".into()],
             },
         ],
+        checkpoints: vec![],
+        evidence_requirements: vec![],
     }
-    checkpoints: vec![],
-    evidence_requirements: vec![],
 }
 
 fn approve(registry: &Registry, artifact: PlanArtifact) -> (i64, String) {
