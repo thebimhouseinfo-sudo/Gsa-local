@@ -5,10 +5,11 @@ use crate::{
     },
     plan::{PlanArtifact, PlanRevision},
     tester_evidence::{
-        ObservedValue, ReplaySafety, TesterAttemptEvidence, TesterEvidenceOutputRecord,
-        TesterEvidenceRef, TesterTargetBinding, VerificationObservationField,
+        AdapterObservationField, ObservedValue, ReplaySafety, TesterAttemptEvidence,
+        TesterEvidenceOutputRecord, TesterEvidenceRef, TesterTargetBinding,
+        VerificationObservationField,
     },
-    tester_execution::{TesterExecutionObservation, TesterExecutionStatus},
+    tester_execution::TesterExecutionObservation,
     tester_workspace::TesterWorkspaceRuntime,
     verification::{CommandEvidence, VerificationEvidence, VerificationResult},
 };
@@ -3126,10 +3127,75 @@ fn validate_tester_evidence_refs(
                     );
                 }
             }
-            TesterEvidenceRef::AdapterObservation { .. } => {
-                bail!(
-                    "adapter observation refs cannot be persisted until T-EXECUTION can validate their execution record"
-                );
+            TesterEvidenceRef::AdapterObservation {
+                adapter_id,
+                execution_id,
+                field,
+                observed,
+            } => {
+                let row: Option<(String, String, String)> = tx
+                    .query_row(
+                        r#"
+                        SELECT target_fingerprint, adapter_id, observation_json
+                        FROM tester_execution_steps
+                        WHERE graph_version=?1 AND checkpoint_id=?2
+                          AND attempt_id=?3 AND execution_id=?4
+                          AND status IN ('COMPLETED','FAILED')
+                        "#,
+                        params![
+                            attempt.graph_version,
+                            attempt.checkpoint_id,
+                            attempt.attempt_id,
+                            execution_id
+                        ],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+                    )
+                    .optional()?;
+                let Some((target_fingerprint, stored_adapter_id, observation_json)) = row else {
+                    bail!(
+                        "adapter observation {} has no completed execution record",
+                        execution_id
+                    );
+                };
+                if target_fingerprint != attempt.target_fingerprint()? {
+                    bail!(
+                        "adapter observation {} is bound to another Tester target",
+                        execution_id
+                    );
+                }
+                if stored_adapter_id != *adapter_id {
+                    bail!(
+                        "adapter observation {} adapter mismatch: expected {}, found {}",
+                        execution_id,
+                        adapter_id,
+                        stored_adapter_id
+                    );
+                }
+                let observation =
+                    serde_json::from_str::<TesterExecutionObservation>(&observation_json)?;
+                let actual = match field {
+                    AdapterObservationField::Stdout => {
+                        ObservedValue::Text(observation.stdout.clone())
+                    }
+                    AdapterObservationField::Stderr => {
+                        ObservedValue::Text(observation.stderr.clone())
+                    }
+                    AdapterObservationField::ExitCode => {
+                        let code = observation.exit_code.ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "adapter observation {} has no exit code",
+                                execution_id
+                            )
+                        })?;
+                        ObservedValue::Integer(i64::from(code))
+                    }
+                };
+                if &actual != observed {
+                    bail!(
+                        "adapter observation {} does not match persisted execution output",
+                        execution_id
+                    );
+                }
             }
         }
     }
