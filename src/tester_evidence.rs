@@ -540,6 +540,24 @@ pub struct TesterTargetBinding {
 }
 
 impl TesterTargetBinding {
+    pub fn validate_against_checkpoint(&self, checkpoint: &TestCheckpointSpec) -> Result<()> {
+        self.validate()?;
+        let expected = checkpoint
+            .prerequisites
+            .iter()
+            .map(|item| (item.jobpack_id.as_str(), item.state))
+            .collect::<BTreeMap<_, _>>();
+        let actual = self
+            .prerequisites
+            .iter()
+            .map(|item| (item.jobpack_id.as_str(), item.state))
+            .collect::<BTreeMap<_, _>>();
+        if expected != actual {
+            bail!("Tester target prerequisites do not match checkpoint contract");
+        }
+        Ok(())
+    }
+
     pub fn fingerprint(&self, graph_version: i64, checkpoint_id: &str) -> Result<String> {
         if graph_version <= 0 {
             bail!("target graph_version must be positive");
@@ -672,23 +690,8 @@ impl TesterAttemptEvidence {
                 checkpoint.id
             );
         }
-        self.target.validate()?;
+        self.target.validate_against_checkpoint(checkpoint)?;
         validate_text_items("Tester attempt limitation", &self.limitations)?;
-
-        let expected_prerequisites = checkpoint
-            .prerequisites
-            .iter()
-            .map(|item| (item.jobpack_id.as_str(), item.state))
-            .collect::<BTreeMap<_, _>>();
-        let actual_prerequisites = self
-            .target
-            .prerequisites
-            .iter()
-            .map(|item| (item.jobpack_id.as_str(), item.state))
-            .collect::<BTreeMap<_, _>>();
-        if expected_prerequisites != actual_prerequisites {
-            bail!("Tester target prerequisites do not match checkpoint contract");
-        }
 
         let mut result_modes = HashSet::new();
         for result in &self.mode_results {
