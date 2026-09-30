@@ -134,7 +134,7 @@ Rebased work:
 ## Milestone E — Completion / Resume / Hardening
 Future work must now include:
 - checkpoint state crash/resume is already handled in Phase 10 through latest_checkpoint + lease;
-- material Tester SPEC_GAP pauses the graph and requires new plan revision + Reviewer/CR + superseding graph;
+- material Tester SPEC_GAP pauses the graph and requires new plan revision + Reviewer + any explicitly Human-invoked CR evidence + superseding graph;
 - CR packet consumes required checkpoint evidence;
 - Job Pack completion rejects unsatisfied required checkpoints;
 - Milestone completion rejects unsatisfied milestone-level checkpoints;
