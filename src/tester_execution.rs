@@ -4,7 +4,7 @@ use crate::{
     harness::{AgentId, HarnessRegistry},
     ollama::{ChatMessage, OllamaClient, ToolCall, ToolDefinition},
     plan::EvidenceNeed,
-    process_runner::{ProcessObservation, TesterSandboxRunner},
+    process_runner::{LocalProcessRunner, ProcessObservation, TesterSandboxRunner},
     registry::Registry,
     session::Session,
     tester_evidence::{
@@ -14,7 +14,7 @@ use crate::{
     },
     tester_workspace::TesterWorkspaceRuntime,
     tools::ProjectToolRuntime,
-    verification::{discover_profile, VerificationController, VerificationResult},
+    verification::{discover_profile, DiscoveryStatus, VerificationController, VerificationResult},
 };
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -26,28 +26,59 @@ const MAX_TESTER_TOOL_ROUNDS: usize = 16;
 const MAX_TESTER_EXECUTIONS: usize = 8;
 const DEFAULT_TESTER_TIMEOUT: Duration = Duration::from_secs(120);
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TesterCapabilityAvailability {
+    workspace_python: bool,
+    workspace_node: bool,
+    project_verification: bool,
+    verification_capabilities: Vec<String>,
+}
+
+impl TesterCapabilityAvailability {
+    fn names(&self) -> Vec<String> {
+        let mut capabilities = BTreeSet::new();
+        if self.workspace_python {
+            capabilities.insert("WORKSPACE_PYTHON".to_owned());
+        }
+        if self.workspace_node {
+            capabilities.insert("WORKSPACE_NODE".to_owned());
+        }
+        if self.project_verification {
+            capabilities.insert("PROJECT_VERIFICATION".to_owned());
+            capabilities.extend(self.verification_capabilities.iter().cloned());
+        }
+        if self.workspace_python || self.workspace_node || self.project_verification {
+            capabilities.insert("RUNTIME_PROBE".to_owned());
+        }
+        capabilities.into_iter().collect()
+    }
+}
+
 pub fn available_tester_capabilities(
     project_root: &Path,
-    project_tools: &ProjectToolRuntime,
+    _project_tools: &ProjectToolRuntime,
 ) -> Result<Vec<String>> {
-    let mut capabilities = BTreeSet::from([
-        "VERIFY".to_owned(),
-        "MEASURE".to_owned(),
-        "PROBE".to_owned(),
-        "RUNTIME_PROBE".to_owned(),
-        "TESTER_WORKSPACE".to_owned(),
-        "WORKSPACE_PYTHON".to_owned(),
-        "WORKSPACE_NODE".to_owned(),
-        "PROJECT_VERIFICATION".to_owned(),
-    ]);
+    let tester_runner = TesterSandboxRunner::production();
+    let verification_runner = LocalProcessRunner::production();
+    let verification_profile = discover_profile(project_root)?;
+    let project_verification =
+        verification_runner.is_available() && verification_profile.status == DiscoveryStatus::Applicable;
 
-    for capability in discover_profile(project_root)?.capabilities {
-        capabilities.insert(capability.as_str().to_owned());
-    }
-    for definition in project_tools.tool_definitions(AgentId::Tester) {
-        capabilities.insert(definition.function.name.to_ascii_uppercase());
-    }
-    Ok(capabilities.into_iter().collect())
+    let availability = TesterCapabilityAvailability {
+        workspace_python: tester_runner.executable_available("python3"),
+        workspace_node: tester_runner.executable_available("node"),
+        project_verification,
+        verification_capabilities: if project_verification {
+            verification_profile
+                .capabilities
+                .iter()
+                .map(|capability| capability.as_str().to_owned())
+                .collect()
+        } else {
+            Vec::new()
+        },
+    };
+    Ok(availability.names())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -905,6 +936,37 @@ fn hex_digest(digest: impl AsRef<[u8]>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unavailable_runtime_is_not_promoted_to_tester_capability() {
+        let unavailable = TesterCapabilityAvailability {
+            workspace_python: false,
+            workspace_node: false,
+            project_verification: false,
+            verification_capabilities: vec!["INTEGRATION".into()],
+        };
+        let names = unavailable.names();
+        assert!(!names.iter().any(|name| name == "RUNTIME_PROBE"));
+        assert!(!names.iter().any(|name| name == "WORKSPACE_PYTHON"));
+        assert!(!names.iter().any(|name| name == "PROJECT_VERIFICATION"));
+        assert!(!names.iter().any(|name| name == "INTEGRATION"));
+    }
+
+    #[test]
+    fn grounded_execution_capability_enables_runtime_probe() {
+        let available = TesterCapabilityAvailability {
+            workspace_python: true,
+            workspace_node: false,
+            project_verification: true,
+            verification_capabilities: vec!["INTEGRATION".into()],
+        };
+        let names = available.names();
+        assert!(names.iter().any(|name| name == "WORKSPACE_PYTHON"));
+        assert!(names.iter().any(|name| name == "PROJECT_VERIFICATION"));
+        assert!(names.iter().any(|name| name == "INTEGRATION"));
+        assert!(names.iter().any(|name| name == "RUNTIME_PROBE"));
+        assert!(!names.iter().any(|name| name == "VERIFY"));
+    }
 
     #[test]
     fn project_verification_is_observe_only() {
