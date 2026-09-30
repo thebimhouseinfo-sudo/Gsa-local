@@ -134,7 +134,7 @@ impl TesterEvidenceRef {
         match self {
             Self::WorkspaceArtifact { artifact } => {
                 require_text("workspace artifact path", &artifact.path)?;
-                require_text("workspace artifact sha256", &artifact.sha256)?;
+                validate_sha256(&artifact.sha256)?;
             }
             Self::VerificationRun { run_id } => {
                 if *run_id <= 0 {
@@ -329,7 +329,12 @@ impl ApplicabilityMatcher {
                 }
                 for (path, sha256) in hashes {
                     require_text("SOURCE_PATH_HASH_SET path", path)?;
-                    if path.starts_with('/') || path.split('/').any(|part| part == "..") {
+                    if path.starts_with('/')
+                        || path.starts_with('\\')
+                        || path
+                            .split(|character| character == '/' || character == '\\')
+                            .any(|part| part == "..")
+                    {
                         bail!("SOURCE_PATH_HASH_SET contains unsafe path {path}");
                     }
                     validate_sha256(sha256)?;
@@ -666,15 +671,24 @@ impl TesterAttemptEvidence {
                 .find(|result| result.mode == contract.mode)
                 .map(TesterModeResult::satisfies_output_requirement)
                 .unwrap_or(false);
-            if contract.required
-                && successful
-                && !self.outputs.iter().any(|output| output.output_id == contract.id)
-            {
-                bail!(
-                    "successful mode {:?} is missing required evidence output {}",
-                    contract.mode,
-                    contract.id
-                );
+            if contract.required && successful {
+                let output = self
+                    .outputs
+                    .iter()
+                    .find(|output| output.output_id == contract.id)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "successful mode {:?} is missing required evidence output {}",
+                            contract.mode,
+                            contract.id
+                        )
+                    })?;
+                if output.provenance != EvidenceProvenance::Observed {
+                    bail!(
+                        "required successful evidence output {} must have OBSERVED provenance",
+                        contract.id
+                    );
+                }
             }
         }
 
