@@ -10,10 +10,14 @@ use gsa_local::{
     tester_evidence::{
         AdapterObservationField, ApplicabilityContext, ApplicabilityDecision, ApplicabilityMatcher,
         EvidenceApplicability, EvidenceProvenance, ExperimentContext, ExperimentObservation,
-        ExperimentSample,
+        ExperimentSample, ReplaySafety,
         ObservedValue, RevalidationPolicy, TesterAttemptEvidence, TesterEvidenceOutputRecord,
         TesterEvidenceRef, TesterModeOutcome, TesterModeResult, TesterPrerequisiteTarget,
         TesterTargetBinding, VerificationObservationField,
+    },
+    tester_execution::{
+        TesterAdapterRequest, TesterExecutionObservation, TesterExecutionStatus,
+        TesterExecutionStepRequest,
     },
     tester_workspace::{TesterArtifactRef, TesterWorkspaceRuntime},
     verification::{
@@ -412,6 +416,179 @@ fn stale_workspace_artifact_ref_cannot_be_persisted_as_observed() {
 
     assert!(registry
         .record_tester_attempt_evidence(dir.path(), "owner-a", &stale)
+        .is_err());
+}
+
+#[test]
+fn completed_adapter_observation_can_back_observed_evidence() {
+    let (dir, registry, version, verification_run_id) = setup();
+    let artifact = workspace_artifact(&dir, version, "ATT-EXEC");
+    let mut evidence = attempt(
+        version,
+        "ATT-EXEC",
+        "change-1",
+        artifact,
+        verification_run_id,
+    );
+    let target = evidence.target.clone();
+    let request = TesterExecutionStepRequest {
+        step_id: "probe-runtime".into(),
+        replay_safety: ReplaySafety::ObserveOnly,
+        adapter: TesterAdapterRequest::WorkspacePython {
+            script_path: "tests/probe.py".into(),
+            args: vec![],
+        },
+    };
+    let target_fingerprint = target.fingerprint(version, "CP1").unwrap();
+    let fence = request
+        .fence_key(version, "CP1", "ATT-EXEC", &target_fingerprint)
+        .unwrap();
+
+    registry
+        .prepare_tester_execution_step(
+            dir.path(),
+            "owner-a",
+            version,
+            "CP1",
+            "ATT-EXEC",
+            &target,
+            &fence,
+            &request.step_id,
+            request.adapter.adapter_id(),
+            request.replay_safety,
+            &fence,
+            &serde_json::to_value(&request).unwrap(),
+        )
+        .unwrap();
+
+    let observation = TesterExecutionObservation {
+        execution_id: fence.clone(),
+        step_id: request.step_id.clone(),
+        adapter_id: request.adapter.adapter_id().into(),
+        replay_safety: request.replay_safety,
+        fence_key: fence.clone(),
+        status: TesterExecutionStatus::Completed,
+        exit_code: Some(0),
+        duration_ms: 1,
+        timed_out: false,
+        blocked_reason: None,
+        stdout: "runtime-1".into(),
+        stderr: String::new(),
+        evidence_refs: vec![],
+    };
+    registry
+        .complete_tester_execution_step(
+            dir.path(),
+            "owner-a",
+            version,
+            "CP1",
+            "ATT-EXEC",
+            &observation,
+        )
+        .unwrap();
+
+    let adapter_ref = TesterEvidenceRef::AdapterObservation {
+        adapter_id: request.adapter.adapter_id().into(),
+        execution_id: fence,
+        field: AdapterObservationField::Stdout,
+        observed: ObservedValue::Text("runtime-1".into()),
+    };
+    evidence.experiment.as_mut().unwrap().samples[0].observations[0].evidence_refs =
+        vec![adapter_ref.clone()];
+    evidence.outputs[0].evidence_refs = vec![adapter_ref];
+
+    registry
+        .record_tester_attempt_evidence(dir.path(), "owner-a", &evidence)
+        .unwrap();
+}
+
+#[test]
+fn fabricated_adapter_value_is_rejected_against_execution_record() {
+    let (dir, registry, version, verification_run_id) = setup();
+    let artifact = workspace_artifact(&dir, version, "ATT-EXEC-MISMATCH");
+    let mut evidence = attempt(
+        version,
+        "ATT-EXEC-MISMATCH",
+        "change-1",
+        artifact,
+        verification_run_id,
+    );
+    let target = evidence.target.clone();
+    let request = TesterExecutionStepRequest {
+        step_id: "probe-runtime".into(),
+        replay_safety: ReplaySafety::ObserveOnly,
+        adapter: TesterAdapterRequest::WorkspacePython {
+            script_path: "tests/probe.py".into(),
+            args: vec![],
+        },
+    };
+    let target_fingerprint = target.fingerprint(version, "CP1").unwrap();
+    let fence = request
+        .fence_key(
+            version,
+            "CP1",
+            "ATT-EXEC-MISMATCH",
+            &target_fingerprint,
+        )
+        .unwrap();
+
+    registry
+        .prepare_tester_execution_step(
+            dir.path(),
+            "owner-a",
+            version,
+            "CP1",
+            "ATT-EXEC-MISMATCH",
+            &target,
+            &fence,
+            &request.step_id,
+            request.adapter.adapter_id(),
+            request.replay_safety,
+            &fence,
+            &serde_json::to_value(&request).unwrap(),
+        )
+        .unwrap();
+
+    registry
+        .complete_tester_execution_step(
+            dir.path(),
+            "owner-a",
+            version,
+            "CP1",
+            "ATT-EXEC-MISMATCH",
+            &TesterExecutionObservation {
+                execution_id: fence.clone(),
+                step_id: request.step_id.clone(),
+                adapter_id: request.adapter.adapter_id().into(),
+                replay_safety: request.replay_safety,
+                fence_key: fence.clone(),
+                status: TesterExecutionStatus::Completed,
+                exit_code: Some(0),
+                duration_ms: 1,
+                timed_out: false,
+                blocked_reason: None,
+                stdout: "runtime-1".into(),
+                stderr: String::new(),
+                evidence_refs: vec![],
+            },
+        )
+        .unwrap();
+
+    let forged = TesterEvidenceRef::AdapterObservation {
+        adapter_id: request.adapter.adapter_id().into(),
+        execution_id: fence,
+        field: AdapterObservationField::Stdout,
+        observed: ObservedValue::Text("invented".into()),
+    };
+    evidence.outputs[0].value = Some(ObservedValue::Text("invented".into()));
+    evidence.experiment.as_mut().unwrap().samples[0].observations[0].value =
+        ObservedValue::Text("invented".into());
+    evidence.experiment.as_mut().unwrap().samples[0].observations[0].evidence_refs =
+        vec![forged.clone()];
+    evidence.outputs[0].evidence_refs = vec![forged];
+
+    assert!(registry
+        .record_tester_attempt_evidence(dir.path(), "owner-a", &evidence)
         .is_err());
 }
 
