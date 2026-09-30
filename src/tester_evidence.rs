@@ -541,16 +541,16 @@ impl TesterTargetBinding {
             if !jobpacks.insert(target.jobpack_id.as_str()) {
                 bail!("duplicate target prerequisite {}", target.jobpack_id);
             }
-            if target.state == PrerequisiteState::ReviewPass
-                && target
-                    .change_set_id
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .is_none()
+            if target
+                .change_set_id
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .is_none()
             {
                 bail!(
-                    "REVIEW_PASS prerequisite {} requires change_set_id",
+                    "{:?} prerequisite {} requires exact reviewed change_set_id",
+                    target.state,
                     target.jobpack_id
                 );
             }
@@ -872,7 +872,7 @@ mod tests {
                 TesterPrerequisiteTarget {
                     jobpack_id: "JP-B".into(),
                     state: PrerequisiteState::Done,
-                    change_set_id: None,
+                    change_set_id: Some("change-b".into()),
                     target_revision: Some("rev-b".into()),
                 },
                 TesterPrerequisiteTarget {
@@ -890,6 +890,19 @@ mod tests {
             left.fingerprint(1, "CP1").unwrap(),
             right.fingerprint(1, "CP1").unwrap()
         );
+    }
+
+    #[test]
+    fn done_target_requires_exact_reviewed_change_set() {
+        let target = TesterTargetBinding {
+            prerequisites: vec![TesterPrerequisiteTarget {
+                jobpack_id: "JP-DONE".into(),
+                state: PrerequisiteState::Done,
+                change_set_id: None,
+                target_revision: Some("rev-done".into()),
+            }],
+        };
+        assert!(target.validate().is_err());
     }
 
     #[test]
