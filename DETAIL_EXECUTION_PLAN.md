@@ -180,6 +180,8 @@ Deliverables:
 - UI_FIRST / UX_FIRST product workflow classification;
 - ui_execution_mode = BROWSER_FIRST | DESIGN_FIRST;
 - UX execution contract;
+- visual_authority_source = existing approved shell/design system, Designer spec, or Human direction;
+- BROWSER_FIRST may still invoke Designer for unresolved material visual decisions without invoking Penpot;
 - BROWSER_FIRST default for any existing product shell;
 - explicit Human approval before discarding/rebuilding/replacing any existing shell through DESIGN_FIRST; aesthetic dissatisfaction alone is not a mode-switch authority;
 - greenfield risk-based mode selection rather than automatic Penpot;
@@ -217,6 +219,7 @@ Gate:
 ## Milestone I — mode-specific flow to SHELL_READY
 
 BROWSER_FIRST:
+- resolve visual authority first; use existing approved shell/design system/Human direction when sufficient, otherwise Designer supplies visual direction/spec without Penpot;
 - UI Coder edits source directly;
 - agent-browser drives development/refinement feedback;
 - Coder self-check + Reviewer;
@@ -236,7 +239,7 @@ Shared deliverables:
 - representative shell pilot when risk justifies it;
 - SHELL_READY based on runtime evidence;
 - UX_FIRST UI Update Pack routing through BROWSER_FIRST or DESIGN_FIRST;
-- Rebaseline/Salvage when Human decides an existing shell must be discarded/rebuilt.
+- Rebaseline/Salvage when Human decides an existing shell must be discarded/rebuilt; regression coverage uses a genuine approved rebuild or controlled fixture, never a manufactured product redesign.
 
 Gate:
 - no broad scale-out from an unverified shell where SHELL_READY is required;
