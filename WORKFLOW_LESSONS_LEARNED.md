@@ -1564,3 +1564,109 @@ unsupported
 ```
 
 Runtime upgrade is therefore another resume event, not a reason to discard workflow state.
+
+
+---
+
+# 40. Resume identity must bind execution graph and multi-repository SourceTargetSet
+
+A WorkCursor cannot safely identify work using only:
+
+```text
+job_id
+task_id / jobpack_id
+single source revision
+```
+
+because:
+
+- the same logical task/jobpack identifier may exist across superseding Plan/ExecutionGraph revisions;
+- GSA Online supports MULTI-repository Projects;
+- one repository may advance while another remains unchanged or partially updated;
+- cross-repository evidence may only be valid for one exact combination of repository revisions.
+
+Therefore every resumable execution identity must include the planning/graph binding:
+
+```text
+plan_revision
+plan_hash
+execution_graph_version
+task_id / jobpack_id
+```
+
+The authoritative source target should be modeled as a set:
+
+```text
+SourceTargetSet
+  repository_targets[]
+    repository_url / registry_id
+    role
+    relation
+    ref
+    revision
+    mutation_scope
+    ownership
+```
+
+For SINGLE-repo work this set contains one element.
+
+For MULTI-repo work it records the exact repository combination that produced, reviewed or verified the result.
+
+Resume reconciliation must be per repository and aggregate:
+
+```text
+repo A = CONSISTENT
+repo B = SOURCE_AHEAD
+repo C = UNCHANGED
+  -> aggregate = PARTIAL_SOURCE_ADVANCE
+```
+
+The runtime must not collapse this into one "latest revision".
+
+Recommended recovery outcomes include:
+
+```text
+SOURCE_SET_CONSISTENT
+PARTIAL_SOURCE_ADVANCE
+PARTIAL_PERSIST
+FOREIGN_REPO_MUTATION
+STALE_GRAPH_BINDING
+SOURCE_SET_CONFLICT
+```
+
+Rules:
+
+- a Run created for graph version X cannot resume against graph version Y merely because task/jobpack names match;
+- a Reviewer PASS binds to the exact SourceTargetSet it reviewed;
+- Verification/evidence applicability includes all repository dimensions that materially affect the result;
+- a cross-repo Job may advance only when required repository targets satisfy the approved topology;
+- source changes in a registered but out-of-scope repository must not be silently adopted into the active change set;
+- partial cross-repo mutation after interruption must be reconciled explicitly rather than rolled forward by assumption.
+
+Cross-repository writes do not need to pretend to be globally atomic.
+
+Instead the durable transition should record each repository result and expose partial completion so recovery can finish, compensate, supersede or block deterministically.
+
+The WorkCursor defined earlier should therefore include at minimum:
+
+```text
+project_id
+job_id
+plan_revision
+plan_hash
+execution_graph_version
+active_task_ref / jobpack_id
+active_run_id
+workflow_stage
+input_source_target_set
+output_source_target_set?
+pending_gate
+continuation_policy
+cursor_version
+```
+
+This prevents resume from crossing either:
+
+- a repository boundary;
+- a superseded plan/graph boundary;
+- or an exact-target review/evidence boundary.
