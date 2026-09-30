@@ -255,9 +255,7 @@ fn integration_not_ready_stops_checkpoint_even_when_mode_claims_success() {
         .unwrap()
         .unwrap();
     assert_eq!(due.status, TesterCheckpointStatus::Due);
-    let running = controller
-        .begin_due_tester_attempt(version, "CP1")
-        .unwrap();
+    let running = controller.begin_due_tester_attempt(version, "CP1").unwrap();
 
     let attempt = TesterAttemptEvidence {
         graph_version: version,
