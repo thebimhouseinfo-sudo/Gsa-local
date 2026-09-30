@@ -8,8 +8,9 @@ use gsa_local::{
     plan::{EvidenceMode, EvidenceNeed, PlanArtifact},
     registry::{Registry, ReviewActor, ReviewVerdict},
     tester_evidence::{
-        ApplicabilityContext, ApplicabilityDecision, ApplicabilityMatcher, EvidenceApplicability,
-        EvidenceProvenance, ExperimentContext, ExperimentObservation, ExperimentSample,
+        AdapterObservationField, ApplicabilityContext, ApplicabilityDecision, ApplicabilityMatcher,
+        EvidenceApplicability, EvidenceProvenance, ExperimentContext, ExperimentObservation,
+        ExperimentSample,
         ObservedValue, RevalidationPolicy, TesterAttemptEvidence, TesterEvidenceOutputRecord,
         TesterEvidenceRef, TesterModeOutcome, TesterModeResult, TesterPrerequisiteTarget,
         TesterTargetBinding, VerificationObservationField,
@@ -428,6 +429,7 @@ fn adapter_observation_ref_is_rejected_until_execution_records_exist() {
     let adapter_ref = TesterEvidenceRef::AdapterObservation {
         adapter_id: "future-adapter".into(),
         execution_id: "exec-1".into(),
+        field: AdapterObservationField::Stdout,
         observed: ObservedValue::Text("runtime-1".into()),
     };
     evidence.experiment.as_mut().unwrap().samples[0].observations[0].evidence_refs =
