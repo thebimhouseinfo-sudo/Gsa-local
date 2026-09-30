@@ -228,9 +228,12 @@ Gate:
 ## Milestone I — executable UI Coder workflow + UI acceptance / shell readiness
 
 Deliverables:
-- executable UI_GROUND -> UI_IMPLEMENT -> UI_RENDER -> UI_INSPECT -> UI_REFINE -> UI_SELF_CHECK state flow;
-- UI workspace resume across those states;
+- executable UI_GROUND -> UI_IMPLEMENT -> UI_RENDER -> UI_INSPECT -> UI_REFINE -> UI_SELF_CHECK -> UI_HANDOFF_READY UI Coder-owned state flow;
+- orchestration-owned REVIEW_PENDING / TEST_PENDING / HUMAN_REVIEW_PENDING / UI_ACCEPTED / SHELL_READY transitions;
+- durable stage_owner plus producer/run identity across every UI workflow transition;
+- UI workspace resume across UI Coder and orchestration-owned stages;
 - source/browser development loop;
+- explicit UI_HANDOFF_READY -> REVIEW_PENDING ownership boundary;
 - Reviewer boundary;
 - independent Tester checkpoint;
 - ordinary UI_ACCEPTED path;
