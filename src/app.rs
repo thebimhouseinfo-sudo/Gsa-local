@@ -2,13 +2,14 @@ use crate::{
     agent_runtime::run_with_project_tools,
     cli::{self, InputLine, SlashCommand},
     config::AppConfig,
-    controller::{ActiveWork, MilestoneController},
+    controller::{ActiveWork, MilestoneController, NextWork},
     harness::{AgentId, HarnessRegistry},
     ollama::{ChatMessage, OllamaClient},
-    registry::Registry,
+    registry::{Registry, TesterCheckpointDisposition},
     session::Session,
+    tester_execution::TesterWorkflow,
     tools::ProjectToolRuntime,
-    verification::VerificationController,
+    verification::{discover_profile, VerificationController},
     workflow::{CodingOutcome, CodingWorkflow, PlanningOutcome, PlanningWorkflow},
 };
 use anyhow::{bail, Context, Result};
@@ -49,8 +50,7 @@ impl App {
             &lease_owner,
             Duration::from_secs(6 * 60 * 60),
         )?;
-        let active_work = MilestoneController::new(&registry, &project_root, &lease_owner)
-            .resolve_or_activate()?;
+        let active_work = None;
 
         Ok(Self {
             project_root,
@@ -193,6 +193,79 @@ impl App {
         Ok(())
     }
 
+    async fn resolve_coder_work_after_testers(&mut self) -> Result<Option<ActiveWork>> {
+        self.active_work = None;
+        loop {
+            let profile = discover_profile(&self.project_root)?;
+            let available_capabilities = profile
+                .capabilities
+                .iter()
+                .map(|capability| capability.as_str().to_owned())
+                .collect::<Vec<_>>();
+            let next = MilestoneController::new(
+                &self.registry,
+                &self.project_root,
+                &self.lease_owner,
+            )
+            .resolve_next(&available_capabilities)?;
+
+            match next {
+                None => return Ok(None),
+                Some(NextWork::Coder(work)) => return Ok(Some(work)),
+                Some(NextWork::Tester(checkpoint_work)) => {
+                    if checkpoint_work.disposition != TesterCheckpointDisposition::Due {
+                        let reason = checkpoint_work
+                            .reason
+                            .as_deref()
+                            .unwrap_or("checkpoint cannot progress");
+                        bail!(
+                            "Tester checkpoint {} is {}: {}",
+                            checkpoint_work.checkpoint.id,
+                            checkpoint_work.disposition.as_str(),
+                            reason
+                        );
+                    }
+
+                    let target = checkpoint_work
+                        .target
+                        .clone()
+                        .context("DUE Tester checkpoint is missing exact target binding")?;
+                    let attempt_id = checkpoint_work
+                        .next_attempt_id
+                        .as_deref()
+                        .context("DUE Tester checkpoint is missing next attempt id")?;
+                    println!(
+                        "TEST_CHECKPOINT_DUE checkpoint={} attempt={}",
+                        checkpoint_work.checkpoint.id, attempt_id
+                    );
+                    let workflow = TesterWorkflow::new(
+                        &self.ollama,
+                        &self.harnesses,
+                        &self.registry,
+                        &self.config,
+                        &self.session,
+                        &self.project_root,
+                        &self.lease_owner,
+                    );
+                    let attempt = workflow
+                        .run(
+                            &checkpoint_work.checkpoint.goal,
+                            checkpoint_work.graph_version,
+                            &checkpoint_work.checkpoint,
+                            target,
+                            attempt_id,
+                            &mut self.tool_runtime,
+                        )
+                        .await?;
+                    println!(
+                        "TEST_CHECKPOINT_RECORDED checkpoint={} attempt={}",
+                        attempt.checkpoint_id, attempt.attempt_id
+                    );
+                }
+            }
+        }
+    }
+
     async fn dispatch_user_text(&mut self, text: String) -> Result<()> {
         let agent = self.session.active_agent;
 
@@ -216,12 +289,7 @@ impl App {
                         plan.revision, plan.hash
                     );
                     println!("EXECUTION_GRAPH_REGISTERED version={graph_version}");
-                    self.active_work = MilestoneController::new(
-                        &self.registry,
-                        &self.project_root,
-                        &self.lease_owner,
-                    )
-                    .resolve_or_activate()?;
+                    self.active_work = self.resolve_coder_work_after_testers().await?;
                     if let Some(work) = &self.active_work {
                         println!(
                             "ACTIVE_WORK milestone={} jobpack={}",
@@ -240,11 +308,7 @@ impl App {
         }
 
         if agent == AgentId::Coder {
-            if self.active_work.is_none() {
-                self.active_work =
-                    MilestoneController::new(&self.registry, &self.project_root, &self.lease_owner)
-                        .resolve_or_activate()?;
-            }
+            self.active_work = self.resolve_coder_work_after_testers().await?;
             let active_work = self
                 .active_work
                 .clone()
@@ -295,7 +359,8 @@ impl App {
                         change_set_id,
                         verification.as_str()
                     );
-                    println!("Job Pack remains ACTIVE pending Tester/CR and later gates.");
+                    self.active_work = self.resolve_coder_work_after_testers().await?;
+                    println!("Job Pack remains ACTIVE pending CR and later terminal gates.");
                 }
                 CodingOutcome::Paused {
                     change_set_id,
@@ -308,6 +373,10 @@ impl App {
                 }
             }
             return Ok(());
+        }
+
+        if agent == AgentId::Tester {
+            bail!("Tester is orchestration-owned and may run only from a declared Test Checkpoint");
         }
 
         let model = match self.session.resolved_model(&self.config, agent) {
