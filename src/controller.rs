@@ -1,4 +1,4 @@
-use crate::registry::{ActiveWorkRecord, Registry};
+use crate::registry::{ActiveWorkRecord, Registry, TesterCheckpointWorkRecord};
 use anyhow::Result;
 use std::path::Path;
 
@@ -19,6 +19,13 @@ pub struct ActiveWork {
     pub acceptance: Vec<String>,
     pub verification_hints: Vec<String>,
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NextWork {
+    Coder(ActiveWork),
+    Tester(TesterCheckpointWorkRecord),
+}
+
 
 impl From<ActiveWorkRecord> for ActiveWork {
     fn from(value: ActiveWorkRecord) -> Self {
@@ -54,6 +61,17 @@ impl<'a> MilestoneController<'a> {
             project_root,
             lease_owner,
         }
+    }
+
+    pub fn resolve_next(&self, available_capabilities: &[String]) -> Result<Option<NextWork>> {
+        if let Some(checkpoint) = self
+            .registry
+            .resolve_tester_checkpoint(available_capabilities)?
+        {
+            return Ok(Some(NextWork::Tester(checkpoint)));
+        }
+        self.resolve_or_activate()
+            .map(|work| work.map(NextWork::Coder))
     }
 
     pub fn resolve_or_activate(&self) -> Result<Option<ActiveWork>> {
