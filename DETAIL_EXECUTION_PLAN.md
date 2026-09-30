@@ -173,67 +173,89 @@ Deliverables:
 Gate:
 - crash or intentional Human architecture change can be reconciled without conversation history, blanket revert, duplicate non-idempotent action or stale authority.
 
-## Milestone G — UI architecture foundation
+## Milestone G — UI execution-mode architecture
 
 Deliverables:
 - Designer / UX Coder / UI Coder role contracts;
-- UI_FIRST / UX_FIRST;
+- UI_FIRST / UX_FIRST product workflow classification;
+- ui_execution_mode = BROWSER_FIRST | DESIGN_FIRST;
 - UX execution contract;
-- Design Coverage;
-- DESIGN_READY;
-- TEMPORARY_UI + durable UI requirement collection;
-- asset classes/contracts.
+- BROWSER_FIRST default for an existing usable shell;
+- explicit Human approval before rebuilding/replacing an existing shell through DESIGN_FIRST;
+- greenfield risk-based mode selection rather than automatic Penpot;
+- asset routing as a signal only;
+- mode-specific design readiness rules.
 
 Gate:
-- Planner can construct a UI-bearing topology without UI Coder inventing material product/design decisions.
+- Planner can select the lightest safe UI execution mode without UI Coder inventing material product/design decisions.
 
-## Milestone H — Penpot + agent-browser capability binding
+## Milestone H — agent-browser shared runtime + optional Penpot
 
-Penpot premise:
-- generic UI Coder + Penpot capability is already PASSed;
-- use UPSTREAM_OBSERVED_REF when durable upstream evidence exists; otherwise record HUMAN_ACCEPTED_EXTERNAL as a planning premise only; neither substitutes for Local integration OBSERVED evidence;
-- validate only Local-specific invocation/readback/resume/artifact integration unless applicability becomes stale.
+Primary Local UI surface:
+- Vercel agent-browser is the default runnable-source observation loop for UI Coder;
+- Tester uses a separate independent agent-browser session for verification.
 
-Deliverables:
-- Local Penpot identity/binding;
-- upstream capability provenance: UPSTREAM_OBSERVED_REF or HUMAN_ACCEPTED_EXTERNAL planning premise; neither substitutes for Local integration OBSERVED evidence;
-- UI DESIGN PHASE;
-- Vercel agent-browser MCP Tester executor;
-- standalone agent-browser PROBE;
+agent-browser deliverables:
+- Local PROBE of navigation/snapshot/interact/re-snapshot/viewport/screenshot/diff/console/error/cleanup;
+- separate UI Coder development and Tester verification operation identities;
 - Tester browser workspace;
-- immutable PenpotEvidenceBundle/read-only inspection path for non-browser design checkpoints;
 - direct Human screenshot paths;
-- ExternalOperation identity for Penpot/browser work.
+- exact target/viewport applicability.
+
+Optional DESIGN_FIRST/Penpot deliverables:
+- Penpot is activated only when the selected mode requires pre-code visual architecture;
+- generic UI Coder + Penpot capability PASS may be reused through UPSTREAM_OBSERVED_REF or HUMAN_ACCEPTED_EXTERNAL planning premise;
+- Local Penpot invocation/readback/resume/artifact integration remains OBSERVED locally when used;
+- immutable PenpotEvidenceBundle/read-only inspection path for non-browser design checkpoints;
+- UI DESIGN APPROVED baseline when required.
 
 Gate:
-- Local can resume Penpot work;
-- when a browser-inspectable prototype/runnable target exists, Tester can execute/reproduce an agent-browser checkpoint against the exact target with directly inspectable evidence;
-- when the design target is not browser-inspectable, Penpot readback/export evidence plus Human review is used and browser verification remains explicitly not applicable/unverified.
+- BROWSER_FIRST can proceed without Penpot;
+- DESIGN_FIRST can resume/inspect its Penpot artifact when Penpot is selected;
+- UI Coder browser observations never count as Tester PASS.
 
-## Milestone I — Human-approved design to SHELL_READY
+## Milestone I — mode-specific flow to SHELL_READY
 
-Deliverables:
-- UI DESIGN APPROVED baseline;
-- source implementation bound to design baseline;
+BROWSER_FIRST:
+- UI Coder edits source directly;
+- agent-browser drives development/refinement feedback;
+- Coder self-check + Reviewer;
+- Tester independently verifies runnable UI;
+- Human reviews evidence when required.
+
+DESIGN_FIRST:
+- Designer/UI Coder Penpot design;
+- objective design evidence + Human approval;
+- UI DESIGN APPROVED;
+- source implementation;
+- agent-browser development loop;
 - Reviewer;
-- representative shell pilot;
-- Tester agent-browser verification;
-- SHELL_READY;
-- UX_FIRST UI Update Pack workflow.
+- Tester independent runtime verification.
+
+Shared deliverables:
+- representative shell pilot when risk justifies it;
+- SHELL_READY based on runtime evidence;
+- UX_FIRST UI Update Pack routing through BROWSER_FIRST or DESIGN_FIRST;
+- Rebaseline/Salvage when Human decides an existing shell must be discarded/rebuilt.
 
 Gate:
-- shell is not scaled out until runtime evidence validates the approved design;
-- Human material architecture feedback routes through Rebaseline/Salvage;
-- coherent accepted boundaries become integration baselines rather than allowing unbounded commit accumulation.
-
+- no broad scale-out from an unverified shell where SHELL_READY is required;
+- no Penpot requirement for safe source-first UI iteration;
+- existing-shell rebuild uses DESIGN_FIRST only after Human approval.
 
 ## Milestone dependency chain
 
 ```text
 F immediate rebaseline + recovery foundations
-  -> G UI architecture foundation
-  -> H Penpot binding + agent-browser PROBE
-  -> I Human-approved design -> source -> SHELL_READY
+  -> G UI execution-mode architecture
+  -> H agent-browser shared runtime
+
+G selects BROWSER_FIRST
+  -> I browser-first source flow
+
+G selects DESIGN_FIRST
+  -> H optional Penpot integration
+  -> I design-first flow
 ```
 
-No later milestone may infer readiness from numbering alone; its predecessor gate must be satisfied explicitly.
+No later milestone may infer readiness from numbering alone; the selected mode and its predecessor gates must be satisfied explicitly.
