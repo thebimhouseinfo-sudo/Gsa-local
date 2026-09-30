@@ -433,20 +433,18 @@ evidence needs / unknown runtime facts
 Planner
    ↓
 Reviewer
-   ├─ REVISE → Planner
-   │             ↓
-   │          Reviewer
+   ├─ CHANGES_REQUIRED → Planner
+   │                     ↓
+   │                  Reviewer
    │
    └─ PASS
         ↓
-        CR
+   PLAN_APPROVED eligibility
 ```
 
-Reviewer là vòng review gần.
+Reviewer is the normal automatic planning quality gate.
 
-CR chỉ chạy sau Reviewer PASS.
-
----
+CR is not part of this automatic loop. Human may invoke CR independently after a meaningful planning checkpoint.
 
 ## 13. Planner review loop + Human-invoked CR backstop
 
@@ -485,7 +483,7 @@ Chỉ khi:
 ```text
 Planner artifact valid
 Reviewer PASS on current revision
-Local CR PASS on current revision
+no unresolved explicit Human Gate
 ```
 
 runtime tạo:
@@ -505,8 +503,8 @@ old execution graph
 → STALE / SUPERSEDED
 
 new plan revision
-→ phải review lại
-→ CR lại
+→ phải Reviewer review lại
+→ Human may invoke CR independently if desired
 → Job Builder đăng ký graph mới
 ```
 
@@ -848,9 +846,9 @@ Reviewer pass
 Build started
 Test started
 Test pass/fail
-Local CR started
-Local CR revise
-Local CR pass
+Human-invoked CR started (when applicable)
+Human-invoked CR finding/closed (when applicable)
+Human-invoked CR evidence persisted (when applicable)
 Job Pack DONE
 Milestone COMPLETE
 next Milestone ACTIVE
@@ -1398,7 +1396,7 @@ Không cho `Fix → CR` mà bỏ qua Reviewer/verification.
 
 ## 41. Job Pack completion
 
-CR PASS chưa trực tiếp sửa Markdown.
+Human-invoked CR evidence does not directly mutate Job Pack state.
 
 Runtime thực hiện:
 
@@ -1413,7 +1411,7 @@ TODO complete?
 Checklist complete?
 Reviewer pass?
 Required verification satisfied?
-CR pass?
+If an explicit Human CR gate exists for this work, is that Human-owned gate satisfied?
 ```
 
 Sau đó:
@@ -1706,11 +1704,11 @@ Ví dụ:
 
 ```text
 Planner ↔ Reviewer       max N
-Plan CR fixes            max N
+Human-invoked Plan CR repair cycle (when invoked)  max N
 
 Coder ↔ Reviewer         max N
 Test fix loops           max N
-Code CR fixes            max N
+Human-invoked Code CR repair cycle (when invoked) max N
 ```
 
 Nếu không hội tụ:
@@ -2041,7 +2039,7 @@ Tester must distinguish `PRODUCT_FAILURE`, `TEST_FAILURE`, `ENVIRONMENT_FAILURE`
 
 Verdicts are `PASS`, `FAIL`, `BLOCKED`, and `NEEDS_HUMAN`. `UNVERIFIED != PASS`.
 
-Implementation must keep this phase separate from Phase 11 Local CR / Job Pack completion.
+Implementation must keep Tester checkpoint logic separate from Phase 11 Job Pack completion and from any optional Human-invoked CR backstop.
 
 Crash/restart contract:
 
@@ -2063,7 +2061,7 @@ Tester SPEC_GAP
   -> Planner/Human
   -> new PlanArtifact revision
   -> Reviewer
-  -> Local CR
+  -> Human may invoke CR independently if required
   -> Job Builder
   -> superseding ExecutionGraph
 ```
@@ -2192,10 +2190,10 @@ GSA tự:
 ```text
 Planner
 ↔ Reviewer
-↓
-Local CR
-↓
+↓ PASS
 PLAN_APPROVED(revision/hash)
+
+Human may invoke CR independently at a meaningful checkpoint
 ```
 
 Sau đó:
@@ -2236,9 +2234,9 @@ continue coding
 ↓
 Final verification
 ↓
-Local CR
-↓
-runtime validates all gates
+runtime validates all declared gates
+
+Human may invoke CR independently at a meaningful checkpoint
 ↓
 JP DONE
 ```
@@ -2320,7 +2318,7 @@ REVIEWER
 = close-loop quality review
 
 LOCAL CR
-= auto independent critical gate, fresh/stateless, read-only
+= Human-invoked independent critical backstop, fresh/stateless, read-only
 
 JOB BUILDER
 = TODO + Checklist + Job Pack + Milestone + Register against approved plan revision/hash
@@ -2363,8 +2361,6 @@ PLAN(revision/hash)
  ↓
 REVIEW
  ↓
-LOCAL CR
- ↓
 PLAN_APPROVED
  ↓
 JOB BUILD
@@ -2384,8 +2380,6 @@ CODE
 REVIEW
  ↓
 BUILD / TEST WHEN POSSIBLE
- ↓
-LOCAL CR
  ↓
 DONE
  ↓
