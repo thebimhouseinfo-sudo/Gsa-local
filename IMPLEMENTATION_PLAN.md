@@ -168,24 +168,55 @@ Vì vậy Local Planner Contract phải bỏ phần Job/Task registration khỏi
 
 ### 4.3 Critic Reviewer / Local CR governance
 
-GSA Local uses the same CR governance invariant:
+GSA Local CR is a separate model/contract and therefore an automatic independent quality boundary, unlike the older GPT-based workflow where Human invocation was needed to obtain an independent reviewer.
+
+Core contract:
 
 ```text
-Human-invoked only
-stateless/fresh by contract
+automatic at mature Task / declared checkpoint / plan-finalization boundaries
+fresh/stateless by contract
 durable evidence only
 read-only
 independent verdict first
-exact target binding
+exact revision / target / change_set binding
 ```
 
-CR is an independent backstop, not an automatic lifecycle gate.
+CR is **not** Coder self-review and is **not** inserted after every edit.
 
-Normal Planner/Coder workflows use Reviewer automatically where required. CR runs only after an explicit Human invocation.
+Normal code work remains:
 
-A plan may expose or recommend a CR checkpoint, but runtime must not dispatch CR autonomously and must not reinterpret Reviewer PASS as authorization to call CR.
+```text
+Coder
+ -> lightweight self-check
+ -> Reviewer / Internal Fix loop
+ -> required Verification/Tester checkpoint when declared
+ -> automatic Local CR at the mature boundary
+```
 
-If Human invokes CR and CR returns findings, the owning workflow routes those findings through Planner/Internal Fix/Reviewer as appropriate. A second CR pass occurs only if Human invokes CR again.
+If CR finds a defect:
+
+```text
+CR finding
+ -> owner repair / Internal Fix
+ -> Coder self-check
+ -> Reviewer
+ -> affected Verification/Tester checkpoint when applicable
+ -> CR again
+```
+
+No `Fix -> CR` shortcut is allowed.
+
+Planning uses the same independence principle:
+
+```text
+Planner <-> Reviewer
+        ↓ PASS
+automatic Local CR on exact plan revision/hash
+        ↓ PASS
+PLAN_APPROVED
+```
+
+Human remains the authority for material product/architecture decisions and explicit Human Gates, but Human action is not required merely to dispatch Local CR.
 
 ### 4.4 Internal Fix Harness
 
@@ -439,42 +470,23 @@ Reviewer
    │
    └─ PASS
         ↓
-   PLAN_APPROVED eligibility
+automatic Local CR
+   ├─ REVISE → Planner/Internal Fix → Reviewer → CR
+   └─ PASS
+        ↓
+PLAN_APPROVED eligibility
 ```
 
-Reviewer is the normal automatic planning quality gate.
+Reviewer is the normal close-loop planning quality gate. Local CR is the automatic independent second review at plan-finalization boundary.
 
-CR is not part of this automatic loop. Human may invoke CR independently after a meaningful planning checkpoint.
+## 13. Planner review loop + automatic Local CR
 
-## 13. Planner review loop + Human-invoked CR backstop
-
-Normal planning loop:
-
-```text
-Planner
- ↕
-Reviewer
- ↓ PASS
-PLAN_APPROVED
-```
-
-Optional independent backstop:
-
-```text
-Human invokes CR
-  ↓
-CR reads exact plan revision/hash independently
-  ├─ no actionable finding -> durable CR evidence
-  └─ finding
-       ↓
-     Planner/Internal Fix
-       ↓
-     Reviewer
-```
-
-CR is never auto-triggered, stays read-only, binds to the exact plan revision/hash, and does not inherit Planner/Reviewer reasoning history.
-
-If Human wants another CR pass after repair, Human invokes it again.
+Local CR:
+- reads the exact plan revision/hash independently;
+- uses fresh/stateless context reconstructed from durable plan/source evidence;
+- cannot inherit Reviewer reasoning as authority;
+- on finding, routes back through Planner/Internal Fix and Reviewer before CR runs again;
+- must PASS the current exact revision/hash before PLAN_APPROVED.
 
 ## 14. `PLAN_APPROVED` là revision-bound boundary
 
@@ -483,6 +495,7 @@ Chỉ khi:
 ```text
 Planner artifact valid
 Reviewer PASS on current revision
+Local CR PASS on current revision/hash
 no unresolved explicit Human Gate
 ```
 
@@ -503,8 +516,8 @@ old execution graph
 → STALE / SUPERSEDED
 
 new plan revision
-→ phải Reviewer review lại
-→ Human may invoke CR independently if desired
+→ Reviewer review lại
+→ automatic Local CR on exact revision/hash
 → Job Builder đăng ký graph mới
 ```
 
@@ -846,9 +859,9 @@ Reviewer pass
 Build started
 Test started
 Test pass/fail
-Human-invoked CR started (when applicable)
-Human-invoked CR finding/closed (when applicable)
-Human-invoked CR evidence persisted (when applicable)
+Automatic Local CR started at declared boundary
+Local CR finding/closed at declared boundary
+Local CR evidence persisted at declared boundary
 Job Pack DONE
 Milestone COMPLETE
 next Milestone ACTIVE
@@ -1367,7 +1380,7 @@ Final verification if applicable
 CR
 ```
 
-CR chỉ chạy khi Job Pack đủ trưởng thành để independent review.
+CR chỉ chạy khi Task/Job Pack/checkpoint boundary đủ trưởng thành: Coder/Reviewer loop đã ổn và required verification/Tester evidence của boundary đã sẵn sàng.
 
 ---
 
@@ -1396,7 +1409,7 @@ Không cho `Fix → CR` mà bỏ qua Reviewer/verification.
 
 ## 41. Job Pack completion
 
-Human-invoked CR evidence does not directly mutate Job Pack state.
+Local CR evidence does not directly mutate Job Pack state.
 
 Runtime thực hiện:
 
@@ -1411,7 +1424,7 @@ TODO complete?
 Checklist complete?
 Reviewer pass?
 Required verification satisfied?
-If an explicit Human CR gate exists for this work, is that Human-owned gate satisfied?
+If this terminal/checkpoint boundary requires Local CR, is exact-target CR PASS satisfied?
 ```
 
 Sau đó:
@@ -1704,11 +1717,11 @@ Ví dụ:
 
 ```text
 Planner ↔ Reviewer       max N
-Human-invoked Plan CR repair cycle (when invoked)  max N
+Automatic Plan CR repair cycle  max N
 
 Coder ↔ Reviewer         max N
 Test fix loops           max N
-Human-invoked Code CR repair cycle (when invoked) max N
+Automatic Code CR boundary repair cycle max N
 ```
 
 Nếu không hội tụ:
@@ -1829,7 +1842,7 @@ Acceptance: crash/restart không tạo thêm ACTIVE Job Pack và terminal thứ 
 
 ---
 
-## Phase 5 — Planner → Reviewer (+ Human-invoked CR backstop)
+## Phase 5 — Planner → Reviewer → automatic Local CR
 
 Core planning contract:
 
@@ -1839,7 +1852,7 @@ plan revision/hash
 Reviewer fresh planning review
 Internal Fix loop
 PLAN_APPROVED binding
-Human-invoked CR backstop
+automatic Local CR on the exact reviewed plan revision/hash
 ```
 
 Tester architecture extension:
@@ -1860,10 +1873,12 @@ Acceptance:
 ```text
 Planner ↔ Reviewer
         ↓ PASS
+automatic Local CR
+        ↓ PASS
 PLAN_APPROVED(revision/hash)
 ```
 
-A Human-invoked CR may review the exact planned/approved revision independently, but CR is not an automatic prerequisite for PLAN_APPROVED.
+Local CR automatically reviews the exact Reviewer-passed revision independently and is a required final planning quality gate before PLAN_APPROVED.
 
 Stale Reviewer/CR evidence cannot validate a newer revision.
 
@@ -2039,7 +2054,7 @@ Tester must distinguish `PRODUCT_FAILURE`, `TEST_FAILURE`, `ENVIRONMENT_FAILURE`
 
 Verdicts are `PASS`, `FAIL`, `BLOCKED`, and `NEEDS_HUMAN`. `UNVERIFIED != PASS`.
 
-Implementation must keep Tester checkpoint logic separate from Phase 11 Job Pack completion and from any optional Human-invoked CR backstop.
+Implementation must keep Tester checkpoint logic separate from CR dispatch: Tester runs only at declared checkpoints, while Local CR runs automatically only at mature Task/checkpoint/plan-finalization boundaries.
 
 Crash/restart contract:
 
@@ -2061,7 +2076,7 @@ Tester SPEC_GAP
   -> Planner/Human
   -> new PlanArtifact revision
   -> Reviewer
-  -> Human may invoke CR independently if required
+  -> automatic Local CR
   -> Job Builder
   -> superseding ExecutionGraph
 ```
@@ -2070,31 +2085,29 @@ In-scope test adaptation bên trong checkpoint hiện tại vẫn được Teste
 
 ---
 
-## Phase 11 — Job Pack Completion + Human-invoked CR backstop
+## Phase 11 — Task / Job Pack Completion + automatic Local CR
 
 Implement:
 
 ```text
-required Reviewer / Verification / Tester gates
-  ↓
-jobpack completion eligibility
+Coder implementation
+  -> lightweight self-check
+  -> Reviewer/Internal Fix loop
+  -> required Verification/Tester checkpoint evidence
+  -> automatic Local CR
+  -> terminal eligibility
 ```
 
-When Human invokes CR at a meaningful boundary:
+Rules:
+- CR is downstream from the normal Coder/Reviewer repair loop, not inside each edit cycle.
+- At Task terminal boundaries, CR runs automatically after the Task is mature.
+- At declared integration/milestone checkpoints, CR runs after the checkpoint's required verification/Tester evidence is available.
+- CR packet binds exact Task/Job Pack/revision/change_set and relevant checkpoint evidence.
+- CR finding routes owner repair -> self-check -> Reviewer -> affected verification/Tester -> CR.
+- No `Fix -> CR` shortcut.
+- CR PASS alone never marks DONE; Registry/Orchestrator checks every declared gate before terminalization.
 
-```text
-fresh CR packet
-exact Job Pack/revision binding
-independent read-only review
-CR finding
-  -> Internal Fix
-  -> Reviewer
-  -> Verification/Tester as applicable
-```
-
-CR is never auto-dispatched and never substitutes for normal completion gates. If Human wants CR to re-check repaired work, Human invokes CR again.
-
-Acceptance: Job Pack completion depends on its declared gates; CR evidence is a Human-invoked backstop unless Human explicitly establishes a CR gate for that work.
+Acceptance: a CR-gated Task/Job Pack/checkpoint cannot terminalize without exact-target CR PASS, but CR is never spammed after each local edit.
 
 ## Phase 12 — Milestone Verification + Full Resume
 
@@ -2193,7 +2206,7 @@ Planner
 ↓ PASS
 PLAN_APPROVED(revision/hash)
 
-Human may invoke CR independently at a meaningful checkpoint
+Local CR runs automatically at the declared meaningful checkpoint
 ```
 
 Sau đó:
@@ -2236,7 +2249,7 @@ Final verification
 ↓
 runtime validates all declared gates
 
-Human may invoke CR independently at a meaningful checkpoint
+Local CR runs automatically at the declared meaningful checkpoint
 ↓
 JP DONE
 ```
@@ -2318,7 +2331,7 @@ REVIEWER
 = close-loop quality review
 
 LOCAL CR
-= Human-invoked independent critical backstop, fresh/stateless, read-only
+= automatic independent critical reviewer at mature Task/checkpoint/plan-finalization boundaries; fresh/stateless, read-only, exact-target
 
 JOB BUILDER
 = TODO + Checklist + Job Pack + Milestone + Register against approved plan revision/hash
@@ -2361,6 +2374,8 @@ PLAN(revision/hash)
  ↓
 REVIEW
  ↓
+LOCAL CR
+ ↓
 PLAN_APPROVED
  ↓
 JOB BUILD
@@ -2377,9 +2392,11 @@ JOB PACK
  ↓
 CODE
  ↓
-REVIEW
+SELF-CHECK / REVIEW
  ↓
-BUILD / TEST WHEN POSSIBLE
+DECLARED TEST / VERIFY CHECKPOINTS
+ ↓
+LOCAL CR
  ↓
 DONE
  ↓
@@ -2409,7 +2426,7 @@ Required action before any additional coding:
 5. Create a replacement remaining-work Job/graph for T-ORCHESTRATION onward under the migrated contracts.
 6. Record adopted_from_runs/change_sets/evidence and required reverification in the replacement plan.
 7. Reviewer must PASS the replacement plan before coding resumes.
-8. CR remains Human-invoked only.
+8. Local CR remains automatic at mature Task/checkpoint/plan-finalization boundaries; it is not an every-edit self-review loop.
 
 Current control plane has no SUSPENDED_BY_REBASELINE state. Do not bypass this by manually editing J-177F JSON; the Human stop and reviewed replacement plan are the temporary governance bridge.
 # UI / RECOVERY ARCHITECTURE REBASELINE — FUTURE PHASES
@@ -2486,45 +2503,18 @@ Exit:
 | Bounded integration | Phase 15 AcceptedIntegrationBaseline |
 
 Coverage is complete only when each family has runtime acceptance tests or an explicit Human governance gate; prose reference alone is insufficient.
-## UI execution policy status — UNDER REVIEW / CR REQUIRED
+## UI execution policy authority
 
-> **Status: UNDER REVIEW**
->
-> This Local UI execution policy is provisional architecture. It remains marked **UNDER REVIEW** until a **Human-invoked Critic Reviewer (CR)** independently reviews this exact plan revision, adjusts the policy where needed, and explicitly clears the mark.
->
-> Normal Reviewer PASS does **not** remove this mark. Planner, Reviewer, Coder, Tester, Job Builder, or runtime may not silently convert it to accepted architecture. Only a Human-invoked CR review may authorize removing **UNDER REVIEW**.
->
-> Until CR clears it, Phases 16–20 are planning guidance for the Local UI architecture but must not be treated as an irreversible mandatory workflow contract.
-
-### Environment-aware UI execution premise
-
-Shared UI principles remain common across GSA variants:
+The Local UI architecture follows the normal planning authority chain:
 
 ```text
-Planner owns functional/UX intent
-Designer owns visual interpretation when design work is needed
-UI Coder owns implementation
-Tester verifies independently
-Human owns subjective visual acceptance
+Planner/architecture update
+ -> Reviewer
+ -> automatic Local CR on exact plan revision
+ -> accepted plan authority
 ```
 
-Execution strategy is allowed to differ by runtime capability.
-
-```text
-GSA Local
-  stronger Vercel agent-browser development/inspection loop
-  -> source-render-browser refinement can be used more directly
-
-GSA Online
-  more limited browser feedback/runtime interaction
-  -> a heavier pre-code visual-design workflow may be justified more often
-```
-
-This difference is **not workflow drift** when both variants preserve the same authority, evidence and Human-review contracts. Planner must treat available runtime/browser capability as a first-class routing input.
-
-The same product/UI request may therefore legitimately choose different execution modes in Online and Local when the observable tool capability differs.
-
-If Online browser capability improves later, its reliance on separate pre-code design tooling may decrease without changing the shared UI governance model. Local does not require a fixed design-authoring application.
+There is no special Human-only CR dispatch for UI. Human remains the authority for subjective visual acceptance and material shell-rebuild decisions.
 
 ## Phase 16 — UI Planning + Visual Authority
 
