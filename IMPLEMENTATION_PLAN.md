@@ -2676,7 +2676,8 @@ Required:
 - UI Coder/Tester session isolation test;
 - Designer-without-fixed-design-tool test;
 - restart/resume at every UI Coder state;
-- optional-provider absence test;
+- core-no-provider baseline test;
+- after provider abstraction exists, provider fallback/absence test;
 - UX_FIRST UI Update Pack pilot;
 - bounded integration validation.
 
