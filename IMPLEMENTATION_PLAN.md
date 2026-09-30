@@ -2400,3 +2400,154 @@ NEXT MILESTONE
 ```
 
 Đây là baseline kiến trúc của **GSA Local**.
+
+
+# UI / RECOVERY ARCHITECTURE REBASELINE — FUTURE PHASES
+
+Authoritative design inputs for this replan are read-only:
+- WORKFLOW_LESSONS_LEARNED.md
+- GSA_LOCAL_UI_TESTER_TARGET_ARCHITECTURE.md
+
+These phases are added to the total architecture plan. They do not expand the currently executing J-177F Tester Job.
+
+## Phase 14 — Recovery Orchestrator + WorkCursor
+
+Goal: make restart/recovery a deterministic runtime operation rather than model inference.
+
+Required:
+- authoritative WorkCursor / ResumeDescriptor;
+- START vs RESUME vs RECOVER distinction;
+- plan/hash/graph-version binding;
+- multi-repo SourceTargetSet;
+- canonical current gate evidence;
+- crash-consistent transition idempotency;
+- source mutation write-ahead identity;
+- monotonic attempt budgets;
+- durable Human EXPLICIT_START boundary;
+- lease owner nonce + fencing token;
+- durable-state schema migration rules.
+
+Exit:
+- a fresh process resolves exactly one next safe action from durable state + live source;
+- no manual Run/target/ref JSON repair is required;
+- unknown lineage fails closed.
+
+## Phase 15 — Human Rebaseline / Salvage + Bounded Integration
+
+Goal: handle intentional Human architecture changes without either blindly resuming old authority or discarding all useful work.
+
+Required:
+- HUMAN_REBASELINE_REQUIRED / REBASELINING;
+- freeze/snapshot affected work;
+- architecture epoch/rebaseline identity;
+- classify and salvage prior ChangeSets/commits/evidence;
+- dependency-impact propagation;
+- revised plan/graph based on live salvaged baseline;
+- semantic old-Run supersession;
+- AcceptedIntegrationBaseline;
+- READY_FOR_INTEGRATION vs AUTHORIZED_TO_MERGE;
+- partial multi-repo integration state.
+
+Exit:
+- previous valid work is explicitly adopted/adapted/superseded/reverted;
+- no blanket reset;
+- no old-epoch mutation;
+- integration happens at bounded reviewed/verified boundaries rather than after unbounded commit accumulation.
+
+## Phase 16 — UI Planning / Designer / Design Readiness
+
+Goal: bring Local to the newer UI architecture model.
+
+Required:
+- Designer role;
+- UX Coder/UI Coder specialization;
+- UI_FIRST / UX_FIRST;
+- UX execution contract;
+- Design Coverage;
+- DESIGN_READY;
+- TEMPORARY_UI and durable UI requirement backlog;
+- asset-contract model;
+- Human subjective visual authority.
+
+Exit:
+- Planner can produce topology for UI_FIRST and UX_FIRST without leaving material UI/product decisions to Coder.
+
+## Phase 17 — UI Coder + Penpot Local Binding
+
+Important evidence premise:
+- generic UI Coder + Penpot capability already PASSed in prior GSA capability testing;
+- do not repeat the broad capability experiment unless applicability becomes stale.
+
+Goal: bind that proven capability into the Local runtime.
+
+Required:
+- Local reachability/invocation validation;
+- stable Penpot project/file identity;
+- Local fresh-process readback/resume;
+- artifact/export paths;
+- UI DESIGN PHASE;
+- full screen + representative content coverage;
+- UI DESIGN APPROVED durable baseline;
+- Penpot ExternalOperation/replay identity where needed.
+
+Exit:
+- Local can resume an in-progress UI design and bind later source work to the exact approved Penpot baseline.
+
+## Phase 18 — Tester Browser Executor: Vercel agent-browser MCP
+
+Goal: use Vercel agent-browser MCP as the primary browser execution layer while preserving Tester as the independent reasoning agent.
+
+Required:
+- standalone Local PROBE of launch/open/wait/snapshot/interact/re-snapshot/viewport/screenshot/console/error/cleanup capabilities;
+- Tester-owned browser evidence workspace;
+- explicit screenshot/artifact paths for Human;
+- exact target/design/viewport evidence applicability;
+- browser operation/session identity;
+- PRODUCT_FAILURE / TEST_FAILURE / ENVIRONMENT_FAILURE / INTEGRATION_NOT_READY / SPEC_GAP / PLAN_GAP / NEEDS_HUMAN classification.
+
+Exit:
+- Tester can independently plan and execute browser checkpoints and provide directly inspectable evidence without mutating product source.
+
+## Phase 19 — Human UI Design Loop + SHELL_READY
+
+Goal: make design approval and runnable-shell verification distinct durable gates.
+
+Flow:
+
+    DESIGN_READY
+      -> UI DESIGN PHASE
+      -> Tester browser evidence
+      -> Human visual review
+      -> UI DESIGN APPROVED
+      -> source implementation
+      -> Reviewer
+      -> representative real-content pilot
+      -> Tester runtime verification
+      -> SHELL_READY
+
+Required:
+- resume-aware UI stages;
+- routine refinement loop without unnecessary Reviewer re-entry;
+- material feedback routes to Planner/Rebaseline;
+- Penpot design-to-code remains non-authoritative helper output;
+- SHELL_READY requires runtime evidence.
+
+Exit:
+- broad UI scale-out starts only from a verified shell baseline.
+
+## Phase 20 — UX_FIRST UI Update Packs + Pilots
+
+Goal: prevent both per-feature redesign and permanent temporary UI.
+
+Required:
+- durable UIRequirement records;
+- Planner grouping into coherent UI Update Packs;
+- Designer/UI Coder/Tester/Human loop;
+- real UI_FIRST pilot;
+- real UX_FIRST/update-pack pilot;
+- interruption/resume test at UI design/Human/source/shell stages;
+- intentional Human architecture-change salvage test;
+- bounded integration baseline validation.
+
+Exit:
+- workflow is calibrated from real Local evidence before becoming mandatory across Projects.
