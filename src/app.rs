@@ -5,8 +5,9 @@ use crate::{
     controller::{ActiveWork, MilestoneController},
     harness::{AgentId, HarnessRegistry},
     ollama::{ChatMessage, OllamaClient},
-    registry::Registry,
+    registry::{Registry, TesterCheckpointStatus},
     session::Session,
+    tester_execution::{available_tester_capabilities, TesterWorkflow},
     tools::ProjectToolRuntime,
     verification::VerificationController,
     workflow::{CodingOutcome, CodingWorkflow, PlanningOutcome, PlanningWorkflow},
@@ -193,6 +194,99 @@ impl App {
         Ok(())
     }
 
+
+    async fn run_due_tester(&mut self, requirement: &str) -> Result<bool> {
+        let capabilities =
+            available_tester_capabilities(&self.project_root, &self.tool_runtime)?;
+        let runtime = {
+            let controller =
+                MilestoneController::new(&self.registry, &self.project_root, &self.lease_owner);
+            controller.resolve_due_tester_checkpoint(&capabilities)?
+        };
+        let Some(runtime) = runtime else {
+            return Ok(false);
+        };
+
+        match runtime.status {
+            TesterCheckpointStatus::Due => {
+                let running = {
+                    let controller = MilestoneController::new(
+                        &self.registry,
+                        &self.project_root,
+                        &self.lease_owner,
+                    );
+                    controller.begin_due_tester_attempt(
+                        runtime.graph_version,
+                        &runtime.checkpoint.id,
+                    )?
+                };
+                let target = running
+                    .target
+                    .clone()
+                    .context("RUNNING Tester checkpoint is missing target binding")?;
+                let attempt_id = running
+                    .attempt_id
+                    .clone()
+                    .context("RUNNING Tester checkpoint is missing attempt id")?;
+                println!(
+                    "TESTER_CHECKPOINT_RUNNING checkpoint={} attempt={}",
+                    running.checkpoint.id, attempt_id
+                );
+                let workflow = TesterWorkflow::new(
+                    &self.ollama,
+                    &self.harnesses,
+                    &self.registry,
+                    &self.config,
+                    &self.session,
+                    &self.project_root,
+                    &self.lease_owner,
+                );
+                workflow
+                    .run(
+                        requirement,
+                        running.graph_version,
+                        &running.checkpoint,
+                        target,
+                        &attempt_id,
+                        &mut self.tool_runtime,
+                    )
+                    .await?;
+                let completed = self
+                    .registry
+                    .tester_checkpoint_state(running.graph_version, &running.checkpoint.id)?
+                    .context("Tester checkpoint state disappeared after report")?;
+                println!(
+                    "TESTER_CHECKPOINT_{} checkpoint={}",
+                    completed.status.as_str(),
+                    completed.checkpoint.id
+                );
+                if let Some(reason) = completed.reason {
+                    println!("Tester checkpoint reason: {reason}");
+                }
+                Ok(true)
+            }
+            TesterCheckpointStatus::Blocked | TesterCheckpointStatus::NeedsHuman => {
+                println!(
+                    "TESTER_CHECKPOINT_{} checkpoint={}",
+                    runtime.status.as_str(),
+                    runtime.checkpoint.id
+                );
+                if let Some(reason) = runtime.reason {
+                    println!("Tester checkpoint reason: {reason}");
+                }
+                Ok(true)
+            }
+            TesterCheckpointStatus::Running => {
+                println!(
+                    "TESTER_CHECKPOINT_RUNNING checkpoint={} attempt={:?}; progression is stopped pending crash-safe resume handling.",
+                    runtime.checkpoint.id, runtime.attempt_id
+                );
+                Ok(true)
+            }
+            TesterCheckpointStatus::Pending | TesterCheckpointStatus::Satisfied => Ok(false),
+        }
+    }
+
     async fn dispatch_user_text(&mut self, text: String) -> Result<()> {
         let agent = self.session.active_agent;
 
@@ -240,6 +334,14 @@ impl App {
         }
 
         if agent == AgentId::Coder {
+            if self.active_work.is_none() && self.run_due_tester(&text).await? {
+                self.active_work =
+                    MilestoneController::new(&self.registry, &self.project_root, &self.lease_owner)
+                        .resolve_or_activate()?;
+                if self.active_work.is_none() {
+                    return Ok(());
+                }
+            }
             if self.active_work.is_none() {
                 self.active_work =
                     MilestoneController::new(&self.registry, &self.project_root, &self.lease_owner)
@@ -295,7 +397,8 @@ impl App {
                         change_set_id,
                         verification.as_str()
                     );
-                    println!("Job Pack remains ACTIVE pending Tester/CR and later gates.");
+                    let _ = self.run_due_tester(&text).await?;
+                    println!("Job Pack remains ACTIVE pending later completion/CR gates.");
                 }
                 CodingOutcome::Paused {
                     change_set_id,
@@ -306,6 +409,13 @@ impl App {
                         active_work.jobpack_id, change_set_id, reason
                     );
                 }
+            }
+            return Ok(());
+        }
+
+        if agent == AgentId::Tester {
+            if !self.run_due_tester(&text).await? {
+                bail!("no declared Tester checkpoint is DUE");
             }
             return Ok(());
         }
