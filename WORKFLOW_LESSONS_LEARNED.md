@@ -392,7 +392,7 @@ If source changes after review, PASS does not automatically move forward.
 The system should detect:
 
 ```text
-review_target != current_output_target
+reviewed_output_source_target_set != current_output_source_target_set
     -> REVIEW_STALE
 ```
 
@@ -1676,3 +1676,208 @@ This prevents resume from crossing either:
 - a repository boundary;
 - a superseded plan/graph boundary;
 - or an exact-target review/evidence boundary.
+
+---
+
+# 41. Human-directed architecture interruption requires Rebaseline + Salvage, not restart
+
+Not every interruption is a crash or tool failure. The Human may intentionally stop active work because architecture, workflow, product contracts, ownership, repository topology, or role boundaries have changed materially.
+
+This event is a first-class `HUMAN_REBASELINE_REQUIRED` transition. It must be neither ordinary resume nor blanket restart-from-zero.
+
+## 41.1 Freeze before reinterpreting old work
+
+When the Human changes architecture during active work:
+
+1. stop new source mutation for the affected scope;
+2. freeze the current WorkCursor;
+3. snapshot the active plan revision/hash, graph version, Task/JobPack, open Runs, SourceTargetSet, ChangeSets/MutationIntents, review/verifications, and external operations;
+4. record the Human directive as a durable requirement boundary.
+
+Recommended record:
+
+```text
+HumanRebaselineDirective
+  rebaseline_id
+  project_id
+  previous_plan_revision
+  previous_plan_hash
+  previous_graph_version
+  frozen_source_target_set
+  affected_scope
+  directive_summary
+  effective_at
+  continuation_policy = REBASELINE_REQUIRED
+```
+
+No old Run in affected scope may continue normal mutation after this point.
+
+## 41.2 Architecture epoch prevents old Runs from resuming into the new contract
+
+Introduce a monotonic logical `architecture_epoch`, or equivalently bind affected work to `rebaseline_id`.
+
+```text
+epoch N
+  -> FROZEN_BY_REBASELINE
+
+epoch N+1
+  -> created only after revised plan/graph approval
+```
+
+A Run from epoch N cannot resume against epoch N+1 merely because Job/Task ids match or because its source changes still exist. Reuse requires an explicit salvage/adoption decision.
+
+## 41.3 Preserve source first; classify before revert
+
+The default action is `PRESERVE + CLASSIFY`, not `RESET / REVERT ALL`.
+
+Classify existing work at the smallest practical semantic unit: ChangeSet, commit, file group, or bounded feature slice.
+
+```text
+ADOPT_AS_IS
+ADOPT_REVIEW_REQUIRED
+ADAPT_TO_NEW_CONTRACT
+PARTIAL_SALVAGE
+SUPERSEDED_NO_LONGER_USED
+REVERT_REQUIRED
+FOREIGN_TASK
+USER_OWNED_UNRELATED
+UNKNOWN_NEEDS_HUMAN
+```
+
+- `ADOPT_AS_IS`: behavior and contract remain valid under the new architecture.
+- `ADOPT_REVIEW_REQUIRED`: likely compatible, but exact-target review/reverification is required.
+- `ADAPT_TO_NEW_CONTRACT`: implementation remains useful but interface/ownership/workflow assumptions changed.
+- `PARTIAL_SALVAGE`: only part of the old work is reusable.
+- `SUPERSEDED_NO_LONGER_USED`: code can remain temporarily but is no longer authoritative.
+- `REVERT_REQUIRED`: leaving the change conflicts with the new approved architecture.
+- `FOREIGN_TASK`: belongs to another planned task.
+- `USER_OWNED_UNRELATED`: preserve; GSA has no authority to remove it.
+- `UNKNOWN_NEEDS_HUMAN`: fail closed.
+
+A blanket revert is prohibited unless the Human explicitly requests it or the rebaseline proves the whole change set incompatible.
+
+## 41.4 Salvage decisions require dependency-impact review
+
+Compatibility is not determined only by whether old code still compiles. For each old ChangeSet or completed Task, evaluate new architecture contracts, ownership/role changes, callers/consumers, schema changes, evidence applicability, verification assumptions, downstream dependencies, and repository topology.
+
+Recommended impact result:
+
+```text
+UNCHANGED
+COMPATIBLE_WITH_REVIEW
+REQUIRES_ADAPTATION
+INVALIDATES_DOWNSTREAM
+SUPERSEDED
+CONFLICTS
+```
+
+If an upstream contract changed, downstream work depending on that contract may become stale even if its source was not directly edited. Rebaseline must propagate dependency impact rather than reviewing commits in isolation.
+
+## 41.5 New plan starts from the live salvaged baseline
+
+Planner must not plan from the pre-interruption repository snapshot. The new baseline is:
+
+```text
+frozen live SourceTargetSet
++ accepted salvage decisions
++ Human architecture directive
+```
+
+The rebaseline plan should explicitly mark prior work as reused unchanged, reused after review, adapted, superseded, reverted, or reimplemented. This prevents duplicate work and preserves already-valid implementation.
+
+## 41.6 Old Runs need semantic terminal states
+
+Affected Runs should not remain ambiguous `IN_PROGRESS`.
+
+```text
+SUSPENDED_BY_REBASELINE
+SUPERSEDED_BY_REBASELINE
+ADOPTED_INTO_REBASELINE
+REQUIRES_ADAPTATION
+```
+
+Do not mark valid-but-superseded work as ordinary FAILED. Do not mark old Runs COMPLETED under the new architecture unless explicitly revalidated/adopted. The WorkCursor moves to `REBASELINING` until the new plan/graph is approved.
+
+## 41.7 Evidence is revalidated by applicability, not discarded wholesale
+
+Prior evidence may still be useful:
+
+```text
+same target + same relevant contract
+  -> may remain CURRENT
+
+source unchanged but architecture interpretation changed
+  -> REVALIDATION_REQUIRED
+
+contract/environment/applicability dimension changed
+  -> STALE / SUPERSEDED
+
+measured runtime fact remains invariant and applicability still matches
+  -> ADOPTABLE
+```
+
+This is especially important for Tester-produced empirical evidence. The default is re-evaluate applicability, not delete all old evidence.
+
+## 41.8 Rebaseline must be reviewed before execution resumes
+
+Required flow:
+
+```text
+Human architecture directive
+  -> FREEZE affected work
+  -> SALVAGE / IMPACT analysis
+  -> Planner revised plan
+  -> Reviewer
+  -> Local CR when architecture/governance scope requires it
+  -> new approved plan revision
+  -> new execution graph
+  -> bind adopted source/evidence
+  -> resume execution
+```
+
+Coder must not continue adapting affected code while the new architecture plan is unresolved, except for explicitly authorized stabilization work.
+
+## 41.9 Prior commits map into the new graph explicitly
+
+The new graph should record provenance:
+
+```text
+Task / JobPack
+  adopted_from_change_sets[]
+  adopted_from_runs[]
+  supersedes_task_refs[]
+  required_reverification[]
+```
+
+This prevents migrated work from looking newly generated with no lineage and lets Job Builder avoid recreating already-accepted implementation work.
+
+## 41.10 Rebaseline completion criteria
+
+A Human-driven architecture interruption leaves `REBASELINING` only when:
+
+1. affected old work has been classified;
+2. unknown ownership/scope items are resolved or explicitly blocked;
+3. source baseline is captured;
+4. downstream impact is mapped;
+5. stale evidence/gates are invalidated;
+6. reusable evidence is rebound with explicit applicability;
+7. revised plan is approved;
+8. new execution graph is registered;
+9. WorkCursor is bound to the new epoch/graph;
+10. no old-epoch Run can mutate affected scope.
+
+Only then may normal resume/orchestration continue.
+
+## 41.11 Key invariant
+
+Human architecture changes must preserve useful work without preserving obsolete authority:
+
+```text
+preserve source value
++ invalidate old authority
++ classify compatibility
++ explicitly adopt what survives
++ replan what changed
+```
+
+This is the safe middle ground between blindly resuming old work and throwing away all previous implementation.
