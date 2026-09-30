@@ -257,6 +257,18 @@ fn coder_and_internal_fix_cannot_write_tester_owned_workspace() {
             .is_err());
     }
 
+    assert!(runtime
+        .execute(
+            AgentId::Coder,
+            "project_write",
+            &json!({
+                "path":".GSA/TESTER/1/CP-1/ATT-1/tests/case-bypass.txt",
+                "content":"blocked",
+                "create_only":true
+            })
+        )
+        .is_err());
+
     assert_eq!(
         std::fs::read_to_string(protected.join("owned.txt")).unwrap(),
         "tester-owned"
