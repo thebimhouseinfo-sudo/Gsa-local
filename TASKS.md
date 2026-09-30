@@ -580,15 +580,17 @@ Dependencies: N2.
 
 - [ ] Store browser sessions/snapshots/screenshots/diffs/console evidence in Tester-owned workspace.
 - [ ] Product source remains read-only.
-- [ ] Bind artifacts to checkpoint, exact target/design baseline, viewport and browser operation identity.
-- [ ] Surface direct screenshot paths to Human; no manual directory hunting.
+- [ ] Define immutable PenpotEvidenceBundle for non-browser design checkpoints: Penpot project/file/version identity, frame/screen inventory, exported artifact refs + hashes, responsive-frame metadata, provider operation id, captured_at and applicability context.
+- [ ] PenpotEvidenceBundle is produced by runtime/connector readback/export or capability-gated Tester read-only Penpot access; UI Coder prose/self-report alone is not verification evidence.
+- [ ] Bind all artifacts to checkpoint, exact target/design baseline, viewport where applicable and browser/Penpot operation identity.
+- [ ] Surface direct screenshot/export paths to Human; no manual directory hunting.
 
 ### N4 — UI checkpoint semantics
 Dependencies: N2, N3, M2.
 
 - [ ] Tester independently plans the UI checkpoint.
 - [ ] Use agent-browser only when the checkpoint has a browser-inspectable prototype or runnable target.
-- [ ] If the Penpot artifact is not browser-inspectable, use Penpot readback/export evidence plus Human review; do not fabricate browser verification.
+- [ ] If the Penpot artifact is not browser-inspectable, Tester consumes PenpotEvidenceBundle/read-only Penpot evidence plus Human review; do not fabricate browser verification.
 - [ ] Verify objective screen/state/flow/responsive/clipping/asset/runtime criteria only through capabilities actually available for that target.
 - [ ] Subjective visual judgement routes to NEEDS_HUMAN.
 - [ ] Tester evidence follows dimension-aware applicability.
