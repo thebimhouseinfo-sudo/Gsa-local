@@ -493,92 +493,102 @@ Dependencies: K0, K1, K2, K3, K3a, K3b, K3c, K4, K5, K6, K7, K8, K9.
 Gate: no lesson is considered migrated merely because it is mentioned in prose; each row must terminate in a runtime contract, test or explicit Human governance boundary.
 ## L. UI architecture rebaseline
 
-Planning source: migrated Local architecture contracts. Penpot is optional; agent-browser is the default UI feedback surface when runnable-source iteration is safe.
+Local UI execution uses runnable source + Vercel agent-browser as the primary implementation/observation loop. No external design-authoring application is required by the workflow.
 
-### L1 — role/workflow model
+### L1 — role model
 Dependencies: K10.
 
-- [ ] Add Designer plus UX Coder/UI Coder specialization contracts.
-- [ ] Preserve Planner functional intent, Designer visual intent, Coder source HOW.
-- [ ] Preserve Tester independence and Human subjective acceptance authority.
+- [ ] Keep Designer plus UX Coder/UI Coder specialization contracts.
+- [ ] Planner owns product/UX intent and material workflow decisions.
+- [ ] Designer owns unresolved visual intent/direction/specification when needed.
+- [ ] UI Coder owns implementation HOW, browser-driven refinement and UI-specific source work.
+- [ ] Tester independently verifies the runnable UI.
+- [ ] Human retains material visual acceptance and authority to discard/rebuild an existing shell.
 
-### L2 — separate product workflow from UI execution mode
+### L2 — preserve product workflow classification
 Dependencies: L1.
 
-- [ ] Keep product workflow classification: UI_FIRST / UX_FIRST.
-- [ ] Add orthogonal ui_execution_mode: BROWSER_FIRST / DESIGN_FIRST.
-- [ ] UI_FIRST/UX_FIRST answers when product/UX vs visual architecture should stabilize; BROWSER_FIRST/DESIGN_FIRST answers how UI Coder should execute visual work.
-- [ ] Never infer DESIGN_FIRST solely from GREENFIELD status or presence/absence of assets.
+- [ ] Keep UI_FIRST / UX_FIRST as the product workflow classification.
+- [ ] Do not add a separate design-tool execution mode.
+- [ ] UI_FIRST/UX_FIRST controls when UX/visual requirements stabilize; both ultimately execute UI through runnable source + agent-browser.
+- [ ] UX_FIRST may use TEMPORARY_UI and durable UIRequirement collection before a larger UI Update Pack.
 
-### L3 — UI execution-mode decision contract
+### L3 — visual authority contract
 Dependencies: L2.
 
-- [ ] Any existing product shell => BROWSER_FIRST by default, regardless of whether it is aesthetically poor or needs substantial improvement.
-- [ ] Existing shell may receive substantial layout/responsive/header/card/navigation/typography/state improvements without switching to Penpot; a broken/non-runnable app is a repair/integration condition, not automatic permission to redesign in Penpot.
-- [ ] Switching an existing shell to DESIGN_FIRST because the shell should be replaced/rebuilt requires explicit Human approval.
-- [ ] Greenfield evaluates shell complexity, visual uncertainty, cost of source rework and need for Human pre-approval.
-- [ ] Greenfield with simple/standard UI may use BROWSER_FIRST even with no existing shell.
-- [ ] DESIGN_FIRST is selected only when pre-code visual architecture materially reduces risk.
-- [ ] Resolve visual_authority_source separately from execution mode: EXISTING_APPROVED_SHELL / EXISTING_DESIGN_SYSTEM / DESIGNER_SPEC / HUMAN_DIRECTION.
-- [ ] BROWSER_FIRST does not bypass Designer: if material visual decisions remain unresolved, Designer supplies visual direction/spec without requiring Penpot before UI Coder edits source.
-- [ ] Asset presence is a signal only, never the sole routing criterion.
+- [ ] Resolve visual_authority_source before UI implementation: EXISTING_APPROVED_SHELL / EXISTING_DESIGN_SYSTEM / DESIGNER_SPEC / HUMAN_DIRECTION.
+- [ ] UI Coder must not invent unresolved material visual decisions.
+- [ ] If current shell/design system/Human direction is sufficient, UI Coder may proceed directly.
+- [ ] Otherwise Designer supplies visual direction/specification before or during the UI Coder loop.
+- [ ] Designer output is a design contract, not a dependency on any fixed design application.
+- [ ] Human subjective acceptance remains separate from objective browser verification.
 
-### L4 — design/readiness semantics by mode
+### L4 — existing shell vs shell rebuild
 Dependencies: L3.
 
-- [ ] BROWSER_FIRST does not require DESIGN_READY or UI DESIGN APPROVED before source implementation.
-- [ ] DESIGN_FIRST requires Design Coverage, DESIGN_READY and UI DESIGN APPROVED before source implementation.
-- [ ] Both modes converge on runnable-source review, Tester verification and SHELL_READY where shell-level readiness is required.
-- [ ] Material mode switch after work begins routes through Human Rebaseline/Salvage when it invalidates current authority.
+- [ ] Any existing product shell is preserved by default, even if aesthetically poor.
+- [ ] UI Coder may substantially improve layout/responsive/header/cards/navigation/typography/states directly in source.
+- [ ] A broken/non-runnable application is a repair/integration issue, not authority to discard the shell.
+- [ ] Discarding/rebuilding/replacing an existing shell requires explicit Human approval.
+- [ ] After Human approves a rebuild, the new shell is still prototyped and refined in runnable source with agent-browser; no separate design-tool workflow is introduced.
+- [ ] Greenfield also uses the same source + browser UI workflow; complexity only changes Designer/Human checkpoint depth, not the execution technology.
 
-### L5 — asset contract
+### L5 — asset and visual-resource contract
 Dependencies: L4.
 
-- [ ] Distinguish source-native UI assets, optional Penpot-native shell assets, reviewed generated-asset contracts and deep-content assets.
-- [ ] Preserve reviewed asset ID/filename/prompt/usage/ratio contracts.
-- [ ] Do not force Penpot merely because custom assets exist.
-- [ ] Do not let UI Coder replace explicit generated artwork contracts with generic primitives without approval.
+- [ ] Preserve reviewed asset ID/filename/prompt/usage/ratio contracts when assets are required.
+- [ ] UI Coder may use source-native primitives/icons when they satisfy the visual contract.
+- [ ] UI Coder must not silently replace explicit artwork/asset requirements with generic primitives.
+- [ ] Asset generation/acquisition remains capability-gated and independently attributable.
+- [ ] No specific icon/font/asset provider is mandatory in the core workflow.
 
-## M. UI Coder execution modes
+## M. UI Coder browser-driven workflow
 
-### M1 — BROWSER_FIRST as Local default
-Dependencies: L4, N2.
+### M1 — dedicated UI Coder state machine
+Dependencies: L5, N2.
 
-- [ ] UI Coder edits runnable source directly when visual architecture can safely evolve in code.
-- [ ] Development loop: source change -> run app -> agent-browser inspect/screenshot/snapshot/diff -> refine -> self-check.
-- [ ] Browser feedback may inspect layout, responsive behavior, overflow/clipping, navigation, interaction, visible states and visual regressions.
-- [ ] UI Coder browser evidence is development/self-check evidence only and cannot satisfy Tester PASS.
-- [ ] Existing-shell work remains BROWSER_FIRST unless Human explicitly approves discarding/rebuilding/replacing the shell.
+- [ ] Add UI_GROUND -> UI_IMPLEMENT -> UI_RENDER -> UI_INSPECT -> UI_REFINE loop -> UI_SELF_CHECK -> REVIEW -> UI_TEST_CHECKPOINT -> HUMAN_REVIEW? -> UI_ACCEPTED.
+- [ ] UI_REFINE may loop without Reviewer while UI Coder is still inside the same approved visual/source scope.
+- [ ] Material UX/flow/state/architecture changes leave the refine loop and route back to Planner/Human.
+- [ ] Human-approved shell rebuild remains explicit durable context throughout the Run.
 
-### M2 — DESIGN_FIRST + optional Penpot
-Dependencies: L4.
+### M2 — source + browser development loop
+Dependencies: M1.
 
-- [ ] Penpot is an optional design-authoring capability, not a mandatory UI step.
-- [ ] Use DESIGN_FIRST when shell/visual architecture should be designed or approved before source implementation.
-- [ ] Typical triggers: new/rebuilt shell, complex multi-screen composition, new design system/component language, high visual uncertainty, high rework cost, artwork/branding-heavy shell, Human pre-approval requirement.
-- [ ] For any existing shell, DESIGN_FIRST requires explicit Human approval to discard/rebuild/replace the shell; UI Coder/Planner may not self-escalate merely because the current shell looks poor.
-- [ ] Generic UI Coder + Penpot capability already PASSed; do not repeat broad capability testing by default.
-- [ ] If durable upstream evidence exists, store UPSTREAM_OBSERVED_REF; otherwise HUMAN_ACCEPTED_EXTERNAL is a planning premise only.
-- [ ] Local Penpot reachability/readback/resume/artifact handling still requires Local OBSERVED integration evidence when DESIGN_FIRST actually uses Penpot.
+- [ ] UI Coder changes runnable source, starts/uses the real app, then inspects the rendered result with agent-browser.
+- [ ] Use snapshot/screenshot/diff/interaction/viewport evidence as development feedback.
+- [ ] Check layout, responsive behavior, clipping/overflow, visible states, navigation and interaction before UI_SELF_CHECK.
+- [ ] Compile/test success alone never proves UI completion.
+- [ ] UI Coder browser evidence is development/self-check evidence only; it cannot satisfy Tester PASS.
 
-### M3 — Penpot design baseline, only when DESIGN_FIRST uses Penpot
-Dependencies: M2.
+### M3 — UI Coder workspace
+Dependencies: M1.
 
-- [ ] Persist ui_design_baseline_id + Penpot identity/version + Design Coverage + asset refs + Tester refs + Human approval.
-- [ ] Resume exact UI_DESIGN / WAITING_HUMAN_DESIGN / UI_DESIGN_APPROVED stage.
-- [ ] Source implementation binds to UI DESIGN APPROVED only for DESIGN_FIRST work that requires a design baseline.
-- [ ] Human Rebaseline invalidates obsolete design authority without deleting reusable artifacts.
+- [ ] Give UI Coder a dedicated design/workspace area separate from production source ownership, e.g. .ui-design/ or equivalent runtime workspace.
+- [ ] Workspace may contain briefs, references, screenshots, comparisons, asset manifests, prompts, tokens, notes and temporary prototypes.
+- [ ] Draft/prototype material is non-authoritative until implemented/reviewed in product source.
+- [ ] Preserve direct links/paths from browser captures and visual references into the active UI Run.
+- [ ] Resume reconstructs the UI Coder stage and relevant workspace refs without relying on chat history.
+
+### M4 — shell-build/rebuild workflow
+Dependencies: M1, L4.
+
+- [ ] For greenfield shell creation or Human-approved existing-shell rebuild, use real source as the prototype surface.
+- [ ] Designer/Human may define visual direction before implementation; UI Coder realizes it directly in source.
+- [ ] UI Coder repeatedly render/inspect/refine with agent-browser until the shell reaches UI_SELF_CHECK.
+- [ ] Human may review runnable screenshots/live result at meaningful shell checkpoints.
+- [ ] Do not create a parallel mockup authority that can drift from production source.
 
 ## N. Vercel agent-browser for UI Coder and Tester
 
-### N1 — shared executor integration
+### N1 — shared browser executor
 Dependencies: K10 and rebaselined Tester checkpoint subsystem.
 
 - [ ] Add Vercel agent-browser MCP as the primary browser observation/execution layer for Local UI work.
 - [ ] UI Coder uses it for development feedback/self-check.
 - [ ] Tester uses it independently for checkpoint verification.
 - [ ] Preserve separate sessions/operation identities and evidence authority for UI Coder vs Tester.
-- [ ] Enforce open -> snapshot -> interact -> re-snapshot -> observe -> screenshot/report discipline.
+- [ ] Enforce open -> wait -> snapshot -> interact -> re-snapshot -> observe -> screenshot/report discipline.
 - [ ] Treat stale element refs as TEST_FAILURE in Tester runs and invalid development refs in UI Coder loops.
 
 ### N2 — standalone Local agent-browser PROBE
@@ -589,57 +599,41 @@ Dependencies: N1.
 - [ ] Prove separate UI Coder and Tester sessions can target the same runnable app without sharing verification authority.
 - [ ] Missing required operation => INTEGRATION_NOT_READY; tool presence never implies FUNCTIONAL.
 
-### N3a — Tester browser evidence workspace
+### N3 — Tester browser evidence workspace
 Dependencies: N2.
 
 - [ ] Store Tester browser sessions/snapshots/screenshots/diffs/console evidence in Tester-owned workspace.
 - [ ] Product source remains read-only to Tester.
-- [ ] Bind browser artifacts to checkpoint, exact runnable target, viewport and browser operation identity.
+- [ ] Bind artifacts to checkpoint, exact runnable target, viewport and browser operation identity.
 - [ ] Surface direct screenshot/diff paths to Human; no manual directory hunting.
 
-### N3b — PenpotEvidenceBundle for DESIGN_FIRST
-Dependencies: M2 only when a non-browser Penpot design checkpoint is activated.
-
-- [ ] Define immutable PenpotEvidenceBundle: Penpot project/file/version identity, frame/screen inventory, exported artifact refs + hashes, responsive-frame metadata, provider operation id, captured_at and applicability context.
-- [ ] PenpotEvidenceBundle is produced by runtime/connector readback/export or capability-gated Tester read-only Penpot access.
-- [ ] UI Coder prose/self-report alone is not verification evidence.
-- [ ] PenpotEvidenceBundle does not depend on agent-browser when the Penpot target itself is not browser-inspectable.
-- [ ] Surface direct export/artifact paths to Human.
-
 ### N4 — Tester UI checkpoint semantics
-Conditional dependencies:
-- runnable/browser checkpoint: N2 + N3a;
-- DESIGN_FIRST non-browser Penpot checkpoint: M2 + N3b;
-- DESIGN_FIRST runtime/source checkpoint: N2 + N3a, plus M3 when an approved design baseline exists.
+Dependencies: N2, N3.
 
-- [ ] Tester independently plans the checkpoint regardless of UI execution mode.
-- [ ] For BROWSER_FIRST, Tester verifies the exact runnable source target with an independent agent-browser session.
-- [ ] For DESIGN_FIRST source/runtime checkpoints, Tester also verifies the runnable source independently with agent-browser.
-- [ ] For DESIGN_FIRST pre-source Penpot checkpoints, use agent-browser only if the prototype is browser-inspectable; otherwise consume PenpotEvidenceBundle/read-only Penpot evidence plus Human review.
-- [ ] Pre-source Penpot design review must not be blocked merely because agent-browser integration is not yet ready.
-- [ ] Verify only through capabilities actually available for that target; never fabricate browser PASS.
+- [ ] Tester independently plans the checkpoint.
+- [ ] Verify the exact runnable source target with an independent agent-browser session.
+- [ ] Verify objective screen/state/flow/responsive/clipping/asset/runtime criteria only through capabilities actually available for that target.
+- [ ] UI Coder self-check artifacts may be context but cannot satisfy Tester verification.
 - [ ] Subjective visual judgement routes to NEEDS_HUMAN.
 - [ ] Tester evidence follows dimension-aware applicability.
 
-## O. Mode-specific UI flow to SHELL_READY
+## O. UI review / Human loop / SHELL_READY
 
-### O1 — BROWSER_FIRST flow
-Dependencies: M1, N4.
+### O1 — normal UI change flow
+Dependencies: M2, N4.
 
-- [ ] Planner resolves visual authority first: existing approved shell/design system/Human direction may be sufficient; otherwise Designer supplies visual direction/spec without requiring Penpot.
-- [ ] Then UI Coder source -> agent-browser development loop -> Coder self-check -> Reviewer -> Tester independent agent-browser -> Human evidence review when required.
-- [ ] No Penpot/UI DESIGN APPROVED gate is required unless Human changes the mode to DESIGN_FIRST.
-- [ ] Human visual feedback that remains within existing shell authority returns to UI Coder without unnecessary architecture replanning.
-- [ ] Material decision to discard/rebuild shell triggers Human Rebaseline and switches to DESIGN_FIRST only after approval.
+- [ ] Planner/Designer visual authority -> UI Coder source/browser loop -> UI_SELF_CHECK -> Reviewer -> Tester independent agent-browser.
+- [ ] Human evidence review is added only where product plan or subjective visual acceptance requires it.
+- [ ] Routine visual refinements within approved authority return to UI Coder without unnecessary architecture replanning.
+- [ ] Material UX/flow/state/shell-architecture changes route to Planner/Human.
 
-### O2 — DESIGN_FIRST flow
-Dependencies: M3, N4.
+### O2 — shell creation/rebuild flow
+Dependencies: M4, N4.
 
-- [ ] Planner UX/UI contract -> Designer -> UI Coder/Penpot -> Tester objective design evidence -> Human design review -> UI DESIGN APPROVED -> source implementation.
-- [ ] Penpot design-to-code is an accelerator, not canonical source.
-- [ ] Coder self-check + Reviewer remain required after source implementation.
-- [ ] Routine visual refinements stay inside Human/UI Coder/Tester design loop.
-- [ ] Material flow/state/topology/asset/architecture changes trigger Planner/Rebaseline.
+- [ ] Greenfield shell creation or Human-approved shell rebuild uses the same source/browser loop.
+- [ ] Use representative content and responsive states while the shell is still cheap to change.
+- [ ] Human reviews meaningful runnable shell checkpoints rather than a separate design-tool artifact.
+- [ ] Reviewer and Tester verify the implemented source before shell acceptance.
 
 ### O3 — representative shell pilot
 Dependencies: O1 or O2.
@@ -648,12 +642,14 @@ Dependencies: O1 or O2.
 - [ ] Include long/short/media/error/loading/responsive stress cases as applicable.
 - [ ] Tester verifies runnable shell with independent agent-browser.
 
-### O4 — SHELL_READY
-Dependencies: O3.
+### O4 — UI_ACCEPTED / SHELL_READY
+Dependencies: O3 when shell-level readiness is required; otherwise O1.
 
-- [ ] SHELL_READY requires runtime evidence, not Penpot/design approval alone.
+- [ ] Ordinary bounded UI changes may terminate at UI_ACCEPTED after declared review/test/Human gates.
+- [ ] SHELL_READY is reserved for greenfield/rebuilt/material shell baselines where broad scale-out depends on shell stability.
+- [ ] SHELL_READY requires runtime evidence.
 - [ ] SHELL_READY becomes an AcceptedIntegrationBaseline candidate.
-- [ ] Broad screen/content scale-out proceeds only from a sufficiently verified shell when the plan declares SHELL_READY as required.
+- [ ] No separate design-tool approval can substitute for runnable-source evidence.
 
 ## P. UX_FIRST UI Update Packs
 
@@ -662,26 +658,46 @@ Dependencies: L2.
 
 - [ ] Record UIRequirement with source Job/Task, affected surface, reason, evidence and provisional UI ref.
 - [ ] Temporary UI is explicitly provisional.
-- [ ] Existing shell changes remain BROWSER_FIRST unless the Update Pack includes an explicitly approved shell rebuild.
+- [ ] Existing shell remains the baseline unless Human explicitly approves a shell rebuild.
 
-### P2 — UI Update Pack routing
-Dependencies: P1, L3, N4.
+### P2 — UI Update Pack execution
+Dependencies: P1, L3, M2, N4.
 
 - [ ] Planner groups coherent requirements by affected shell/surface.
-- [ ] Planner selects BROWSER_FIRST or DESIGN_FIRST for the pack using the same execution-mode contract.
-- [ ] BROWSER_FIRST pack -> UI Coder source + agent-browser -> Reviewer -> Tester.
-- [ ] DESIGN_FIRST pack -> Designer/UI Coder/Penpot -> Human approval -> source -> Reviewer -> Tester.
+- [ ] Designer resolves material visual direction when current authority is insufficient.
+- [ ] UI Coder implements the pack directly in source using the browser-driven loop.
+- [ ] Reviewer + Tester verify the implemented target.
 - [ ] Avoid redesign after every UX change and avoid permanent temporary UI.
 
-## Q. UI architecture pilot
-Dependencies: K10, L5, M1, N4, O4, P2. M2/M3 are conditional only when a DESIGN_FIRST/Penpot pilot is actually activated.
+## Q. UI capability-provider expansion
 
-- [ ] Run one brownfield BROWSER_FIRST pilot against an existing shell.
-- [ ] Run one simple greenfield BROWSER_FIRST pilot where Penpot is intentionally not required.
-- [ ] Run a DESIGN_FIRST/Penpot pilot only when a genuine approved shell-build/rebuild/high-design-risk case exists; otherwise use a controlled integration fixture for Penpot-path validation and do not manufacture a product redesign.
-- [ ] Verify UI Coder agent-browser development session and Tester independent session remain separate.
-- [ ] Verify mode switch BROWSER_FIRST -> DESIGN_FIRST requires Human approval when rebuilding an existing shell.
-- [ ] Verify resume at source/browser, UI_DESIGN/WAITING_HUMAN when applicable, UI_IMPLEMENTATION and SHELL_TEST stages.
-- [ ] Verify BROWSER_FIRST -> DESIGN_FIRST Rebaseline/Salvage only on a genuine Human-approved rebuild case or a controlled fixture/sandbox; never manufacture a product rebuild solely to exercise the workflow.
+Core UI workflow must remain functional with source + agent-browser alone. Additional providers/skills are optional extensions.
+
+### Q1 — provider abstraction
+Dependencies: M2.
+
+- [ ] Add capability slots/selection rules rather than hard-coding one UI resource provider.
+- [ ] Candidate future capabilities may include icon libraries, font libraries, component libraries, open/stock asset sources, image generation, SVG/vector tooling and asset optimization.
+- [ ] Provider absence must not block core UI work unless the approved UI contract explicitly requires that resource type.
+- [ ] Record provider/version/source identity for generated or imported durable assets when relevant.
+
+### Q2 — UI skills
+Dependencies: M2.
+
+- [ ] Add specialized skills progressively: responsive/layout, accessibility, design-token handling, framework-specific UI, visual-regression interpretation and asset integration.
+- [ ] Skills extend UI Coder reasoning/implementation but do not change Human/Reviewer/Tester authority.
+- [ ] Capability/skill availability is discovered, not assumed.
+
+## R. UI architecture pilot
+Dependencies: K10, L5, M4, N4, O4, P2.
+
+- [ ] Run one brownfield UI Coder browser-loop pilot against an existing shell.
+- [ ] Run one simple greenfield shell pilot entirely in runnable source.
+- [ ] Exercise a shell rebuild transition only on a genuine Human-approved rebuild case or controlled fixture/sandbox; never manufacture a product rebuild solely for workflow coverage.
+- [ ] Verify UI Coder development session and Tester independent session remain separate.
+- [ ] Verify Designer can supply visual direction without any fixed design application.
+- [ ] Verify UI workspace resume at UI_GROUND / UI_IMPLEMENT / UI_RENDER / UI_INSPECT / UI_REFINE / UI_SELF_CHECK / UI_TEST_CHECKPOINT.
+- [ ] Verify Rebaseline/Salvage on a genuine or controlled shell-rebuild transition.
+- [ ] Verify optional capability-provider absence does not break core source + browser UI workflow.
 - [ ] Verify bounded integration baselines prevent unbounded commit accumulation.
 - [ ] Calibrate before making the workflow mandatory across all Projects.
