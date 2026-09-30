@@ -74,19 +74,23 @@ Recommended durable structure:
 ResumeDescriptor
   project_id
   job_id
+  plan_revision
+  plan_hash
+  execution_graph_version
   task_id / jobpack_id
   workflow_kind
   workflow_stage
   active_run_id
   parent_run_id
-  source_base_revision
-  current_source_revision
+  input_source_target_set
+  output_source_target_set?
   current_change_set_id
   latest_review_target
   latest_review_verdict
   latest_verification_refs
   pending_gate
   next_role
+  continuation_policy
   replay_policy
   updated_at
 ```
@@ -275,28 +279,27 @@ Recommended contract:
 
 ```text
 Run
-  input_target_ref
-  input_target_revision
-
-  output_target_ref?
-  output_target_revision?
+  input_source_target_set
+  output_source_target_set?
 ```
+
+Each SourceTargetSet contains one exact repository target in SINGLE-repo work and the exact required repository/revision combination in MULTI-repo work.
 
 Reviewer Runs usually have:
 
 ```text
-input target = reviewed exact source revision
-output target = same revision
+input SourceTargetSet = reviewed exact target set
+output SourceTargetSet = same target set
 ```
 
 Coder Runs usually have:
 
 ```text
-input revision = source before changes
-output revision = source after changes
+input SourceTargetSet = source before changes
+output SourceTargetSet = exact source set after changes
 ```
 
-GOAL_RECHECK and deterministic Verification should bind to the **output revision**.
+GOAL_RECHECK and deterministic Verification should bind to the **output SourceTargetSet**.
 
 This should be enforced structurally instead of inferred by callers.
 
@@ -1059,13 +1062,16 @@ Recommended structure:
 WorkCursor
   project_id
   job_id
-  active_task_ref?
+  plan_revision
+  plan_hash
+  execution_graph_version
+  active_task_ref? / jobpack_id?
   active_run_id?
   active_run_role?
   workflow_stage
   pending_gate
-  current_input_target
-  current_output_target?
+  input_source_target_set
+  output_source_target_set?
   latest_handoff_ref?
   continuation_policy
   cursor_version
