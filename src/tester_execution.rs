@@ -521,8 +521,7 @@ impl<'a> TesterWorkflow<'a> {
     ) -> Result<TesterAttemptEvidence> {
         let plan = self
             .registry
-            .current_plan_revision()?
-            .context("Tester requires a current approved plan")?;
+            .plan_for_current_execution_graph(graph_version)?;
         let evidence_needs = plan
             .artifact
             .evidence_needs
