@@ -2061,6 +2061,26 @@ impl Registry {
             .map_err(Into::into)
     }
 
+    pub fn latest_verification_run_id(
+        &self,
+        graph_version: i64,
+        jobpack_id: &str,
+        change_set_id: &str,
+    ) -> Result<Option<i64>> {
+        self.conn
+            .query_row(
+                r#"
+                SELECT id FROM verification_runs
+                WHERE graph_version=?1 AND jobpack_id=?2 AND change_set_id=?3
+                ORDER BY id DESC LIMIT 1
+                "#,
+                params![graph_version, jobpack_id, change_set_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
     pub fn checklist_checked(
         &self,
         graph_version: i64,
