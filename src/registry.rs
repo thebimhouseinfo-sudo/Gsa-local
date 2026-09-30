@@ -2619,6 +2619,138 @@ impl Registry {
     }
 }
 
+fn validate_tester_target_tx(
+    tx: &Transaction<'_>,
+    attempt: &TesterAttemptEvidence,
+) -> Result<()> {
+    for target in &attempt.target.prerequisites {
+        match target.state {
+            PrerequisiteState::ReviewPass => {
+                let latest: Option<(String, String)> = tx
+                    .query_row(
+                        r#"
+                        SELECT change_set_id, verdict
+                        FROM code_reviews
+                        WHERE graph_version=?1 AND jobpack_id=?2
+                        ORDER BY id DESC LIMIT 1
+                        "#,
+                        params![attempt.graph_version, target.jobpack_id],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .optional()?;
+                let Some((change_set_id, verdict)) = latest else {
+                    bail!(
+                        "Tester target prerequisite {} has no code review",
+                        target.jobpack_id
+                    );
+                };
+                if verdict != "PASS"
+                    || target.change_set_id.as_deref() != Some(change_set_id.as_str())
+                {
+                    bail!(
+                        "Tester target prerequisite {} is stale: latest review={} change_set={}",
+                        target.jobpack_id,
+                        verdict,
+                        change_set_id
+                    );
+                }
+            }
+            PrerequisiteState::Done => {
+                let status: Option<String> = tx
+                    .query_row(
+                        r#"
+                        SELECT status
+                        FROM execution_jobpacks
+                        WHERE graph_version=?1 AND jobpack_id=?2
+                        "#,
+                        params![attempt.graph_version, target.jobpack_id],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                if status.as_deref() != Some("DONE") {
+                    bail!(
+                        "Tester DONE prerequisite {} is not DONE; found {:?}",
+                        target.jobpack_id,
+                        status
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_tester_evidence_refs(
+    tx: &Transaction<'_>,
+    project_root: &Path,
+    attempt: &TesterAttemptEvidence,
+) -> Result<()> {
+    let mut workspace: Option<TesterWorkspaceRuntime> = None;
+    let refs = attempt
+        .experiment
+        .iter()
+        .flat_map(|experiment| experiment.samples.iter())
+        .flat_map(|sample| sample.observations.iter())
+        .flat_map(|observation| observation.evidence_refs.iter())
+        .chain(
+            attempt
+                .outputs
+                .iter()
+                .flat_map(|output| output.evidence_refs.iter()),
+        );
+
+    for evidence_ref in refs {
+        match evidence_ref {
+            TesterEvidenceRef::WorkspaceArtifact { artifact } => {
+                if artifact.graph_version != attempt.graph_version
+                    || artifact.checkpoint_id != attempt.checkpoint_id
+                    || artifact.attempt_id != attempt.attempt_id
+                {
+                    bail!("workspace artifact evidence ref is bound to another Tester attempt");
+                }
+                if workspace.is_none() {
+                    workspace = Some(TesterWorkspaceRuntime::new(
+                        project_root,
+                        attempt.graph_version,
+                        &attempt.checkpoint_id,
+                        &attempt.attempt_id,
+                    )?);
+                }
+                let observed = workspace
+                    .as_ref()
+                    .expect("workspace initialized")
+                    .artifact_ref(&artifact.path)?;
+                if &observed != artifact {
+                    bail!(
+                        "workspace artifact evidence ref is stale for {}",
+                        artifact.path
+                    );
+                }
+            }
+            TesterEvidenceRef::VerificationRun { run_id } => {
+                let graph_version: Option<i64> = tx
+                    .query_row(
+                        "SELECT graph_version FROM verification_runs WHERE id=?1",
+                        params![run_id],
+                        |row| row.get(0),
+                    )
+                    .optional()?;
+                if graph_version != Some(attempt.graph_version) {
+                    bail!(
+                        "verification evidence ref {} is missing or bound to another graph",
+                        run_id
+                    );
+                }
+            }
+            TesterEvidenceRef::AdapterObservation { .. } => {
+                // T-EXECUTION owns adapter execution records. The ref shape is validated
+                // here; runtime existence/fencing is added when that subsystem exists.
+            }
+        }
+    }
+    Ok(())
+}
+
 fn retire_active_jobpacks_for_current_graphs_tx(tx: &Transaction<'_>) -> Result<()> {
     tx.execute(
         r#"
