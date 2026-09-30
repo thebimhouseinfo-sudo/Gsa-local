@@ -191,7 +191,7 @@ Gate:
 
 Penpot premise:
 - generic UI Coder + Penpot capability is already PASSed;
-- bind/import its durable evidence reference when available, or record the Human-provided accepted capability fact and applicability boundary;
+- use UPSTREAM_OBSERVED_REF when durable upstream evidence exists; otherwise record HUMAN_ACCEPTED_EXTERNAL as a planning premise only; neither substitutes for Local integration OBSERVED evidence;
 - validate only Local-specific invocation/readback/resume/artifact integration unless applicability becomes stale.
 
 Deliverables:
