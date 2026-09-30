@@ -368,6 +368,14 @@ impl<'a> TesterExecutionRuntime<'a> {
             .any(|observation| observation.status == TesterExecutionStatus::Completed)
     }
 
+    fn has_unresolved_execution(&self) -> Result<bool> {
+        self.registry.has_unresolved_tester_execution_steps(
+            self.graph_version,
+            &self.checkpoint_id,
+            &self.attempt_id,
+        )
+    }
+
     fn run_workspace_script(
         &self,
         request: &TesterExecutionStepRequest,
@@ -626,6 +634,7 @@ impl<'a> TesterWorkflow<'a> {
                     validate_report_execution_coverage(
                         &report,
                         execution.has_completed_execution(),
+                        execution.has_unresolved_execution()?,
                     )?;
                     let attempt = TesterAttemptEvidence {
                         graph_version,
@@ -649,7 +658,7 @@ impl<'a> TesterWorkflow<'a> {
 
                 match report_result {
                     Ok(attempt) => return Ok(attempt),
-                    Err(error) if round + 1 < MAX_TESTER_TOOL_ROUNDS => {
+                    Err(error) if should_retry_invalid_report(round) => {
                         messages.push(ChatMessage::tool(
                             "submit_tester_report",
                             json!({
@@ -725,17 +734,25 @@ impl<'a> TesterWorkflow<'a> {
 fn validate_report_execution_coverage(
     report: &TesterReportSubmission,
     has_completed_execution: bool,
+    has_unresolved_execution: bool,
 ) -> Result<()> {
     let claims_success = report
         .mode_results
         .iter()
         .any(TesterModeResult::satisfies_output_requirement);
+    if claims_success && has_unresolved_execution {
+        bail!("Tester cannot report PASS/COMPLETE while execution steps remain PREPARED");
+    }
     if claims_success && !has_completed_execution {
         bail!(
             "Tester cannot report PASS/COMPLETE without at least one completed execution step"
         );
     }
     Ok(())
+}
+
+fn should_retry_invalid_report(round: usize) -> bool {
+    round + 1 < MAX_TESTER_TOOL_ROUNDS
 }
 
 fn tester_execute_tool() -> ToolDefinition {
@@ -892,8 +909,9 @@ mod tests {
             outputs: vec![],
             limitations: vec![],
         };
-        assert!(validate_report_execution_coverage(&successful, false).is_err());
-        assert!(validate_report_execution_coverage(&successful, true).is_ok());
+        assert!(validate_report_execution_coverage(&successful, false, false).is_err());
+        assert!(validate_report_execution_coverage(&successful, true, false).is_ok());
+        assert!(validate_report_execution_coverage(&successful, true, true).is_err());
 
         let blocked = TesterReportSubmission {
             mode_results: vec![TesterModeResult {
@@ -906,7 +924,14 @@ mod tests {
             outputs: vec![],
             limitations: vec![],
         };
-        assert!(validate_report_execution_coverage(&blocked, false).is_ok());
+        assert!(validate_report_execution_coverage(&blocked, false, true).is_ok());
+    }
+
+    #[test]
+    fn invalid_report_correction_is_bounded() {
+        assert!(should_retry_invalid_report(0));
+        assert!(should_retry_invalid_report(MAX_TESTER_TOOL_ROUNDS - 2));
+        assert!(!should_retry_invalid_report(MAX_TESTER_TOOL_ROUNDS - 1));
     }
 
     #[test]
