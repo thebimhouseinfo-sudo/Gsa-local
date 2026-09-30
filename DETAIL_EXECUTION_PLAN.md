@@ -193,7 +193,7 @@ Environment premise under review:
 - this difference is valid only if shared role authority, Tester independence, evidence semantics and Human visual acceptance remain common;
 - Planner must route from observed runtime capability plus design risk, not from deployment label alone.
 
-## Milestone G — UI visual-authority + dedicated UI Coder workflow
+## Milestone G — UI visual-authority contract
 
 Deliverables:
 - Designer / UX Coder / UI Coder role contracts;
@@ -201,13 +201,13 @@ Deliverables:
 - visual_authority_source contract;
 - existing-shell preservation by default;
 - explicit Human approval plus Rebaseline/Salvage before shell discard/rebuild/replacement;
-- greenfield/rebuild source-first execution;
-- UI Coder state machine: UI_GROUND -> UI_IMPLEMENT -> UI_RENDER -> UI_INSPECT -> UI_REFINE -> UI_SELF_CHECK;
-- dedicated UI workspace for references/screenshots/comparisons/assets/prompts/tokens/notes;
+- greenfield/rebuild source-first intent;
+- UI Coder state-machine contract and dedicated UI workspace contract;
 - UI workspace is non-runtime; promoted production assets use canonical product paths with provenance/approval.
 
 Gate:
-- UI Coder can implement/refine real UI without inventing unresolved visual decisions and without a parallel mockup authority.
+- UI work can be planned without unresolved material visual decisions or a parallel mockup authority.
+- This milestone defines the UI Coder workflow contract but does not claim executable browser-loop readiness.
 
 ## Milestone H — agent-browser shared runtime
 
@@ -221,29 +221,22 @@ Deliverables:
 - session/evidence authority isolation.
 
 Gate:
-- UI Coder can observe/refine the real app and Tester can independently verify it without sharing PASS authority.
+- the required browser operations are FUNCTIONAL/GOAL_MET for UI Coder and Tester use.
 
-## Milestone I — UI acceptance / shell readiness
+## Milestone I — executable UI Coder workflow + UI acceptance / shell readiness
 
-Normal UI:
-- source/browser loop;
-- UI_SELF_CHECK;
-- Reviewer;
-- Tester;
-- Human when subjective acceptance is required;
-- UI_ACCEPTED.
-
-Greenfield or Human-approved shell rebuild:
-- Designer/Human visual direction where needed;
-- real-source shell build;
-- agent-browser refine loop;
-- representative-content/responsive pilot;
-- Reviewer;
-- Tester;
-- Human checkpoint where required;
-- SHELL_READY.
+Deliverables:
+- executable UI_GROUND -> UI_IMPLEMENT -> UI_RENDER -> UI_INSPECT -> UI_REFINE -> UI_SELF_CHECK state flow;
+- UI workspace resume across those states;
+- source/browser development loop;
+- Reviewer boundary;
+- independent Tester checkpoint;
+- ordinary UI_ACCEPTED path;
+- greenfield/Human-approved rebuilt SHELL_READY path;
+- representative-content/responsive pilot when shell risk requires it.
 
 Gate:
+- UI Coder can implement/refine the real app using the proven browser runtime;
 - no existing shell is discarded without Human approval plus completed Rebaseline/Salvage;
 - no shell baseline is accepted from mockup-only evidence;
 - SHELL_READY requires runnable-source evidence.
@@ -272,7 +265,8 @@ Pilots:
 - UX_FIRST Update Pack;
 - interruption/resume across UI workflow states;
 - UI Coder vs Tester session isolation;
-- optional-provider absence.
+- core-no-provider baseline;
+- after provider abstraction exists, provider fallback/absence behavior.
 
 Gate:
 - workflow becomes mandatory only after real Local evidence shows the browser-driven UI loop is resumable, independently verifiable and bounded.
@@ -281,12 +275,12 @@ Gate:
 
 ```text
 F immediate rebaseline + recovery foundations
-  -> G UI authority + UI Coder workflow
+  -> G UI visual-authority/workflow contract
   -> H agent-browser shared runtime
-  -> I UI acceptance / SHELL_READY
+  -> I executable UI Coder workflow + UI acceptance/SHELL_READY
   -> K workflow calibration
 
-G
+I
   -> J optional UI providers/skills
 ```
 
