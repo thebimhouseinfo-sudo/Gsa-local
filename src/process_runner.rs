@@ -1,6 +1,7 @@
 use crate::verification::VerificationCommand;
 use anyhow::{Context, Result};
 use std::{
+    env,
     fs,
     io::Read,
     path::{Path, PathBuf},
@@ -280,9 +281,14 @@ impl TesterSandboxRunner {
 
         let mut process = match &self.backend {
             SandboxBackend::MacOs(sandbox_exec) => {
-                let profile = tester_sandbox_profile(&workspace, &temp_dir)?;
+                let executable = resolve_executable(&argv[0])?;
+                let profile = tester_sandbox_profile(&workspace, &temp_dir, &executable)?;
                 let mut process = Command::new(sandbox_exec);
-                process.arg("-p").arg(profile).arg(&argv[0]).args(&argv[1..]);
+                process
+                    .arg("-p")
+                    .arg(profile)
+                    .arg(&executable)
+                    .args(&argv[1..]);
                 process
             }
             SandboxBackend::Unavailable(_) => unreachable!(),
@@ -447,7 +453,42 @@ fn sandbox_profile(runtime_dir: &Path, temp_dir: &Path) -> Result<String> {
     ))
 }
 
-fn tester_sandbox_profile(workspace: &Path, temp_dir: &Path) -> Result<String> {
+fn resolve_executable(program: &str) -> Result<PathBuf> {
+    if program.trim().is_empty() {
+        anyhow::bail!("Tester adapter executable must not be empty");
+    }
+
+    let direct = PathBuf::from(program);
+    if direct.is_absolute() || direct.components().count() > 1 {
+        if !direct.is_file() {
+            anyhow::bail!("Tester adapter executable does not exist: {program}");
+        }
+        return direct
+            .canonicalize()
+            .with_context(|| format!("failed to canonicalize Tester executable {program}"));
+    }
+
+    let path = env::var_os("PATH").context("PATH is unavailable for Tester executable resolution")?;
+    for dir in env::split_paths(&path) {
+        let candidate = dir.join(program);
+        if candidate.is_file() {
+            return candidate.canonicalize().with_context(|| {
+                format!(
+                    "failed to canonicalize Tester executable {}",
+                    candidate.display()
+                )
+            });
+        }
+    }
+
+    anyhow::bail!("Tester adapter executable is unavailable: {program}")
+}
+
+fn tester_sandbox_profile(
+    workspace: &Path,
+    temp_dir: &Path,
+    executable: &Path,
+) -> Result<String> {
     let workspace = escape_profile_path(
         workspace
             .canonicalize()
@@ -462,9 +503,21 @@ fn tester_sandbox_profile(workspace: &Path, temp_dir: &Path) -> Result<String> {
             .to_string_lossy()
             .as_ref(),
     );
+    let executable = escape_profile_path(
+        executable
+            .canonicalize()
+            .with_context(|| {
+                format!(
+                    "failed to canonicalize Tester sandbox executable {}",
+                    executable.display()
+                )
+            })?
+            .to_string_lossy()
+            .as_ref(),
+    );
 
     Ok(format!(
-        "(version 1)\n(allow default)\n(deny network*)\n(deny file-write*)\n(allow file-write* (subpath \"{workspace}\") (subpath \"{temp}\"))\n"
+        "(version 1)\n(allow default)\n(deny network*)\n(deny file-write*)\n(allow file-write* (subpath \"{workspace}\") (subpath \"{temp}\"))\n(deny process-exec)\n(allow process-exec (literal \"{executable}\"))\n"
     ))
 }
 
@@ -681,15 +734,30 @@ mod tests {
     }
 
     #[test]
-    fn tester_sandbox_profile_is_network_denied_and_workspace_write_scoped() {
+    fn tester_sandbox_profile_is_network_write_and_exec_scoped() {
         let workspace = tempfile::tempdir().unwrap();
         let temp = workspace.path().join("tmp");
         std::fs::create_dir(&temp).unwrap();
-        let profile = tester_sandbox_profile(workspace.path(), &temp).unwrap();
+        let executable = std::env::current_exe().unwrap();
+        let canonical_executable = executable.canonicalize().unwrap();
+        let profile =
+            tester_sandbox_profile(workspace.path(), &temp, &canonical_executable).unwrap();
         assert!(profile.contains("(deny network*)"));
         assert!(profile.contains("(deny file-write*)"));
         assert!(profile.contains("(allow file-write*"));
         assert!(profile.contains(workspace.path().to_string_lossy().as_ref()));
+        assert!(profile.contains("(deny process-exec)"));
+        assert!(profile.contains("(allow process-exec (literal"));
+        assert!(profile.contains(canonical_executable.to_string_lossy().as_ref()));
+    }
+
+    #[test]
+    fn tester_executable_resolution_rejects_missing_program() {
+        let missing = format!(
+            "gsa-local-definitely-missing-{}",
+            std::process::id()
+        );
+        assert!(resolve_executable(&missing).is_err());
     }
 
     #[test]
