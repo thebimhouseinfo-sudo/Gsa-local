@@ -4,7 +4,7 @@ use crate::{
     harness::{AgentId, HarnessRegistry},
     ollama::{ChatMessage, OllamaClient, ToolCall, ToolDefinition},
     plan::EvidenceNeed,
-    process_runner::{LocalProcessRunner, ProcessObservation},
+    process_runner::{ProcessObservation, TesterSandboxRunner},
     registry::Registry,
     session::Session,
     tester_evidence::{
@@ -15,7 +15,6 @@ use crate::{
     tester_workspace::TesterWorkspaceRuntime,
     tools::ProjectToolRuntime,
     verification::{
-        VerificationCapability, VerificationCommand, VerificationCommandKind,
         VerificationController, VerificationResult,
     },
 };
@@ -217,7 +216,7 @@ pub struct TesterExecutionRuntime<'a> {
     attempt_id: String,
     target: TesterTargetBinding,
     workspace: TesterWorkspaceRuntime,
-    runner: LocalProcessRunner,
+    runner: TesterSandboxRunner,
     execution_count: usize,
 }
 
@@ -239,7 +238,7 @@ impl<'a> TesterExecutionRuntime<'a> {
             checkpoint_id,
             attempt_id,
             target,
-            LocalProcessRunner::production(),
+            TesterSandboxRunner::production(),
         )
     }
 
@@ -251,7 +250,7 @@ impl<'a> TesterExecutionRuntime<'a> {
         checkpoint_id: &str,
         attempt_id: &str,
         target: TesterTargetBinding,
-        runner: LocalProcessRunner,
+        runner: TesterSandboxRunner,
     ) -> Result<Self> {
         let workspace =
             TesterWorkspaceRuntime::new(project_root, graph_version, checkpoint_id, attempt_id)?;
@@ -342,26 +341,19 @@ impl<'a> TesterExecutionRuntime<'a> {
         let artifact = self.workspace.artifact_ref(script_path)?;
         let mut argv = vec![interpreter.to_owned(), artifact.path.clone()];
         argv.extend(args.iter().cloned());
-        let command = VerificationCommand {
-            id: request.step_id.clone(),
-            kind: VerificationCommandKind::Test,
-            capability: VerificationCapability::Integration,
-            argv,
-            source_paths: vec![artifact.path],
-            config_hash: request.fence_key(
-                self.graph_version,
-                &self.checkpoint_id,
-                &self.attempt_id,
-                &self
-                    .target
-                    .fingerprint(self.graph_version, &self.checkpoint_id)?,
-            )?,
-        };
-        let process =
-            self.runner
-                .run(self.workspace.root(), &command, DEFAULT_TESTER_TIMEOUT)?;
+        let execution_id = request.fence_key(
+            self.graph_version,
+            &self.checkpoint_id,
+            &self.attempt_id,
+            &self
+                .target
+                .fingerprint(self.graph_version, &self.checkpoint_id)?,
+        )?;
+        let process = self
+            .runner
+            .run(self.workspace.root(), &argv, DEFAULT_TESTER_TIMEOUT)?;
         Ok(TesterExecutionObservation::from_process(
-            command.config_hash.clone(),
+            execution_id,
             request,
             process,
         ))
