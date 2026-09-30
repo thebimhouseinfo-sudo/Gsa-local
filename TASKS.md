@@ -296,11 +296,10 @@ Lessons source: WORKFLOW_LESSONS_LEARNED.md.
 - [ ] Reconstruct the exact next agent packet from Registry after process restart.
 - [ ] Persist any minimal mutation/evidence digest required to reconstruct safe continuation without storing chat transcript/hidden reasoning.
 
-### J6 — Online interrupted-Run recovery
-- [ ] Add an open-Run/resume resolver distinct from Project lifecycle resume.
-- [ ] Resolve RESUME_EXISTING / START_RECOVERY_CHILD / START_NEW_RUN / BLOCKED_RECONCILIATION_REQUIRED / ALREADY_TERMINAL.
-- [ ] Detect orphan/incomplete Run, Verification and Handoff records after interrupted writes.
-- [ ] Reject path/content Run identity mismatch before persistence.
+### J6 — Online comparison only (non-executable in GSA Local)
+- Online GSA also needs an interrupted-Run resolver, but implementation belongs to GPT-supper-agent, not this repository.
+- Local may reuse the semantic lessons only: authoritative work cursor, crash-consistent finalization, exact target binding and explicit recovery classification.
+- Do not create Online control-plane code/tasks from the GSA Local plan.
 
 ### J7 — Handoff is not activation
 - [ ] Add explicit activation_policy = EXPLICIT_START / AUTO_CONTINUE.
@@ -446,6 +445,10 @@ Target source: GSA_LOCAL_UI_TESTER_TARGET_ARCHITECTURE.md.
 
 Generic UI Coder + Penpot capability has already PASSed in prior GSA capability testing. Do NOT repeat the broad capability experiment by default.
 
+Before Local relies on that PASS:
+- [ ] Capture/import the durable prior capability evidence reference when available, or explicitly record the Human-provided accepted capability fact plus its applicability boundary.
+- [ ] Revalidate only if evidence applicability becomes stale or Local uses a materially different execution surface.
+
 ### M1 — Local Penpot binding
 - [ ] Integrate the already-capable UI Coder/Penpot surface into Local.
 - [ ] Verify Local reachability/invocation only.
@@ -485,7 +488,9 @@ Generic UI Coder + Penpot capability has already PASSed in prior GSA capability 
 
 ### N4 — UI checkpoint semantics
 - [ ] Tester independently plans the UI checkpoint.
-- [ ] Verify objective screen/state/flow/responsive/clipping/asset/runtime criteria.
+- [ ] Use agent-browser only when the checkpoint has a browser-inspectable prototype or runnable target.
+- [ ] If the Penpot artifact is not browser-inspectable, use Penpot readback/export evidence plus Human review; do not fabricate browser verification.
+- [ ] Verify objective screen/state/flow/responsive/clipping/asset/runtime criteria only through capabilities actually available for that target.
 - [ ] Subjective visual judgement routes to NEEDS_HUMAN.
 - [ ] Tester evidence follows dimension-aware applicability.
 
