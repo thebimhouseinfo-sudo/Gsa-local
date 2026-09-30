@@ -129,6 +129,22 @@ impl ObservedValue {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ReplaySafety {
+    ObserveOnly,
+    Idempotent,
+    NonIdempotent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum AdapterObservationField {
+    Stdout,
+    Stderr,
+    ExitCode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum VerificationObservationField {
     Stdout,
     Stderr,
@@ -149,6 +165,7 @@ pub enum TesterEvidenceRef {
     AdapterObservation {
         adapter_id: String,
         execution_id: String,
+        field: AdapterObservationField,
         observed: ObservedValue,
     },
 }
@@ -189,6 +206,7 @@ impl TesterEvidenceRef {
                 adapter_id,
                 execution_id,
                 observed,
+                ..
             } => {
                 require_text("adapter observation adapter_id", adapter_id)?;
                 require_text("adapter observation execution_id", execution_id)?;
