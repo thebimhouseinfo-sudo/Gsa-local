@@ -1982,7 +1982,7 @@ previous AcceptedIntegrationBaseline
 
 This limits how much unreviewed state must be reconstructed after interruption.
 
-It also makes architecture rebaseline easier: accepted baselines are presumed reusable unless the new architecture invalidates them, while only work after the last accepted baseline requires detailed salvage classification first.
+It also makes architecture rebaseline easier: accepted baselines are strong candidates for reuse because they already have structured acceptance evidence, but they still require impact review against the new architecture; only work after the last accepted baseline requires detailed salvage classification first.
 
 Previously integrated work may still require impact review, but it does not need to be rediscovered from hundreds of raw commits.
 
