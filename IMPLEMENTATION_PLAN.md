@@ -2418,7 +2418,7 @@ Authoritative design inputs for this replan are read-only:
 - WORKFLOW_LESSONS_LEARNED.md
 - GSA_LOCAL_UI_TESTER_TARGET_ARCHITECTURE.md
 
-These phases are added to the total architecture plan. They do not expand the currently executing J-177F Tester Job.
+These phases are added to the total architecture plan and execute only through the replacement/future Jobs created after the immediate rebaseline. They do not retroactively expand or resume the frozen J-177F topology.
 
 ## Phase 14 — Recovery Orchestrator + WorkCursor
 
