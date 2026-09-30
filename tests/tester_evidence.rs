@@ -348,6 +348,27 @@ fn exact_target_probe_evidence_round_trips_from_registry() {
 }
 
 #[test]
+fn restarted_code_workflow_invalidates_prior_review_pass_target() {
+    let (dir, registry, version, verification_run_id) = setup();
+    let artifact = workspace_artifact(&dir, version, "ATT-OLD-PASS");
+    let evidence = attempt(
+        version,
+        "ATT-OLD-PASS",
+        "change-1",
+        artifact,
+        verification_run_id,
+    );
+
+    registry
+        .begin_code_workflow(dir.path(), "owner-a", version, "JP1")
+        .unwrap();
+
+    assert!(registry
+        .record_tester_attempt_evidence(dir.path(), "owner-a", &evidence)
+        .is_err());
+}
+
+#[test]
 fn stale_review_target_cannot_record_tester_evidence() {
     let (dir, registry, version, verification_run_id) = setup();
     let artifact = workspace_artifact(&dir, version, "ATT-STALE");
