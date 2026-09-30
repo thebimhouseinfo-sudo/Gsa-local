@@ -19,7 +19,7 @@ The Tester redesign has cross-phase impact. Earlier phases are not rolled back w
 | Phase 8 — Coder ↔ Reviewer | MEDIUM | Core loop stays unchanged. Coder context gains required OBSERVED evidence; Coder/Internal Fix must be denied writes to Tester-owned workspace; repair after Tester FAIL still returns through Reviewer before retest. |
 | Phase 9 — Verification Controller + Local CI | HIGH semantic change | Keep deterministic build/test capability discovery and Local CI evidence, but remove authority to decide where Tester appears. Phase 9 becomes a deterministic verification primitive/capability provider used by coding self-checks and declared checkpoints. |
 | Phase 10 — Tester subsystem | MAJOR | New independent checkpoint subsystem with its own workspace, test planning, execution, VERIFY/MEASURE/PROBE, empirical evidence and retest. |
-| Phase 11 — Task/Job Pack Completion + Local CR | HIGH | Local CR auto-runs at mature Task and declared checkpoint boundaries after required Reviewer/verification/Tester evidence; terminalization requires compatible CR PASS where declared, but CR never runs after each edit. |
+| Phase 11 — Task/Job Pack Completion + Local CR | HIGH | Local CR auto-runs at mature Task and declared checkpoint boundaries after required Reviewer/verification/Tester evidence; overlapping Task/checkpoint boundaries on the same exact target coalesce by CRBoundaryKey, and terminalization requires compatible CR PASS without per-edit CR spam. |
 | Phase 12 — Milestone Verification + Resume | HIGH | Milestone completion must require all declared milestone checkpoint requirements and must resume checkpoint state correctly after restart. |
 | Phase 13 — Hardening | HIGH | Add negative tests for evidence spoofing/staleness, checkpoint bypass, Tester workspace escape, fake measurements, guessed required variables and unsafe Tester execution. |
 
@@ -136,6 +136,7 @@ Future work must now include:
 - checkpoint state crash/resume is already handled in Phase 10 through latest_checkpoint + lease;
 - material Tester SPEC_GAP pauses the graph and requires new plan revision + Reviewer + automatic Local CR + superseding graph;
 - automatic CR packet consumes exact target/revision plus required checkpoint evidence;
+- overlapping Task-terminal/checkpoint boundaries on one target/change_set coalesce into one idempotent CRBoundaryKey/result;
 - Job Pack completion rejects unsatisfied required checkpoints;
 - Milestone completion rejects unsatisfied milestone-level checkpoints;
 - restart resumes DUE/RUNNING/BLOCKED/NEEDS_HUMAN Tester state;
