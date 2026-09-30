@@ -71,9 +71,7 @@ impl TesterModeResult {
         }
         if matches!(
             self.outcome,
-            TesterModeOutcome::Fail
-                | TesterModeOutcome::Blocked
-                | TesterModeOutcome::NeedsHuman
+            TesterModeOutcome::Fail | TesterModeOutcome::Blocked | TesterModeOutcome::NeedsHuman
         ) && self
             .reason
             .as_deref()
@@ -164,8 +162,12 @@ pub enum VerificationObservationField {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum TesterEvidenceRef {
-    WorkspaceArtifact { artifact: TesterArtifactRef },
-    VerificationRun { run_id: i64 },
+    WorkspaceArtifact {
+        artifact: TesterArtifactRef,
+    },
+    VerificationRun {
+        run_id: i64,
+    },
     VerificationObservation {
         run_id: i64,
         command_id: String,
@@ -413,9 +415,7 @@ impl ApplicabilityMatcher {
                     if path.starts_with('/')
                         || path.contains('\\')
                         || path.contains(':')
-                        || path
-                            .split('/')
-                            .any(|part| part == "..")
+                        || path.split('/').any(|part| part == "..")
                     {
                         bail!("SOURCE_PATH_HASH_SET contains unsafe path {path}");
                     }
@@ -500,16 +500,20 @@ fn matcher_matches(matcher: &ApplicabilityMatcher, context: &ApplicabilityContex
         ApplicabilityMatcher::ExactFingerprint { dimension, sha256 } => {
             scalar_dimension(context, *dimension) == Some(sha256.as_str())
         }
-        ApplicabilityMatcher::MemberOf { dimension, values } => scalar_dimension(context, *dimension)
-            .map(|current| values.iter().any(|value| value == current))
-            .unwrap_or(false),
-        ApplicabilityMatcher::SourcePathHashSet { hashes } => hashes.iter().all(|(path, expected)| {
-            context
-                .source_path_hashes
-                .get(path)
-                .map(|current| current == expected)
+        ApplicabilityMatcher::MemberOf { dimension, values } => {
+            scalar_dimension(context, *dimension)
+                .map(|current| values.iter().any(|value| value == current))
                 .unwrap_or(false)
-        }),
+        }
+        ApplicabilityMatcher::SourcePathHashSet { hashes } => {
+            hashes.iter().all(|(path, expected)| {
+                context
+                    .source_path_hashes
+                    .get(path)
+                    .map(|current| current == expected)
+                    .unwrap_or(false)
+            })
+        }
         ApplicabilityMatcher::RuntimeIdentity { value } => {
             context.runtime_identity.as_deref() == Some(value.as_str())
         }
@@ -524,9 +528,7 @@ fn scalar_dimension(
         ApplicabilityDimension::ProductRevision => context.product_revision.as_deref(),
         ApplicabilityDimension::ChangeSetId => context.change_set_id.as_deref(),
         ApplicabilityDimension::ConfigFingerprint => context.config_fingerprint.as_deref(),
-        ApplicabilityDimension::CapabilityFingerprint => {
-            context.capability_fingerprint.as_deref()
-        }
+        ApplicabilityDimension::CapabilityFingerprint => context.capability_fingerprint.as_deref(),
         ApplicabilityDimension::EnvironmentFingerprint => {
             context.environment_fingerprint.as_deref()
         }

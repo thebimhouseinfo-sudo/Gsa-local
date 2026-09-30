@@ -1496,13 +1496,7 @@ mod tests {
         assert_eq!(evidence["type"], "array");
         let item_required = evidence["items"]["required"].as_array().unwrap();
         for field in [
-            "id",
-            "question",
-            "purpose",
-            "required",
-            "consumer",
-            "modes",
-            "intent",
+            "id", "question", "purpose", "required", "consumer", "modes", "intent",
         ] {
             assert!(item_required.iter().any(|item| item == field));
         }
@@ -1523,11 +1517,7 @@ mod tests {
         let checkpoint = &graph["properties"]["checkpoints"]["items"];
         assert_eq!(
             checkpoint["properties"]["boundary"]["enum"],
-            serde_json::json!([
-                "AFTER_JOBPACK_SET",
-                "BEFORE_JOBPACK",
-                "MILESTONE_GATE"
-            ])
+            serde_json::json!(["AFTER_JOBPACK_SET", "BEFORE_JOBPACK", "MILESTONE_GATE"])
         );
         assert_eq!(
             checkpoint["properties"]["prerequisites"]["items"]["properties"]["state"]["enum"],

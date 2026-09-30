@@ -1,8 +1,7 @@
 use crate::verification::VerificationCommand;
 use anyhow::{Context, Result};
 use std::{
-    env,
-    fs,
+    env, fs,
     io::Read,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
@@ -193,7 +192,6 @@ impl LocalProcessRunner {
         })
     }
 }
-
 
 #[derive(Debug, Clone)]
 pub struct TesterSandboxRunner {
@@ -468,7 +466,8 @@ fn resolve_executable(program: &str) -> Result<PathBuf> {
             .with_context(|| format!("failed to canonicalize Tester executable {program}"));
     }
 
-    let path = env::var_os("PATH").context("PATH is unavailable for Tester executable resolution")?;
+    let path =
+        env::var_os("PATH").context("PATH is unavailable for Tester executable resolution")?;
     for dir in env::split_paths(&path) {
         let candidate = dir.join(program);
         if candidate.is_file() {
@@ -484,11 +483,7 @@ fn resolve_executable(program: &str) -> Result<PathBuf> {
     anyhow::bail!("Tester adapter executable is unavailable: {program}")
 }
 
-fn tester_sandbox_profile(
-    workspace: &Path,
-    temp_dir: &Path,
-    executable: &Path,
-) -> Result<String> {
+fn tester_sandbox_profile(workspace: &Path, temp_dir: &Path, executable: &Path) -> Result<String> {
     let workspace = escape_profile_path(
         workspace
             .canonicalize()
@@ -699,13 +694,12 @@ mod tests {
         let runner = TesterSandboxRunner::unavailable_for_test("tester sandbox missing");
         let dir = tempfile::tempdir().unwrap();
         let result = runner
-            .run(
-                dir.path(),
-                &["/bin/true".into()],
-                Duration::from_secs(1),
-            )
+            .run(dir.path(), &["/bin/true".into()], Duration::from_secs(1))
             .unwrap();
-        assert_eq!(result.blocked_reason.as_deref(), Some("tester sandbox missing"));
+        assert_eq!(
+            result.blocked_reason.as_deref(),
+            Some("tester sandbox missing")
+        );
         assert_eq!(result.exit_code, None);
     }
 
@@ -726,7 +720,9 @@ mod tests {
             )
             .unwrap();
         assert_eq!(result.exit_code, Some(0));
-        assert!(result.stdout.contains(dir.path().to_string_lossy().as_ref()));
+        assert!(result
+            .stdout
+            .contains(dir.path().to_string_lossy().as_ref()));
         assert_eq!(
             std::fs::read_to_string(dir.path().join("artifacts.txt")).unwrap(),
             "ok"
@@ -753,10 +749,7 @@ mod tests {
 
     #[test]
     fn tester_executable_resolution_rejects_missing_program() {
-        let missing = format!(
-            "gsa-local-definitely-missing-{}",
-            std::process::id()
-        );
+        let missing = format!("gsa-local-definitely-missing-{}", std::process::id());
         assert!(resolve_executable(&missing).is_err());
     }
 

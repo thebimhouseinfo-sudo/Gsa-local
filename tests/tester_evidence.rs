@@ -10,10 +10,9 @@ use gsa_local::{
     tester_evidence::{
         AdapterObservationField, ApplicabilityContext, ApplicabilityDecision, ApplicabilityMatcher,
         EvidenceApplicability, EvidenceProvenance, ExperimentContext, ExperimentObservation,
-        ExperimentSample, ReplaySafety,
-        ObservedValue, RevalidationPolicy, TesterAttemptEvidence, TesterEvidenceOutputRecord,
-        TesterEvidenceRef, TesterModeOutcome, TesterModeResult, TesterPrerequisiteTarget,
-        TesterTargetBinding, VerificationObservationField,
+        ExperimentSample, ObservedValue, ReplaySafety, RevalidationPolicy, TesterAttemptEvidence,
+        TesterEvidenceOutputRecord, TesterEvidenceRef, TesterModeOutcome, TesterModeResult,
+        TesterPrerequisiteTarget, TesterTargetBinding, VerificationObservationField,
     },
     tester_execution::{
         TesterAdapterRequest, TesterExecutionObservation, TesterExecutionStatus,
@@ -312,9 +311,7 @@ fn attempt(
 #[test]
 fn tester_plan_context_stays_bound_to_graph_when_newer_draft_plan_exists() {
     let (_dir, registry, version, _verification_run_id) = setup();
-    let bound = registry
-        .plan_for_current_execution_graph(version)
-        .unwrap();
+    let bound = registry.plan_for_current_execution_graph(version).unwrap();
     assert_eq!(bound.revision, 1);
     assert_eq!(bound.artifact.goal, "Use observed runtime identity");
 
@@ -323,9 +320,7 @@ fn tester_plan_context_stays_bound_to_graph_when_newer_draft_plan_exists() {
     let newer_revision = registry.persist_plan_revision(&newer).unwrap();
     assert_eq!(newer_revision.revision, 2);
 
-    let still_bound = registry
-        .plan_for_current_execution_graph(version)
-        .unwrap();
+    let still_bound = registry.plan_for_current_execution_graph(version).unwrap();
     assert_eq!(still_bound.revision, 1);
     assert_eq!(still_bound.hash, bound.hash);
     assert_eq!(still_bound.artifact.goal, "Use observed runtime identity");
@@ -335,13 +330,7 @@ fn tester_plan_context_stays_bound_to_graph_when_newer_draft_plan_exists() {
 fn exact_target_probe_evidence_round_trips_from_registry() {
     let (dir, registry, version, verification_run_id) = setup();
     let artifact = workspace_artifact(&dir, version, "ATT-1");
-    let attempt = attempt(
-        version,
-        "ATT-1",
-        "change-1",
-        artifact,
-        verification_run_id,
-    );
+    let attempt = attempt(version, "ATT-1", "change-1", artifact, verification_run_id);
 
     let fingerprint = registry
         .record_tester_attempt_evidence(dir.path(), "owner-a", &attempt)
@@ -638,12 +627,7 @@ fn fabricated_adapter_value_is_rejected_against_execution_record() {
     };
     let target_fingerprint = target.fingerprint(version, "CP1").unwrap();
     let fence = request
-        .fence_key(
-            version,
-            "CP1",
-            "ATT-EXEC-MISMATCH",
-            &target_fingerprint,
-        )
+        .fence_key(version, "CP1", "ATT-EXEC-MISMATCH", &target_fingerprint)
         .unwrap();
 
     registry
@@ -769,7 +753,9 @@ fn successful_required_probe_output_must_be_observed() {
     );
     implied.outputs[0].provenance = EvidenceProvenance::Implication;
 
-    assert!(implied.validate_against_checkpoint(&graph().checkpoints[0]).is_err());
+    assert!(implied
+        .validate_against_checkpoint(&graph().checkpoints[0])
+        .is_err());
 }
 
 #[test]

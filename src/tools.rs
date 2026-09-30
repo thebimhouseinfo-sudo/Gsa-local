@@ -325,9 +325,7 @@ impl ProjectToolRuntime {
         }
         let relative = normalize_relative(&args.path)?;
         if is_tester_workspace_path(&relative) {
-            bail!(
-                "project_write cannot modify Tester-owned workspace paths under .gsa/tester"
-            );
+            bail!("project_write cannot modify Tester-owned workspace paths under .gsa/tester");
         }
         let display = relative.to_string_lossy().replace('\\', "/");
         let target = self.root.join(&relative);

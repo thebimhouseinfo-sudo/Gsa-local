@@ -650,7 +650,10 @@ impl Registry {
             content,
         )) = row
         else {
-            bail!("execution graph {} is not bound to a persisted plan", graph_version);
+            bail!(
+                "execution graph {} is not bound to a persisted plan",
+                graph_version
+            );
         };
 
         if graph_status != "CURRENT" {
@@ -2430,10 +2433,7 @@ impl Registry {
             .map_err(Into::into)
     }
 
-    pub fn verification_run_evidence(
-        &self,
-        run_id: i64,
-    ) -> Result<Option<VerificationEvidence>> {
+    pub fn verification_run_evidence(&self, run_id: i64) -> Result<Option<VerificationEvidence>> {
         let row: Option<(String, String, i64)> = self
             .conn
             .query_row(
@@ -3280,10 +3280,7 @@ fn validate_tester_evidence_refs(
                     }
                     AdapterObservationField::ExitCode => {
                         let code = observation.exit_code.ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "adapter observation {} has no exit code",
-                                execution_id
-                            )
+                            anyhow::anyhow!("adapter observation {} has no exit code", execution_id)
                         })?;
                         ObservedValue::Integer(i64::from(code))
                     }
@@ -3335,7 +3332,9 @@ fn validate_verification_ref_target_tx(
             run_id
         );
     }
-    Ok(serde_json::from_str::<Vec<CommandEvidence>>(&commands_json)?)
+    Ok(serde_json::from_str::<Vec<CommandEvidence>>(
+        &commands_json,
+    )?)
 }
 
 fn retire_active_jobpacks_for_current_graphs_tx(tx: &Transaction<'_>) -> Result<()> {

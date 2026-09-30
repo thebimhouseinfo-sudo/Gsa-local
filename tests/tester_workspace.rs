@@ -163,8 +163,7 @@ fn tester_workspace_rejects_symlink_escape() {
     let outside = tempdir().unwrap();
     std::fs::write(outside.path().join("secret.txt"), "secret").unwrap();
 
-    let workspace =
-        TesterWorkspaceRuntime::new(project.path(), 1, "CP-1", "ATT-1").unwrap();
+    let workspace = TesterWorkspaceRuntime::new(project.path(), 1, "CP-1", "ATT-1").unwrap();
     symlink(outside.path(), workspace.root().join("tests/link")).unwrap();
 
     assert!(workspace
@@ -196,8 +195,7 @@ fn tester_workspace_rejects_hardlink_aliases() {
     let outside_file = outside.path().join("outside.txt");
     std::fs::write(&outside_file, "outside").unwrap();
 
-    let workspace =
-        TesterWorkspaceRuntime::new(project.path(), 1, "CP-1", "ATT-1").unwrap();
+    let workspace = TesterWorkspaceRuntime::new(project.path(), 1, "CP-1", "ATT-1").unwrap();
     let linked = workspace.root().join("artifacts/linked.txt");
     std::fs::hard_link(&outside_file, &linked).unwrap();
 

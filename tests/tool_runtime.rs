@@ -217,9 +217,7 @@ fn reviewer_tester_and_cr_are_read_only_but_coder_can_write() {
 #[test]
 fn coder_and_internal_fix_cannot_write_tester_owned_workspace() {
     let dir = tempdir().unwrap();
-    let protected = dir
-        .path()
-        .join(".gsa/tester/1/CP-1/ATT-1/tests");
+    let protected = dir.path().join(".gsa/tester/1/CP-1/ATT-1/tests");
     std::fs::create_dir_all(&protected).unwrap();
     std::fs::write(protected.join("owned.txt"), "tester-owned").unwrap();
 

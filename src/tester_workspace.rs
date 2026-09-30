@@ -64,9 +64,12 @@ impl TesterWorkspaceRuntime {
         validate_segment("checkpoint_id", checkpoint_id)?;
         validate_segment("attempt_id", attempt_id)?;
 
-        let project_root = project_root
-            .canonicalize()
-            .with_context(|| format!("failed to canonicalize project root {}", project_root.display()))?;
+        let project_root = project_root.canonicalize().with_context(|| {
+            format!(
+                "failed to canonicalize project root {}",
+                project_root.display()
+            )
+        })?;
         let relative = PathBuf::from(".gsa")
             .join("tester")
             .join(graph_version.to_string())
@@ -244,7 +247,9 @@ impl TesterWorkspaceRuntime {
                 .write(true)
                 .create_new(true)
                 .open(&target)
-                .with_context(|| format!("failed create-only Tester workspace write for {display}"))?;
+                .with_context(|| {
+                    format!("failed create-only Tester workspace write for {display}")
+                })?;
             file.write_all(args.content.as_bytes())?;
             return Ok(TesterWorkspaceWriteResult {
                 artifact: self.artifact_ref(&display)?,
@@ -265,8 +270,8 @@ impl TesterWorkspaceRuntime {
             );
         }
 
-        let before_content =
-            fs::read_to_string(&resolved).context("Tester workspace tools support UTF-8 text only")?;
+        let before_content = fs::read_to_string(&resolved)
+            .context("Tester workspace tools support UTF-8 text only")?;
         let before_sha256 = sha256_bytes(before_content.as_bytes());
         let expected = args.expected_sha256.as_deref().context(
             "editing an existing Tester workspace file requires expected_sha256 from tester_workspace_read",
@@ -377,7 +382,10 @@ fn ensure_directory_chain(root: &Path, relative: &Path) -> Result<PathBuf> {
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 fs::create_dir(&cursor).with_context(|| {
-                    format!("failed to create Tester workspace directory {}", cursor.display())
+                    format!(
+                        "failed to create Tester workspace directory {}",
+                        cursor.display()
+                    )
                 })?;
                 let meta = fs::symlink_metadata(&cursor)?;
                 if meta.file_type().is_symlink() || !meta.is_dir() {

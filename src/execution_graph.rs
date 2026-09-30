@@ -288,11 +288,7 @@ impl ExecutionGraph {
                             need_id
                         );
                     };
-                    if !checkpoint
-                        .evidence_need_ids
-                        .iter()
-                        .any(|id| id == need_id)
-                    {
+                    if !checkpoint.evidence_need_ids.iter().any(|id| id == need_id) {
                         bail!(
                             "checkpoint {} output {} maps evidence_need {} that is not declared by the checkpoint",
                             checkpoint.id,
@@ -349,7 +345,10 @@ impl ExecutionGraph {
                 );
             }
             if checkpoint.modes.is_empty() {
-                bail!("checkpoint {} must declare at least one mode", checkpoint.id);
+                bail!(
+                    "checkpoint {} must declare at least one mode",
+                    checkpoint.id
+                );
             }
             let mut local_modes = HashSet::new();
             for mode in &checkpoint.modes {
@@ -372,7 +371,10 @@ impl ExecutionGraph {
 
             let mut local_prereqs = HashSet::new();
             for prerequisite in &checkpoint.prerequisites {
-                require_text("checkpoint prerequisite jobpack_id", &prerequisite.jobpack_id)?;
+                require_text(
+                    "checkpoint prerequisite jobpack_id",
+                    &prerequisite.jobpack_id,
+                )?;
                 if !local_prereqs.insert(prerequisite.jobpack_id.as_str()) {
                     bail!(
                         "checkpoint {} contains duplicate prerequisite {}",
@@ -398,8 +400,7 @@ impl ExecutionGraph {
             }
 
             match checkpoint.boundary {
-                CheckpointBoundaryKind::AfterJobpackSet
-                | CheckpointBoundaryKind::MilestoneGate => {
+                CheckpointBoundaryKind::AfterJobpackSet | CheckpointBoundaryKind::MilestoneGate => {
                     if checkpoint.prerequisites.is_empty() {
                         bail!(
                             "checkpoint {} boundary requires at least one prerequisite",
@@ -453,7 +454,10 @@ impl ExecutionGraph {
             let mut output_ids = HashSet::new();
             for output in &checkpoint.evidence_outputs {
                 require_text("checkpoint evidence output id", &output.id)?;
-                require_text("checkpoint evidence output description", &output.description)?;
+                require_text(
+                    "checkpoint evidence output description",
+                    &output.description,
+                )?;
                 if !output_ids.insert(output.id.as_str()) {
                     bail!(
                         "checkpoint {} contains duplicate evidence output {}",
@@ -638,9 +642,7 @@ fn validate_dependency_cycles(jobpacks: &[JobPackSpec]) -> Result<()> {
     validate_dependency_map_cycles(&dependencies)
 }
 
-fn validate_dependency_map_cycles<'a>(
-    dependencies: &HashMap<&'a str, Vec<&'a str>>,
-) -> Result<()> {
+fn validate_dependency_map_cycles<'a>(dependencies: &HashMap<&'a str, Vec<&'a str>>) -> Result<()> {
     let mut visiting = HashSet::new();
     let mut visited = HashSet::new();
     for id in dependencies.keys().copied() {

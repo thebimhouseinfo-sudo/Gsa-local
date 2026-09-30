@@ -298,13 +298,13 @@ impl<'a> TesterExecutionRuntime<'a> {
         if self.execution_count >= MAX_TESTER_EXECUTIONS {
             bail!("Tester exceeded bounded execution-step limit");
         }
-        let request: TesterExecutionStepRequest =
-            serde_json::from_value(arguments.clone()).context("invalid tester_execute arguments")?;
+        let request: TesterExecutionStepRequest = serde_json::from_value(arguments.clone())
+            .context("invalid tester_execute arguments")?;
         request.validate()?;
 
-        let target_fingerprint =
-            self.target
-                .fingerprint(self.graph_version, &self.checkpoint_id)?;
+        let target_fingerprint = self
+            .target
+            .fingerprint(self.graph_version, &self.checkpoint_id)?;
         let fence_key = request.fence_key(
             self.graph_version,
             &self.checkpoint_id,
@@ -411,24 +411,15 @@ impl<'a> TesterExecutionRuntime<'a> {
         change_set_id: &str,
     ) -> Result<TesterExecutionObservation> {
         let target_matches = self.target.prerequisites.iter().any(|item| {
-            item.jobpack_id == jobpack_id
-                && item.change_set_id.as_deref() == Some(change_set_id)
+            item.jobpack_id == jobpack_id && item.change_set_id.as_deref() == Some(change_set_id)
         });
         if !target_matches {
             bail!("PROJECT_VERIFICATION target is not part of the Tester target binding");
         }
 
-        let result = VerificationController::new(
-            self.registry,
-            self.project_root,
-            self.lease_owner,
-        )
-        .verify(
-            self.graph_version,
-            jobpack_id,
-            change_set_id,
-            &[],
-        )?;
+        let result =
+            VerificationController::new(self.registry, self.project_root, self.lease_owner)
+                .verify(self.graph_version, jobpack_id, change_set_id, &[])?;
         let run_id = self
             .registry
             .latest_verification_run_id(self.graph_version, jobpack_id, change_set_id)?
@@ -624,14 +615,15 @@ impl<'a> TesterWorkflow<'a> {
                 .iter()
                 .any(|call| call.function.name == "submit_tester_report")
             {
-                if let Err(error) = validate_report_call_shape(
-                    calls.iter().map(|call| call.function.name.as_str()),
-                ) {
+                if let Err(error) =
+                    validate_report_call_shape(calls.iter().map(|call| call.function.name.as_str()))
+                {
                     if should_retry_invalid_report(round) {
                         messages.push(invalid_report_feedback(&error));
                         continue;
                     }
-                    return Err(error).context("Tester report remained invalid after bounded retries");
+                    return Err(error)
+                        .context("Tester report remained invalid after bounded retries");
                 }
                 let report_result = (|| -> Result<TesterAttemptEvidence> {
                     let report: TesterReportSubmission =
@@ -669,7 +661,8 @@ impl<'a> TesterWorkflow<'a> {
                         continue;
                     }
                     Err(error) => {
-                        return Err(error).context("Tester report remained invalid after bounded retries");
+                        return Err(error)
+                            .context("Tester report remained invalid after bounded retries");
                     }
                 }
             }
@@ -678,11 +671,7 @@ impl<'a> TesterWorkflow<'a> {
                 bail!("Tester exceeded bounded tool rounds");
             }
             for call in calls {
-                messages.push(self.execute_tool(
-                    project_tools,
-                    &mut execution,
-                    &call,
-                ));
+                messages.push(self.execute_tool(project_tools, &mut execution, &call));
             }
         }
         unreachable!("bounded Tester loop must return or fail")
@@ -742,16 +731,12 @@ fn validate_report_execution_coverage(
         bail!("Tester cannot report PASS/COMPLETE while execution steps remain PREPARED");
     }
     if claims_success && !has_completed_execution {
-        bail!(
-            "Tester cannot report PASS/COMPLETE without at least one completed execution step"
-        );
+        bail!("Tester cannot report PASS/COMPLETE without at least one completed execution step");
     }
     Ok(())
 }
 
-fn validate_report_call_shape<'a>(
-    names: impl IntoIterator<Item = &'a str>,
-) -> Result<()> {
+fn validate_report_call_shape<'a>(names: impl IntoIterator<Item = &'a str>) -> Result<()> {
     let names = names.into_iter().collect::<Vec<_>>();
     if names.len() != 1 || names[0] != "submit_tester_report" {
         bail!("submit_tester_report must be the only tool call in its response");
@@ -903,7 +888,12 @@ mod tests {
 
     #[test]
     fn fixed_workspace_adapters_reject_shell_like_script_paths() {
-        for path in ["/tmp/test.py", "../test.py", "tests/../escape.py", "src/test.py"] {
+        for path in [
+            "/tmp/test.py",
+            "../test.py",
+            "tests/../escape.py",
+            "src/test.py",
+        ] {
             let request = TesterExecutionStepRequest {
                 step_id: "run".into(),
                 replay_safety: ReplaySafety::Idempotent,
@@ -957,16 +947,12 @@ mod tests {
     #[test]
     fn mixed_report_and_tool_calls_are_invalid_report_shape() {
         assert!(validate_report_call_shape(["submit_tester_report"]).is_ok());
-        assert!(validate_report_call_shape([
-            "submit_tester_report",
-            "tester_workspace_read",
-        ])
-        .is_err());
-        assert!(validate_report_call_shape([
-            "tester_workspace_read",
-            "submit_tester_report",
-        ])
-        .is_err());
+        assert!(
+            validate_report_call_shape(["submit_tester_report", "tester_workspace_read",]).is_err()
+        );
+        assert!(
+            validate_report_call_shape(["tester_workspace_read", "submit_tester_report",]).is_err()
+        );
     }
 
     #[test]
