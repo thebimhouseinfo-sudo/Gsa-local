@@ -135,6 +135,16 @@ pub enum ReplaySafety {
     NonIdempotent,
 }
 
+impl ReplaySafety {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ObserveOnly => "OBSERVE_ONLY",
+            Self::Idempotent => "IDEMPOTENT",
+            Self::NonIdempotent => "NON_IDEMPOTENT",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum AdapterObservationField {
