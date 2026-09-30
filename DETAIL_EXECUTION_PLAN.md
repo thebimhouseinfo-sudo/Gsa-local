@@ -193,95 +193,100 @@ Environment premise under review:
 - this difference is valid only if shared role authority, Tester independence, evidence semantics and Human visual acceptance remain common;
 - Planner must route from observed runtime capability plus design risk, not from deployment label alone.
 
-## Milestone G — UI execution-mode architecture
+## Milestone G — UI visual-authority + dedicated UI Coder workflow
 
 Deliverables:
 - Designer / UX Coder / UI Coder role contracts;
-- UI_FIRST / UX_FIRST product workflow classification;
-- ui_execution_mode = BROWSER_FIRST | DESIGN_FIRST;
-- environment-aware routing input describing the actually available browser/design capability;
-- explicit allowance for Online and Local to choose different execution modes without being classified as drift when their runtime capabilities differ;
-- shared role authority/evidence/Human-review invariants across environments;
-- UX execution contract;
-- visual_authority_source = existing approved shell/design system, Designer spec, or Human direction;
-- BROWSER_FIRST may still invoke Designer for unresolved material visual decisions without invoking Penpot;
-- BROWSER_FIRST default for any existing product shell;
-- explicit Human approval before discarding/rebuilding/replacing any existing shell through DESIGN_FIRST; aesthetic dissatisfaction alone is not a mode-switch authority;
-- greenfield risk-based mode selection rather than automatic Penpot;
-- asset routing as a signal only;
-- mode-specific design readiness rules.
+- UI_FIRST / UX_FIRST product classification;
+- visual_authority_source contract;
+- existing-shell preservation by default;
+- explicit Human approval before shell discard/rebuild/replacement;
+- greenfield/rebuild source-first execution;
+- UI Coder state machine: UI_GROUND -> UI_IMPLEMENT -> UI_RENDER -> UI_INSPECT -> UI_REFINE -> UI_SELF_CHECK;
+- dedicated UI workspace for references/screenshots/comparisons/assets/prompts/tokens/notes.
 
 Gate:
-- Planner can select the lightest safe UI execution mode without UI Coder inventing material product/design decisions.
+- UI Coder can implement/refine real UI without inventing unresolved visual decisions and without a parallel mockup authority.
 
-## Milestone H — agent-browser shared runtime + optional Penpot
+## Milestone H — agent-browser shared runtime
 
-Primary Local UI surface:
-- Vercel agent-browser is the default runnable-source observation loop for UI Coder;
-- Tester uses a separate independent agent-browser session for verification.
-
-agent-browser deliverables:
-- Local PROBE of navigation/snapshot/interact/re-snapshot/viewport/screenshot/diff/console/error/cleanup;
-- separate UI Coder development and Tester verification operation identities;
-- Tester browser workspace;
-- direct Human screenshot paths;
-- exact target/viewport applicability.
-
-Optional DESIGN_FIRST/Penpot deliverables (activated only by a genuine approved need, never to manufacture a redesign for testing):
-- Penpot is activated only when the selected mode requires pre-code visual architecture;
-- generic UI Coder + Penpot capability PASS may be reused through UPSTREAM_OBSERVED_REF or HUMAN_ACCEPTED_EXTERNAL planning premise;
-- Local Penpot invocation/readback/resume/artifact integration remains OBSERVED locally when used;
-- immutable PenpotEvidenceBundle/read-only inspection path for non-browser design checkpoints, independent of agent-browser readiness when the Penpot target is not browser-inspectable;
-- UI DESIGN APPROVED baseline when required.
+Deliverables:
+- Local agent-browser capability PROBE;
+- UI Coder development session;
+- independent Tester verification session;
+- screenshot/snapshot/diff/viewport/interaction evidence;
+- direct Human evidence paths;
+- exact target/browser-operation applicability;
+- session/evidence authority isolation.
 
 Gate:
-- BROWSER_FIRST can proceed without Penpot;
-- DESIGN_FIRST can resume/inspect its Penpot artifact when Penpot is selected;
-- UI Coder browser observations never count as Tester PASS.
+- UI Coder can observe/refine the real app and Tester can independently verify it without sharing PASS authority.
 
-## Milestone I — mode-specific flow to SHELL_READY
+## Milestone I — UI acceptance / shell readiness
 
-BROWSER_FIRST:
-- resolve visual authority first; use existing approved shell/design system/Human direction when sufficient, otherwise Designer supplies visual direction/spec without Penpot;
-- UI Coder edits source directly;
-- agent-browser drives development/refinement feedback;
-- Coder self-check + Reviewer;
-- Tester independently verifies runnable UI;
-- Human reviews evidence when required.
-
-DESIGN_FIRST:
-- Designer/UI Coder Penpot design;
-- objective design evidence + Human approval;
-- UI DESIGN APPROVED;
-- source implementation;
-- agent-browser development loop;
+Normal UI:
+- source/browser loop;
+- UI_SELF_CHECK;
 - Reviewer;
-- Tester independent runtime verification.
+- Tester;
+- Human when subjective acceptance is required;
+- UI_ACCEPTED.
 
-Shared deliverables:
-- representative shell pilot when risk justifies it;
-- SHELL_READY based on runtime evidence;
-- UX_FIRST UI Update Pack routing through BROWSER_FIRST or DESIGN_FIRST;
-- Rebaseline/Salvage when Human decides an existing shell must be discarded/rebuilt; regression coverage uses a genuine approved rebuild or controlled fixture, never a manufactured product redesign.
+Greenfield or Human-approved shell rebuild:
+- Designer/Human visual direction where needed;
+- real-source shell build;
+- agent-browser refine loop;
+- representative-content/responsive pilot;
+- Reviewer;
+- Tester;
+- Human checkpoint where required;
+- SHELL_READY.
 
 Gate:
-- no broad scale-out from an unverified shell where SHELL_READY is required;
-- no Penpot requirement for safe source-first UI iteration;
-- existing-shell rebuild uses DESIGN_FIRST only after Human approval.
+- no existing shell is discarded without Human approval;
+- no shell baseline is accepted from mockup-only evidence;
+- SHELL_READY requires runnable-source evidence.
+
+## Milestone J — extensible UI resources / skills
+
+Optional extensions:
+- icon/font/component libraries;
+- open/stock assets;
+- image generation;
+- SVG/vector tooling;
+- asset optimization;
+- responsive/accessibility/design-token/framework/visual-regression/asset-integration skills.
+
+Gate:
+- core UI workflow still works with source + agent-browser alone;
+- optional provider absence does not silently block execution;
+- imported/generated durable assets preserve provenance when relevant.
+
+## Milestone K — UI workflow calibration
+
+Pilots:
+- brownfield existing shell;
+- simple greenfield shell;
+- Human-approved rebuild or controlled fixture;
+- UX_FIRST Update Pack;
+- interruption/resume across UI workflow states;
+- UI Coder vs Tester session isolation;
+- optional-provider absence.
+
+Gate:
+- workflow becomes mandatory only after real Local evidence shows the browser-driven UI loop is resumable, independently verifiable and bounded.
 
 ## Milestone dependency chain
 
 ```text
 F immediate rebaseline + recovery foundations
-  -> G UI execution-mode architecture
+  -> G UI authority + UI Coder workflow
   -> H agent-browser shared runtime
+  -> I UI acceptance / SHELL_READY
+  -> K workflow calibration
 
-G selects BROWSER_FIRST
-  -> I browser-first source flow
-
-G selects DESIGN_FIRST
-  -> H optional Penpot integration
-  -> I design-first flow
+G
+  -> J optional UI providers/skills
 ```
 
-No later milestone may infer readiness from numbering alone; the selected mode and its predecessor gates must be satisfied explicitly.
+No later milestone may infer readiness from numbering alone; predecessor gates must be satisfied explicitly.
