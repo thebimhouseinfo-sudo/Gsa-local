@@ -365,7 +365,7 @@ Dependencies: none.
 - [ ] Ambiguous Project resolution returns explicit candidates and blocks execution.
 - [ ] Never infer Project from newest Job/Run or conversation recency.
 
-These tasks are future architecture work and MUST NOT be pulled into the active J-177F Tester implementation unless a dependency is explicitly required.
+No K-Q task may execute inside the frozen J-177F. Any compatibility prerequisite needed by the remaining Tester work must be planned explicitly in the replacement remaining-work Job/graph.
 
 ### K1 — authoritative WorkCursor / ResumeDescriptor
 Dependencies: K0.
@@ -460,7 +460,7 @@ Dependencies: K1.
 - [ ] Detect PARTIAL_SOURCE_ADVANCE / STALE_GRAPH_BINDING / SOURCE_SET_CONFLICT.
 
 ### K10 — recovery regression matrix
-Dependencies: K0-K9.
+Dependencies: K0, K1, K2, K3, K3a, K3b, K3c, K4, K5, K6, K7, K8, K9.
 
 - [ ] Restart before/after mutation, checkpoint, Reviewer, Internal Fix, Verification and Handoff.
 - [ ] Recover partial durable writes idempotently.
@@ -468,6 +468,10 @@ Dependencies: K0-K9.
 - [ ] Block unknown-lineage adoption.
 - [ ] Preserve monotonic retry/attempt budgets across restart.
 - [ ] Ensure Human stop/EXPLICIT_START remains durable.
+- [ ] Project-first resolution blocks ambiguous/wrong Project continuation.
+- [ ] Parent/child Run recovery leaves no zombie IN_PROGRESS parent.
+- [ ] GateDiagnostic identifies exact mismatch fields needed for repair/recovery.
+- [ ] Workflow replay/readiness tests cover idempotent-by-key, CAS/change-set-bound and uncertain NON_IDEMPOTENT operations.
 
 ## K11. Workflow-lessons migration coverage
 
