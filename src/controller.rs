@@ -26,7 +26,6 @@ pub enum NextWork {
     Tester(TesterCheckpointWorkRecord),
 }
 
-
 impl From<ActiveWorkRecord> for ActiveWork {
     fn from(value: ActiveWorkRecord) -> Self {
         Self {
