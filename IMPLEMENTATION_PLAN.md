@@ -2495,8 +2495,8 @@ Required:
 - preserve UI_FIRST / UX_FIRST as product workflow classification;
 - add orthogonal ui_execution_mode = BROWSER_FIRST | DESIGN_FIRST;
 - UX execution contract;
-- decision criteria: existing usable shell, shell complexity, visual uncertainty, cost of source rework, need for Human pre-approval;
-- existing usable shell => BROWSER_FIRST by default;
+- decision criteria: existing shell, shell complexity, visual uncertainty, cost of source rework, need for Human pre-approval;
+- any existing product shell => BROWSER_FIRST by default, regardless of aesthetics; a non-runnable state is a repair/integration issue, not permission to switch modes;
 - existing-shell rebuild/replacement => DESIGN_FIRST only after explicit Human approval;
 - greenfield does not imply Penpot; simple standard UI may remain BROWSER_FIRST;
 - assets are a routing signal only, never the sole condition;
@@ -2540,7 +2540,7 @@ Required:
 - Tester uses an independent verification session;
 - UI Coder browser observations never satisfy Tester PASS;
 - agent-browser checkpoints require a browser-inspectable runnable/prototype target;
-- DESIGN_FIRST non-browser Penpot checkpoints use immutable PenpotEvidenceBundle produced by connector/runtime readback/export or capability-gated Tester read-only Penpot access;
+- DESIGN_FIRST non-browser Penpot checkpoints use immutable PenpotEvidenceBundle produced by connector/runtime readback/export or capability-gated Tester read-only Penpot access; this path is independent of agent-browser when the Penpot artifact is not browser-inspectable;
 - Tester-owned browser evidence workspace;
 - explicit screenshot/artifact paths for Human;
 - exact target/design/viewport applicability;
@@ -2603,7 +2603,7 @@ Required:
 - existing shell stays BROWSER_FIRST unless Human approves a shell rebuild;
 - real brownfield BROWSER_FIRST pilot;
 - simple greenfield BROWSER_FIRST pilot with no Penpot dependency;
-- DESIGN_FIRST/Penpot pilot for an approved shell build/rebuild or comparable high visual-risk case;
+- DESIGN_FIRST/Penpot pilot only for a genuine Human-approved shell build/rebuild/high visual-risk case, or a controlled integration fixture if no such product case exists; never manufacture a redesign to satisfy the pilot;
 - interruption/resume tests in both modes;
 - intentional Human BROWSER_FIRST -> DESIGN_FIRST rebuild decision with Rebaseline/Salvage;
 - bounded integration baseline validation.
@@ -2631,7 +2631,9 @@ Phase 19
 ```
 
 Cross-cutting gates:
+- Any existing shell starts BROWSER_FIRST; only explicit Human approval to discard/rebuild/replace that shell may switch it to DESIGN_FIRST.
 - BROWSER_FIRST source work does not wait for Penpot.
+- Pre-source DESIGN_FIRST Penpot review does not wait for agent-browser when the target is not browser-inspectable; it uses PenpotEvidenceBundle + Human review.
 - DESIGN_FIRST Penpot work cannot activate until Local Penpot integration evidence is sufficient for the required operations.
 - Tester browser checkpoints cannot activate until Phase 18 PROBE is FUNCTIONAL/GOAL_MET for their required operation set.
 - Existing-shell rebuild/replacement cannot switch to DESIGN_FIRST without explicit Human approval.
