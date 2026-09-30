@@ -541,6 +541,82 @@ fn completed_adapter_observation_can_back_observed_evidence() {
 }
 
 #[test]
+fn prepared_execution_is_unresolved_until_closed() {
+    let (dir, registry, version, verification_run_id) = setup();
+    let artifact = workspace_artifact(&dir, version, "ATT-PREPARED");
+    let evidence = attempt(
+        version,
+        "ATT-PREPARED",
+        "change-1",
+        artifact,
+        verification_run_id,
+    );
+    let target = evidence.target.clone();
+    let request = TesterExecutionStepRequest {
+        step_id: "probe-runtime".into(),
+        replay_safety: ReplaySafety::ObserveOnly,
+        adapter: TesterAdapterRequest::WorkspacePython {
+            script_path: "tests/probe.py".into(),
+            args: vec![],
+        },
+    };
+    let target_fingerprint = target.fingerprint(version, "CP1").unwrap();
+    let fence = request
+        .fence_key(version, "CP1", "ATT-PREPARED", &target_fingerprint)
+        .unwrap();
+
+    registry
+        .prepare_tester_execution_step(
+            dir.path(),
+            "owner-a",
+            version,
+            "CP1",
+            "ATT-PREPARED",
+            &target,
+            &fence,
+            &request.step_id,
+            request.adapter.adapter_id(),
+            request.replay_safety,
+            &fence,
+            &serde_json::to_value(&request).unwrap(),
+        )
+        .unwrap();
+
+    assert!(registry
+        .has_unresolved_tester_execution_steps(version, "CP1", "ATT-PREPARED")
+        .unwrap());
+
+    registry
+        .complete_tester_execution_step(
+            dir.path(),
+            "owner-a",
+            version,
+            "CP1",
+            "ATT-PREPARED",
+            &TesterExecutionObservation {
+                execution_id: fence.clone(),
+                step_id: request.step_id.clone(),
+                adapter_id: request.adapter.adapter_id().into(),
+                replay_safety: request.replay_safety,
+                fence_key: fence,
+                status: TesterExecutionStatus::Blocked,
+                exit_code: None,
+                duration_ms: 0,
+                timed_out: false,
+                blocked_reason: Some("adapter failed".into()),
+                stdout: String::new(),
+                stderr: String::new(),
+                evidence_refs: vec![],
+            },
+        )
+        .unwrap();
+
+    assert!(!registry
+        .has_unresolved_tester_execution_steps(version, "CP1", "ATT-PREPARED")
+        .unwrap());
+}
+
+#[test]
 fn fabricated_adapter_value_is_rejected_against_execution_record() {
     let (dir, registry, version, verification_run_id) = setup();
     let artifact = workspace_artifact(&dir, version, "ATT-EXEC-MISMATCH");
