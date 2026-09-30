@@ -8,15 +8,13 @@ use crate::{
     registry::Registry,
     session::Session,
     tester_evidence::{
-        AdapterObservationField, EvidenceProvenance, ExperimentContext, ReplaySafety,
-        TesterAttemptEvidence, TesterClassification, TesterEvidenceOutputRecord, TesterEvidenceRef,
-        TesterModeResult, TesterPrerequisiteTarget, TesterTargetBinding, VerificationObservationField,
+        AdapterObservationField, ExperimentContext, ReplaySafety, TesterAttemptEvidence,
+        TesterClassification, TesterEvidenceOutputRecord, TesterEvidenceRef, TesterModeResult,
+        TesterTargetBinding, VerificationObservationField,
     },
     tester_workspace::TesterWorkspaceRuntime,
     tools::ProjectToolRuntime,
-    verification::{
-        VerificationController, VerificationResult,
-    },
+    verification::{VerificationController, VerificationResult},
 };
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
