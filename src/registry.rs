@@ -1,7 +1,13 @@
 use crate::{
     checkpoint::Checkpoint,
-    execution_graph::{EvidenceRequirementSpec, ExecutionGraph, TestCheckpointSpec},
+    execution_graph::{
+        EvidenceRequirementSpec, ExecutionGraph, PrerequisiteState, TestCheckpointSpec,
+    },
     plan::{PlanArtifact, PlanRevision},
+    tester_evidence::{
+        TesterAttemptEvidence, TesterEvidenceOutputRecord, TesterEvidenceRef,
+    },
+    tester_workspace::TesterWorkspaceRuntime,
     verification::{VerificationEvidence, VerificationResult},
 };
 use anyhow::{bail, Context, Result};
@@ -330,6 +336,38 @@ impl Registry {
                 profile_json TEXT NOT NULL,
                 commands_json TEXT NOT NULL,
                 created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS tester_evidence_attempts (
+                graph_version INTEGER NOT NULL,
+                checkpoint_id TEXT NOT NULL,
+                attempt_id TEXT NOT NULL,
+                target_fingerprint TEXT NOT NULL,
+                attempt_json TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY (graph_version, checkpoint_id, attempt_id),
+                FOREIGN KEY (graph_version, checkpoint_id)
+                    REFERENCES execution_test_checkpoints(graph_version, checkpoint_id)
+                    ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS tester_evidence_records (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                graph_version INTEGER NOT NULL,
+                checkpoint_id TEXT NOT NULL,
+                attempt_id TEXT NOT NULL,
+                output_id TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                provenance TEXT NOT NULL,
+                record_json TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                UNIQUE (graph_version, checkpoint_id, attempt_id, output_id),
+                FOREIGN KEY (graph_version, checkpoint_id, attempt_id)
+                    REFERENCES tester_evidence_attempts(graph_version, checkpoint_id, attempt_id)
+                    ON DELETE CASCADE,
+                FOREIGN KEY (graph_version, checkpoint_id, output_id)
+                    REFERENCES execution_evidence_outputs(graph_version, checkpoint_id, output_id)
+                    ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS events (
