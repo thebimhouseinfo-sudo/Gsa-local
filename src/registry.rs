@@ -1457,8 +1457,8 @@ impl Registry {
                 &serde_json::json!({
                     "graph_version": graph_version,
                     "checkpoint_id": checkpoint.id,
-                    "target": target,
-                    "reason": reason
+                    "target": &target,
+                    "reason": &reason
                 }),
             )?;
             write_checkpoint_tx(
@@ -1540,8 +1540,8 @@ impl Registry {
             &serde_json::json!({
                 "graph_version": graph_version,
                 "checkpoint_id": checkpoint_id,
-                "attempt_id": attempt_id,
-                "target": target
+                "attempt_id": &attempt_id,
+                "target": &target
             }),
         )?;
         write_checkpoint_tx(
