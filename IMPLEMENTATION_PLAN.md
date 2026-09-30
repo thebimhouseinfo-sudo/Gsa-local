@@ -2120,7 +2120,7 @@ Acceptance: restart tại bất kỳ stage nào resume đúng Milestone/Job Pack
 
 ## Resume / Recovery hardening derived from real interrupted sessions
 
-Full evidence and rationale: WORKFLOW_RESUME_LESSONS.md.
+Full evidence and rationale: WORKFLOW_LESSONS_LEARNED.md.
 
 Phase 12 must not be considered complete merely because latest_checkpoint and lease exist. Full resume additionally requires a shared recovery protocol:
 
