@@ -300,6 +300,48 @@ fn stale_review_target_cannot_record_tester_evidence() {
 }
 
 #[test]
+fn stale_workspace_artifact_ref_cannot_be_persisted_as_observed() {
+    let (dir, registry, version) = setup();
+    let artifact = workspace_artifact(&dir, version, "ATT-STALE-ARTIFACT");
+    let stale = attempt(
+        version,
+        "ATT-STALE-ARTIFACT",
+        "change-1",
+        artifact.clone(),
+    );
+    std::fs::write(
+        dir.path()
+            .join(".gsa/tester")
+            .join(version.to_string())
+            .join("CP1/ATT-STALE-ARTIFACT/artifacts/runtime.txt"),
+        "mutated-after-ref",
+    )
+    .unwrap();
+
+    assert!(registry
+        .record_tester_attempt_evidence(dir.path(), "owner-a", &stale)
+        .is_err());
+}
+
+#[test]
+fn adapter_observation_ref_is_rejected_until_execution_records_exist() {
+    let (dir, registry, version) = setup();
+    let artifact = workspace_artifact(&dir, version, "ATT-ADAPTER");
+    let mut evidence = attempt(version, "ATT-ADAPTER", "change-1", artifact);
+    let adapter_ref = TesterEvidenceRef::AdapterObservation {
+        adapter_id: "future-adapter".into(),
+        execution_id: "exec-1".into(),
+    };
+    evidence.experiment.as_mut().unwrap().samples[0].observations[0].evidence_refs =
+        vec![adapter_ref.clone()];
+    evidence.outputs[0].evidence_refs = vec![adapter_ref];
+
+    assert!(registry
+        .record_tester_attempt_evidence(dir.path(), "owner-a", &evidence)
+        .is_err());
+}
+
+#[test]
 fn successful_required_probe_output_must_be_observed() {
     let (dir, _registry, version) = setup();
     let artifact = workspace_artifact(&dir, version, "ATT-IMPLIED");
