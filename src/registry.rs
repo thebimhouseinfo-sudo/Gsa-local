@@ -1761,6 +1761,201 @@ impl Registry {
             .map_err(Into::into)
     }
 
+    pub fn record_tester_attempt_evidence(
+        &self,
+        project_root: &Path,
+        owner: &str,
+        attempt: &TesterAttemptEvidence,
+    ) -> Result<String> {
+        let tx = self.conn.unchecked_transaction()?;
+        assert_lease_owner_tx(&tx, project_root, owner)?;
+
+        let graph_status: Option<String> = tx
+            .query_row(
+                "SELECT status FROM execution_graph WHERE version=?1",
+                params![attempt.graph_version],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if graph_status.as_deref() != Some("CURRENT") {
+            bail!(
+                "Tester evidence requires CURRENT execution graph {}; found {:?}",
+                attempt.graph_version,
+                graph_status
+            );
+        }
+
+        let checkpoint_json: Option<String> = tx
+            .query_row(
+                r#"
+                SELECT definition_json
+                FROM execution_test_checkpoints
+                WHERE graph_version=?1 AND checkpoint_id=?2
+                "#,
+                params![attempt.graph_version, attempt.checkpoint_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let checkpoint_json = checkpoint_json.context("Tester checkpoint definition is missing")?;
+        let checkpoint: TestCheckpointSpec = serde_json::from_str(&checkpoint_json)?;
+        attempt.validate_against_checkpoint(&checkpoint)?;
+        validate_tester_target_tx(&tx, attempt)?;
+
+        validate_tester_evidence_refs(&tx, project_root, attempt)?;
+
+        let target_fingerprint = attempt.target_fingerprint()?;
+        tx.execute(
+            r#"
+            INSERT INTO tester_evidence_attempts
+                (graph_version, checkpoint_id, attempt_id, target_fingerprint,
+                 attempt_json, created_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+            "#,
+            params![
+                attempt.graph_version,
+                attempt.checkpoint_id,
+                attempt.attempt_id,
+                target_fingerprint,
+                serde_json::to_string(attempt)?,
+                unix_seconds()?
+            ],
+        )?;
+
+        for output in &attempt.outputs {
+            tx.execute(
+                r#"
+                INSERT INTO tester_evidence_records
+                    (graph_version, checkpoint_id, attempt_id, output_id,
+                     mode, provenance, record_json, created_at)
+                VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                "#,
+                params![
+                    attempt.graph_version,
+                    attempt.checkpoint_id,
+                    attempt.attempt_id,
+                    output.output_id,
+                    serde_json::to_value(output.mode)?
+                        .as_str()
+                        .context("Tester evidence mode did not serialize as string")?,
+                    serde_json::to_value(output.provenance)?
+                        .as_str()
+                        .context("Tester evidence provenance did not serialize as string")?,
+                    serde_json::to_string(output)?,
+                    unix_seconds()?
+                ],
+            )?;
+        }
+
+        append_event_tx(
+            &tx,
+            "TESTER_EVIDENCE_RECORDED",
+            &serde_json::json!({
+                "graph_version": attempt.graph_version,
+                "checkpoint_id": attempt.checkpoint_id,
+                "attempt_id": attempt.attempt_id,
+                "target_fingerprint": target_fingerprint,
+                "modes": attempt.mode_results,
+                "outputs": attempt.outputs.iter().map(|output| &output.output_id).collect::<Vec<_>>()
+            }),
+        )?;
+        tx.commit()?;
+        Ok(target_fingerprint)
+    }
+
+    pub fn tester_attempt_evidence(
+        &self,
+        graph_version: i64,
+        checkpoint_id: &str,
+        attempt_id: &str,
+    ) -> Result<Option<TesterAttemptEvidence>> {
+        let json: Option<String> = self
+            .conn
+            .query_row(
+                r#"
+                SELECT attempt_json
+                FROM tester_evidence_attempts
+                WHERE graph_version=?1 AND checkpoint_id=?2 AND attempt_id=?3
+                "#,
+                params![graph_version, checkpoint_id, attempt_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        json.map(|value| serde_json::from_str(&value).map_err(Into::into))
+            .transpose()
+    }
+
+    pub fn tester_target_fingerprint(
+        &self,
+        graph_version: i64,
+        checkpoint_id: &str,
+        attempt_id: &str,
+    ) -> Result<Option<String>> {
+        self.conn
+            .query_row(
+                r#"
+                SELECT target_fingerprint
+                FROM tester_evidence_attempts
+                WHERE graph_version=?1 AND checkpoint_id=?2 AND attempt_id=?3
+                "#,
+                params![graph_version, checkpoint_id, attempt_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    pub fn tester_evidence_output(
+        &self,
+        graph_version: i64,
+        checkpoint_id: &str,
+        attempt_id: &str,
+        output_id: &str,
+    ) -> Result<Option<TesterEvidenceOutputRecord>> {
+        let json: Option<String> = self
+            .conn
+            .query_row(
+                r#"
+                SELECT record_json
+                FROM tester_evidence_records
+                WHERE graph_version=?1 AND checkpoint_id=?2
+                  AND attempt_id=?3 AND output_id=?4
+                "#,
+                params![graph_version, checkpoint_id, attempt_id, output_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        json.map(|value| serde_json::from_str(&value).map_err(Into::into))
+            .transpose()
+    }
+
+    pub fn latest_tester_evidence_output(
+        &self,
+        graph_version: i64,
+        checkpoint_id: &str,
+        output_id: &str,
+    ) -> Result<Option<(String, TesterEvidenceOutputRecord)>> {
+        let row: Option<(String, String)> = self
+            .conn
+            .query_row(
+                r#"
+                SELECT attempt_id, record_json
+                FROM tester_evidence_records
+                WHERE graph_version=?1 AND checkpoint_id=?2 AND output_id=?3
+                ORDER BY id DESC LIMIT 1
+                "#,
+                params![graph_version, checkpoint_id, output_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        row.map(|(attempt_id, json)| {
+            Ok((
+                attempt_id,
+                serde_json::from_str::<TesterEvidenceOutputRecord>(&json)?,
+            ))
+        })
+        .transpose()
+    }
+
     pub fn record_verification_evidence(
         &self,
         project_root: &Path,
