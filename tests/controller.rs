@@ -112,9 +112,9 @@ fn graph() -> ExecutionGraph {
                 checklist: vec!["implement".into()],
             },
         ],
+        checkpoints: vec![],
+        evidence_requirements: vec![],
     }
-    checkpoints: vec![],
-    evidence_requirements: vec![],
 }
 
 fn approve_and_register(registry: &Registry) -> (i64, String, i64) {
