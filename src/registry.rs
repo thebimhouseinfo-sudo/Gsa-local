@@ -1354,13 +1354,16 @@ impl Registry {
         Ok(checkpoints)
     }
 
-
     pub fn tester_checkpoint_state(
         &self,
         graph_version: i64,
         checkpoint_id: &str,
     ) -> Result<Option<TesterCheckpointRuntime>> {
-        tester_checkpoint_state_tx(&self.conn.unchecked_transaction()?, graph_version, checkpoint_id)
+        tester_checkpoint_state_tx(
+            &self.conn.unchecked_transaction()?,
+            graph_version,
+            checkpoint_id,
+        )
     }
 
     pub fn resolve_due_tester_checkpoint(
@@ -1395,16 +1398,21 @@ impl Registry {
             .collect::<std::result::Result<Vec<_>, _>>()?;
         drop(statement);
 
-        let available = available_capabilities.iter().map(String::as_str).collect::<HashSet<_>>();
+        let available = available_capabilities
+            .iter()
+            .map(String::as_str)
+            .collect::<HashSet<_>>();
         for json in checkpoint_json {
             let checkpoint: TestCheckpointSpec = serde_json::from_str(&json)?;
-            let Some(state) = tester_checkpoint_state_tx(&tx, graph_version, &checkpoint.id)? else {
+            let Some(state) = tester_checkpoint_state_tx(&tx, graph_version, &checkpoint.id)?
+            else {
                 continue;
             };
             if state.status != TesterCheckpointStatus::Pending {
                 continue;
             }
-            let Some(target) = build_tester_target_if_ready_tx(&tx, graph_version, &checkpoint)? else {
+            let Some(target) = build_tester_target_if_ready_tx(&tx, graph_version, &checkpoint)?
+            else {
                 continue;
             };
             if !checkpoint_boundary_reached_tx(&tx, graph_version, &checkpoint)? {
@@ -1499,7 +1507,9 @@ impl Registry {
             bail!("cannot begin Tester attempt without CURRENT execution graph");
         };
         if current_graph != graph_version {
-            bail!("stale Tester checkpoint graph {graph_version}; current graph is {current_graph}");
+            bail!(
+                "stale Tester checkpoint graph {graph_version}; current graph is {current_graph}"
+            );
         }
         ensure_tester_checkpoint_state_rows_tx(&tx, graph_version)?;
         let runtime = tester_checkpoint_state_tx(&tx, graph_version, checkpoint_id)?
@@ -2315,9 +2325,7 @@ impl Registry {
                 TesterCheckpointStatus::NeedsHuman => {
                     ("TESTER_CHECKPOINT_NEEDS_HUMAN", "tester_needs_human")
                 }
-                TesterCheckpointStatus::Blocked => {
-                    ("TESTER_CHECKPOINT_BLOCKED", "tester_blocked")
-                }
+                TesterCheckpointStatus::Blocked => ("TESTER_CHECKPOINT_BLOCKED", "tester_blocked"),
                 _ => bail!("Tester report produced invalid terminal checkpoint state"),
             };
             let sequence = append_event_tx(
@@ -3407,10 +3415,7 @@ impl Registry {
 }
 
 
-fn ensure_tester_checkpoint_state_rows_tx(
-    tx: &Transaction<'_>,
-    graph_version: i64,
-) -> Result<()> {
+fn ensure_tester_checkpoint_state_rows_tx(tx: &Transaction<'_>, graph_version: i64) -> Result<()> {
     tx.execute(
         r#"
         INSERT INTO tester_checkpoint_state
@@ -3431,7 +3436,13 @@ fn tester_checkpoint_state_tx(
     graph_version: i64,
     checkpoint_id: &str,
 ) -> Result<Option<TesterCheckpointRuntime>> {
-    let row: Option<(String, Option<String>, Option<String>, Option<String>, String)> = tx
+    let row: Option<(
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        String,
+    )> = tx
         .query_row(
             r#"
             SELECT s.status, s.target_json, s.attempt_id, s.reason, c.definition_json
@@ -3441,21 +3452,31 @@ fn tester_checkpoint_state_tx(
             WHERE s.graph_version=?1 AND s.checkpoint_id=?2
             "#,
             params![graph_version, checkpoint_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
         )
         .optional()?;
-    row.map(|(status, target_json, attempt_id, reason, checkpoint_json)| {
-        Ok(TesterCheckpointRuntime {
-            graph_version,
-            checkpoint: serde_json::from_str(&checkpoint_json)?,
-            status: TesterCheckpointStatus::parse(&status)?,
-            target: target_json
-                .map(|value| serde_json::from_str::<TesterTargetBinding>(&value))
-                .transpose()?,
-            attempt_id,
-            reason,
-        })
-    })
+    row.map(
+        |(status, target_json, attempt_id, reason, checkpoint_json)| {
+            Ok(TesterCheckpointRuntime {
+                graph_version,
+                checkpoint: serde_json::from_str(&checkpoint_json)?,
+                status: TesterCheckpointStatus::parse(&status)?,
+                target: target_json
+                    .map(|value| serde_json::from_str::<TesterTargetBinding>(&value))
+                    .transpose()?,
+                attempt_id,
+                reason,
+            })
+        },
+    )
     .transpose()
 }
 
@@ -3588,9 +3609,11 @@ fn checkpoint_boundary_reached_tx(
             let Some(before) = checkpoint.before_jobpack_id.as_deref() else {
                 return Ok(false);
             };
-            Ok(next_eligible_jobpack_id_tx(tx, graph_version, &checkpoint.milestone_id)?
-                .as_deref()
-                == Some(before))
+            Ok(
+                next_eligible_jobpack_id_tx(tx, graph_version, &checkpoint.milestone_id)?
+                    .as_deref()
+                    == Some(before),
+            )
         }
     }
 }
@@ -3647,7 +3670,9 @@ fn pending_before_jobpack_checkpoint_ready_tx(
         "#,
     )?;
     let rows = statement
-        .query_map(params![graph_version, jobpack_id], |row| row.get::<_, String>(0))?
+        .query_map(params![graph_version, jobpack_id], |row| {
+            row.get::<_, String>(0)
+        })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     drop(statement);
     for json in rows {
@@ -3659,9 +3684,7 @@ fn pending_before_jobpack_checkpoint_ready_tx(
     Ok(false)
 }
 
-fn aggregate_tester_checkpoint_status(
-    attempt: &TesterAttemptEvidence,
-) -> TesterCheckpointStatus {
+fn aggregate_tester_checkpoint_status(attempt: &TesterAttemptEvidence) -> TesterCheckpointStatus {
     if attempt
         .mode_results
         .iter()
@@ -3703,10 +3726,7 @@ fn tester_checkpoint_reason(
         .filter_map(|result| result.reason.clone())
         .collect::<Vec<_>>();
     if !attempt.classifications.is_empty() {
-        reasons.push(format!(
-            "classifications={:?}",
-            attempt.classifications
-        ));
+        reasons.push(format!("classifications={:?}", attempt.classifications));
     }
     if reasons.is_empty() {
         reasons.push("Tester checkpoint did not satisfy all required modes".into());
