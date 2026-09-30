@@ -2070,3 +2070,132 @@ hundreds of commits
 ```
 
 This improves resume, rebaseline, review quality, source attribution, and recovery.
+
+---
+
+# 43. Task identity mismatch can block valid Run finalization even when implementation evidence is valid
+
+A control-plane defect was observed during the post-rebaseline Tester continuation.
+
+The bounded baseline-adoption Run had:
+
+- exact source/CI evidence showing the salvaged runtime remained valid;
+- a persisted `GOAL_RECHECK` with all active completion criteria `MET`;
+- no source mutation in the adoption Run;
+- explicit evidence that later commits changed planning/docs only.
+
+However, terminal `run_complete` still rejected the Coder Run with:
+
+```text
+CODER_COMPLETION_BLOCKED:
+exact GOAL_RECHECK record and its persisted verification ref are required
+```
+
+The observed contract mismatch was:
+
+```text
+Job task key
+  = T2-ADOPT-BASELINE
+
+GOAL_RECHECK.task_id schema
+  = UUID only
+
+result
+  -> GOAL_RECHECK persisted with task_id = null
+  -> verification is real and run-bound
+  -> terminal completion cannot recognize it as the exact task recheck
+```
+
+This is a control-plane identity problem, not evidence that the implementation failed.
+
+## 43.1 Human-approved progression may be used as a temporary operational exception
+
+When all of the following are true:
+
+1. exact source/runtime evidence is valid;
+2. the bounded Task criteria have been rechecked and are `MET`;
+3. no unresolved product/code finding remains;
+4. the completion blocker is isolated to control-plane bookkeeping/identity;
+5. the Human explicitly approves progression;
+
+then the accepted source baseline may be used to begin the next approved Task.
+
+This exception must be explicit and durable. It must not be silently inferred by an agent.
+
+The blocked lifecycle record and the persisted verification remain audit evidence until the control-plane defect is repaired.
+
+Human approval does **not** authorize:
+
+- fabricating a missing PASS;
+- deleting the blocked Run;
+- weakening verification requirements;
+- rewriting source merely to satisfy lifecycle metadata;
+- routing around a denied control-plane action through another mutation path.
+
+## 43.2 Deferred fix: unify Task identity across Job, Run, Verification and completion gates
+
+The durable Task contract must use one identity model end-to-end.
+
+Acceptable designs include:
+
+```text
+task_id = UUID everywhere
+```
+
+or:
+
+```text
+task_ref = stable string key
+task_uuid = optional canonical UUID
+```
+
+but the control plane must not mix:
+
+```text
+Job.tasks[].task_id = free-form task key
+GOAL_RECHECK.task_id = UUID-only
+```
+
+without a deterministic mapping.
+
+The eventual fix should cover:
+
+- `job_prepare` / Job task schema;
+- `run_begin.primary_task_id` and `affected_task_refs`;
+- `goal_recheck_record.task_id`;
+- `run_complete` exact verification lookup;
+- Handoff task binding;
+- resume/recovery reconciliation.
+
+## 43.3 Completion errors must expose the exact mismatch
+
+A terminal gate should report which field failed to match.
+
+Example:
+
+```text
+expected_run_id = ...
+observed_run_id = ...
+
+expected_task_ref = T2-ADOPT-BASELINE
+observed_task_id = null
+
+verification_ref = ...
+verification_persisted = true
+verification_result = PASS
+```
+
+This prevents a valid implementation Run from becoming stuck behind an opaque generic completion error.
+
+## 43.4 Key invariant
+
+A control-plane bookkeeping defect must not be confused with a product/code failure.
+
+The workflow should preserve both truths:
+
+```text
+implementation evidence = accepted
+control-plane finalization = defective / deferred repair
+```
+
+When Human-approved progression is used, the next Task must start from the exact accepted source target and carry the unresolved control-plane defect as workflow debt rather than pretending it never happened.
