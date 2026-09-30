@@ -218,6 +218,7 @@ pub struct TesterExecutionRuntime<'a> {
     workspace: TesterWorkspaceRuntime,
     runner: TesterSandboxRunner,
     execution_count: usize,
+    observations: Vec<TesterExecutionObservation>,
 }
 
 impl<'a> TesterExecutionRuntime<'a> {
@@ -265,6 +266,7 @@ impl<'a> TesterExecutionRuntime<'a> {
             workspace,
             runner,
             execution_count: 0,
+            observations: Vec::new(),
         })
     }
 
@@ -328,7 +330,14 @@ impl<'a> TesterExecutionRuntime<'a> {
             &self.attempt_id,
             &observation,
         )?;
+        self.observations.push(observation.clone());
         Ok(serde_json::to_value(observation)?)
+    }
+
+    fn has_completed_execution(&self) -> bool {
+        self.observations
+            .iter()
+            .any(|observation| observation.status == TesterExecutionStatus::Completed)
     }
 
     fn run_workspace_script(
@@ -585,6 +594,15 @@ impl<'a> TesterWorkflow<'a> {
                 let report: TesterReportSubmission =
                     serde_json::from_value(calls[0].function.arguments.clone())
                         .context("invalid submit_tester_report arguments")?;
+                let claims_success = report
+                    .mode_results
+                    .iter()
+                    .any(TesterModeResult::satisfies_output_requirement);
+                if claims_success && !execution.has_completed_execution() {
+                    bail!(
+                        "Tester cannot report PASS/COMPLETE without at least one completed execution step"
+                    );
+                }
                 let attempt = TesterAttemptEvidence {
                     graph_version,
                     checkpoint_id: checkpoint.id.clone(),
@@ -765,6 +783,27 @@ mod tests {
             };
             assert!(request.validate().is_err(), "{path}");
         }
+    }
+
+    #[test]
+    fn success_requires_a_completed_execution() {
+        let successful = vec![TesterModeResult {
+            mode: crate::plan::EvidenceMode::Verify,
+            outcome: crate::tester_evidence::TesterModeOutcome::Pass,
+            reason: None,
+        }];
+        assert!(successful
+            .iter()
+            .any(TesterModeResult::satisfies_output_requirement));
+
+        let blocked = vec![TesterModeResult {
+            mode: crate::plan::EvidenceMode::Verify,
+            outcome: crate::tester_evidence::TesterModeOutcome::Blocked,
+            reason: Some("sandbox unavailable".into()),
+        }];
+        assert!(!blocked
+            .iter()
+            .any(TesterModeResult::satisfies_output_requirement));
     }
 
     #[test]
