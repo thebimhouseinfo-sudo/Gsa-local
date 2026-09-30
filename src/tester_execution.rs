@@ -594,15 +594,10 @@ impl<'a> TesterWorkflow<'a> {
                 let report: TesterReportSubmission =
                     serde_json::from_value(calls[0].function.arguments.clone())
                         .context("invalid submit_tester_report arguments")?;
-                let claims_success = report
-                    .mode_results
-                    .iter()
-                    .any(TesterModeResult::satisfies_output_requirement);
-                if claims_success && !execution.has_completed_execution() {
-                    bail!(
-                        "Tester cannot report PASS/COMPLETE without at least one completed execution step"
-                    );
-                }
+                validate_report_execution_coverage(
+                    &report,
+                    execution.has_completed_execution(),
+                )?;
                 let attempt = TesterAttemptEvidence {
                     graph_version,
                     checkpoint_id: checkpoint.id.clone(),
@@ -676,6 +671,22 @@ impl<'a> TesterWorkflow<'a> {
             .next()
             .context("no Ollama model is configured or installed")
     }
+}
+
+fn validate_report_execution_coverage(
+    report: &TesterReportSubmission,
+    has_completed_execution: bool,
+) -> Result<()> {
+    let claims_success = report
+        .mode_results
+        .iter()
+        .any(TesterModeResult::satisfies_output_requirement);
+    if claims_success && !has_completed_execution {
+        bail!(
+            "Tester cannot report PASS/COMPLETE without at least one completed execution step"
+        );
+    }
+    Ok(())
 }
 
 fn tester_execute_tool() -> ToolDefinition {
@@ -787,23 +798,32 @@ mod tests {
 
     #[test]
     fn success_requires_a_completed_execution() {
-        let successful = vec![TesterModeResult {
-            mode: crate::plan::EvidenceMode::Verify,
-            outcome: crate::tester_evidence::TesterModeOutcome::Pass,
-            reason: None,
-        }];
-        assert!(successful
-            .iter()
-            .any(TesterModeResult::satisfies_output_requirement));
+        let successful = TesterReportSubmission {
+            mode_results: vec![TesterModeResult {
+                mode: crate::plan::EvidenceMode::Verify,
+                outcome: crate::tester_evidence::TesterModeOutcome::Pass,
+                reason: None,
+            }],
+            classifications: vec![],
+            experiment: None,
+            outputs: vec![],
+            limitations: vec![],
+        };
+        assert!(validate_report_execution_coverage(&successful, false).is_err());
+        assert!(validate_report_execution_coverage(&successful, true).is_ok());
 
-        let blocked = vec![TesterModeResult {
-            mode: crate::plan::EvidenceMode::Verify,
-            outcome: crate::tester_evidence::TesterModeOutcome::Blocked,
-            reason: Some("sandbox unavailable".into()),
-        }];
-        assert!(!blocked
-            .iter()
-            .any(TesterModeResult::satisfies_output_requirement));
+        let blocked = TesterReportSubmission {
+            mode_results: vec![TesterModeResult {
+                mode: crate::plan::EvidenceMode::Verify,
+                outcome: crate::tester_evidence::TesterModeOutcome::Blocked,
+                reason: Some("sandbox unavailable".into()),
+            }],
+            classifications: vec![TesterClassification::EnvironmentFailure],
+            experiment: None,
+            outputs: vec![],
+            limitations: vec![],
+        };
+        assert!(validate_report_execution_coverage(&blocked, false).is_ok());
     }
 
     #[test]
