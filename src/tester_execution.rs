@@ -67,7 +67,14 @@ pub fn available_tester_capabilities(
     let verification_runner = LocalProcessRunner::production();
     let verification_profile = discover_profile(project_root)?;
     let project_verification = verification_runner.is_available()
-        && verification_profile.status == DiscoveryStatus::Applicable;
+        && verification_profile.status == DiscoveryStatus::Applicable
+        && !verification_profile.commands.is_empty()
+        && verification_profile.commands.iter().all(|command| {
+            command
+                .argv
+                .first()
+                .is_some_and(|program| verification_runner.executable_available(program))
+        });
 
     let availability = TesterCapabilityAvailability {
         workspace_python: tester_runner.executable_available("python3"),
