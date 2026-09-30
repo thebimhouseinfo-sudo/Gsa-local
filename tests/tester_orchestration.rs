@@ -116,11 +116,7 @@ fn setup_with_graph(graph: ExecutionGraph) -> (tempfile::TempDir, Registry, i64)
     (dir, registry, version)
 }
 
-fn prepare_review_target(
-    dir: &tempfile::TempDir,
-    registry: &Registry,
-    version: i64,
-) {
+fn prepare_review_target(dir: &tempfile::TempDir, registry: &Registry, version: i64) {
     let controller = MilestoneController::new(registry, dir.path(), "owner-a");
     let active = controller.resolve_or_activate().unwrap().unwrap();
     assert_eq!(active.jobpack_id, "JP1");
@@ -149,11 +145,7 @@ fn prepare_review_target(
         .unwrap();
 }
 
-fn pass_review(
-    dir: &tempfile::TempDir,
-    registry: &Registry,
-    version: i64,
-) {
+fn pass_review(dir: &tempfile::TempDir, registry: &Registry, version: i64) {
     registry
         .record_code_review(
             dir.path(),
@@ -197,9 +189,7 @@ fn checkpoint_is_due_only_after_exact_review_pass_and_never_marks_jobpack_done()
         Some("ACTIVE")
     );
 
-    let running = controller
-        .begin_due_tester_attempt(version, "CP1")
-        .unwrap();
+    let running = controller.begin_due_tester_attempt(version, "CP1").unwrap();
     let attempt = TesterAttemptEvidence {
         graph_version: version,
         checkpoint_id: "CP1".into(),
@@ -246,11 +236,7 @@ fn missing_required_capability_blocks_checkpoint_without_progression() {
         .unwrap()
         .unwrap();
     assert_eq!(blocked.status, TesterCheckpointStatus::Blocked);
-    assert!(blocked
-        .reason
-        .as_deref()
-        .unwrap()
-        .contains("RUNTIME_PROBE"));
+    assert!(blocked.reason.as_deref().unwrap().contains("RUNTIME_PROBE"));
     assert_eq!(
         registry.jobpack_status(version, "JP1").unwrap().as_deref(),
         Some("ACTIVE")
