@@ -1417,3 +1417,150 @@ A later "continue" becomes an explicit state transition, not an interpretation o
 
 This prevents a new session from crossing a Human-requested stop boundary simply because the previous Task already produced a valid Handoff.
 
+
+
+---
+
+# 38. Source mutation needs a durable write-ahead identity
+
+Local source mutation currently has a crash window:
+
+```text
+write file
+  -> update in-memory mutation journal
+  -> later persist code checkpoint
+```
+
+If the process dies:
+
+- after the file write but before the journal append;
+- after the journal append but before checkpoint persistence;
+- or during a non-atomic file replacement;
+
+then source may be ahead of durable workflow lineage with no authoritative change-set record.
+
+That turns resume into forensic reconstruction.
+
+The mutation layer therefore needs a write-ahead contract.
+
+Recommended structure:
+
+```text
+MutationIntent
+  mutation_id
+  run_or_attempt_id
+  path
+  expected_before_hash
+  intended_after_hash
+  operation = CREATE | REPLACE
+  status = PREPARED | APPLIED | CHECKPOINTED | ABORTED
+```
+
+Safe write sequence:
+
+```text
+1. persist PREPARED MutationIntent
+2. verify expected before-state
+3. write to temporary sibling file
+4. fsync when required
+5. atomic rename/replace
+6. verify resulting hash
+7. mark mutation APPLIED
+8. include mutation_id in ChangeSet/checkpoint
+9. mark CHECKPOINTED
+```
+
+Recovery rules:
+
+```text
+PREPARED + source still before_hash
+  -> safe to retry or abort
+
+PREPARED + source == intended_after_hash
+  -> adopt as APPLIED, do not rewrite
+
+PREPARED + source is neither hash
+  -> BLOCKED_SOURCE_DIVERGENCE
+
+APPLIED but not CHECKPOINTED
+  -> reconstruct the same ChangeSet from durable mutation intents
+
+CHECKPOINTED
+  -> ordinary resume
+```
+
+The write-ahead mutation identity should also prevent a later restart from accidentally treating a legitimate interrupted edit as unknown/user-owned source drift.
+
+This contract complements Git/source history; it does not require every local mutation to be committed to Git immediately.
+
+---
+
+# 39. Durable state schema evolution is part of resume correctness
+
+Resume may happen after the GSA runtime itself has been upgraded.
+
+Therefore old durable state can be read by newer code.
+
+This includes:
+
+- Local SQLite Registry schema;
+- checkpoint/event payloads;
+- execution graph definitions;
+- Run/Verification/Handoff JSON contracts;
+- WorkCursor / ResumeDescriptor records;
+- evidence applicability schemas.
+
+Schema evolution must not silently reset or reinterpret active work.
+
+Recommended contract:
+
+```text
+StateSchema
+  schema_version
+  minimum_readable_version
+  migration_id
+  migration_status
+```
+
+Startup behavior:
+
+```text
+current version
+  -> normal resume
+
+older compatible version
+  -> transactional migration
+  -> validate invariants
+  -> resume
+
+older version requiring semantic rebaseline
+  -> migrate durable records
+  -> explicitly mark affected graph/evidence/work cursor STALE or SUPERSEDED
+  -> route to deterministic recovery point
+
+unknown/newer incompatible version
+  -> BLOCKED_STATE_VERSION
+```
+
+Migration requirements:
+
+- migrations are ordered and idempotent;
+- migration success is persisted before ordinary workflow resumes;
+- active Run/Task/JobPack identities are preserved when semantics remain compatible;
+- semantic incompatibility is explicit, never translated into a fresh workflow silently;
+- attempt budgets and review/evidence lineage survive compatible migrations;
+- invalidated evidence is retained for audit but cannot satisfy current gates;
+- a migration may move the WorkCursor backward only through an explicit recovery/rebaseline transition with recorded reason.
+
+Online durable JSON should follow the same principle even if storage is Git files rather than SQLite.
+
+Every durable record type should expose a schema/version contract so a future control-plane version can distinguish:
+
+```text
+legacy but valid
+migratable
+semantically stale
+unsupported
+```
+
+Runtime upgrade is therefore another resume event, not a reason to discard workflow state.
