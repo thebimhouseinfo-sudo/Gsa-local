@@ -3414,7 +3414,6 @@ impl Registry {
     }
 }
 
-
 fn ensure_tester_checkpoint_state_rows_tx(tx: &Transaction<'_>, graph_version: i64) -> Result<()> {
     tx.execute(
         r#"
