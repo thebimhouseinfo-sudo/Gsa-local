@@ -681,6 +681,18 @@ mod tests {
     }
 
     #[test]
+    fn tester_sandbox_profile_is_network_denied_and_workspace_write_scoped() {
+        let workspace = tempfile::tempdir().unwrap();
+        let temp = workspace.path().join("tmp");
+        std::fs::create_dir(&temp).unwrap();
+        let profile = tester_sandbox_profile(workspace.path(), &temp).unwrap();
+        assert!(profile.contains("(deny network*)"));
+        assert!(profile.contains("(deny file-write*)"));
+        assert!(profile.contains("(allow file-write*"));
+        assert!(profile.contains(workspace.path().to_string_lossy().as_ref()));
+    }
+
+    #[test]
     fn bounded_reader_marks_truncation() {
         let input = vec![b'x'; MAX_OUTPUT_BYTES + 10];
         let output = read_bounded(Some(input.as_slice()));
