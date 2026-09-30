@@ -166,33 +166,26 @@ Job Builder
 
 Vì vậy Local Planner Contract phải bỏ phần Job/Task registration khỏi Planner.
 
-### 4.3 Local CR khác Critic Reviewer hiện tại
+### 4.3 Critic Reviewer / Local CR governance
 
-Critic Reviewer hiện tại của GSA là:
+GSA Local uses the same CR governance invariant:
 
 ```text
-human-invoked only
-stateless
+Human-invoked only
+stateless/fresh by contract
 durable evidence only
 read-only
 independent verdict first
-```
-
-GSA Local giữ các thuộc tính:
-
-```text
-stateless / fresh context
-read-only review
-independent verdict
 exact target binding
-evidence-based
 ```
 
-nhưng **bỏ human-only dispatch** cho local workflow.
+CR is an independent backstop, not an automatic lifecycle gate.
 
-Local CR là auto gate sau Reviewer PASS.
+Normal Planner/Coder workflows use Reviewer automatically where required. CR runs only after an explicit Human invocation.
 
-Không được dùng nguyên human-only CR harness rồi để runtime bypass rule đó.
+A plan may expose or recommend a CR checkpoint, but runtime must not dispatch CR autonomously and must not reinterpret Reviewer PASS as authorization to call CR.
+
+If Human invokes CR and CR returns findings, the owning workflow routes those findings through Planner/Internal Fix/Reviewer as appropriate. A second CR pass occurs only if Human invokes CR again.
 
 ### 4.4 Internal Fix Harness
 
@@ -455,38 +448,35 @@ CR chỉ chạy sau Reviewer PASS.
 
 ---
 
-## 13. Planner Local CR loop
+## 13. Planner review loop + Human-invoked CR backstop
+
+Normal planning loop:
 
 ```text
 Planner
  ↕
 Reviewer
  ↓ PASS
-Local CR
- ├─ PASS
- │    ↓
- │ PLAN_APPROVED
- │
- └─ REVISE
-      ↓
-     Internal Fix
-      ↓
-   Reviewer
-      ↓
-   Local CR
+PLAN_APPROVED
 ```
 
-Local CR:
+Optional independent backstop:
 
-- auto-trigger sau Reviewer PASS;
-- dùng fresh/stateless review context;
-- bind verdict vào exact `plan_revision + plan_hash`;
-- read-only đối với plan artifact đang review;
-- hình thành verdict độc lập;
-- không inherit Planner reasoning history;
-- không dùng human-only gate của Critic Reviewer hiện tại.
+```text
+Human invokes CR
+  ↓
+CR reads exact plan revision/hash independently
+  ├─ no actionable finding -> durable CR evidence
+  └─ finding
+       ↓
+     Planner/Internal Fix
+       ↓
+     Reviewer
+```
 
-Nếu Local CR yêu cầu sửa, runtime tạo repair context riêng cho Internal Fix rồi bắt buộc quay lại Reviewer trước khi CR chạy lại.
+CR is never auto-triggered, stays read-only, binds to the exact plan revision/hash, and does not inherit Planner/Reviewer reasoning history.
+
+If Human wants another CR pass after repair, Human invokes it again.
 
 ## 14. `PLAN_APPROVED` là revision-bound boundary
 
@@ -1841,17 +1831,17 @@ Acceptance: crash/restart không tạo thêm ACTIVE Job Pack và terminal thứ 
 
 ---
 
-## Phase 5 — Planner → Reviewer → Local CR
+## Phase 5 — Planner → Reviewer (+ Human-invoked CR backstop)
 
-Core đã implement:
+Core planning contract:
 
 ```text
 Planner Implementation Plan only
 plan revision/hash
 Reviewer fresh planning review
-Local CR stateless auto gate
 Internal Fix loop
 PLAN_APPROVED binding
+Human-invoked CR backstop
 ```
 
 Tester architecture extension:
@@ -1865,21 +1855,19 @@ prior OBSERVED evidence catalog for Planner
 PLAN_GAP when required runtime fact is unresolved
 ```
 
-Planner vẫn không build Job Pack/Checkpoint. Nó chỉ persist empirical need đủ rõ để Job Builder không phải đoán lại từ prose.
+Planner still does not build Job Pack/Checkpoint directly. It persists empirical needs clearly enough that Job Builder does not re-infer intent from prose.
 
 Acceptance:
 
 ```text
 Planner ↔ Reviewer
         ↓ PASS
-      Local CR
-        ↓ PASS
 PLAN_APPROVED(revision/hash)
 ```
 
-Stale verdict không thể approve revision mới.
+A Human-invoked CR may review the exact planned/approved revision independently, but CR is not an automatic prerequisite for PLAN_APPROVED.
 
----
+Stale Reviewer/CR evidence cannot validate a newer revision.
 
 ## Phase 6 — Job Builder + Registration
 
@@ -2084,24 +2072,31 @@ In-scope test adaptation bên trong checkpoint hiện tại vẫn được Teste
 
 ---
 
-## Phase 11 — Code Local CR + Job Pack Completion
+## Phase 11 — Job Pack Completion + Human-invoked CR backstop
 
 Implement:
+
+```text
+required Reviewer / Verification / Tester gates
+  ↓
+jobpack completion eligibility
+```
+
+When Human invokes CR at a meaningful boundary:
 
 ```text
 fresh CR packet
 exact Job Pack/revision binding
 independent read-only review
-CR → Internal Fix
-Internal Fix → Reviewer
-Verification if applicable
-CR again
-jobpack.complete()
+CR finding
+  -> Internal Fix
+  -> Reviewer
+  -> Verification/Tester as applicable
 ```
 
-Acceptance: CR PASS một mình chưa thể DONE nếu checklist/verification/reviewer preconditions chưa đạt.
+CR is never auto-dispatched and never substitutes for normal completion gates. If Human wants CR to re-check repaired work, Human invokes CR again.
 
----
+Acceptance: Job Pack completion depends on its declared gates; CR evidence is a Human-invoked backstop unless Human explicitly establishes a CR gate for that work.
 
 ## Phase 12 — Milestone Verification + Full Resume
 
