@@ -612,37 +612,64 @@ impl Registry {
     }
 
     pub fn plan_for_current_execution_graph(&self, graph_version: i64) -> Result<PlanRevision> {
-        let tx = self.conn.unchecked_transaction()?;
-        let Some((current_graph, plan_revision, plan_hash)) = current_graph_binding_tx(&tx)? else {
-            bail!("no CURRENT approved execution graph is bound");
-        };
-        if current_graph != graph_version {
-            bail!(
-                "stale Tester graph: requested {}, current {}",
-                graph_version,
-                current_graph
-            );
-        }
-
-        let row: Option<(String, String)> = tx
+        let row: Option<(i64, String, String, i64, i64, String, String, String)> = self
+            .conn
             .query_row(
-                "SELECT plan_hash, content FROM plan_revisions WHERE revision=?1",
-                params![plan_revision],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                r#"
+                SELECT eg.plan_revision, eg.plan_hash, eg.status,
+                       ap.execution_graph_version, ap.revision, ap.plan_hash,
+                       pr.plan_hash, pr.content
+                FROM execution_graph eg
+                JOIN approved_plan ap ON ap.id=1
+                JOIN plan_revisions pr ON pr.revision=eg.plan_revision
+                WHERE eg.version=?1
+                "#,
+                params![graph_version],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                        row.get(6)?,
+                        row.get(7)?,
+                    ))
+                },
             )
             .optional()?;
-        let Some((stored_hash, content)) = row else {
-            bail!("execution graph plan revision {} is missing", plan_revision);
+        let Some((
+            plan_revision,
+            plan_hash,
+            graph_status,
+            approved_graph,
+            approved_revision,
+            approved_hash,
+            stored_hash,
+            content,
+        )) = row
+        else {
+            bail!("execution graph {} is not bound to a persisted plan", graph_version);
         };
+
+        if graph_status != "CURRENT" {
+            bail!("Tester graph {} is not CURRENT", graph_version);
+        }
+        if approved_graph != graph_version
+            || approved_revision != plan_revision
+            || approved_hash != plan_hash
+        {
+            bail!("Tester graph is not the currently approved execution-graph binding");
+        }
         if stored_hash != plan_hash {
             bail!("execution graph plan hash does not match persisted plan revision");
         }
-        let artifact: PlanArtifact = serde_json::from_str(&content)?;
-        tx.commit()?;
+
         Ok(PlanRevision {
             revision: plan_revision,
             hash: plan_hash,
-            artifact,
+            artifact: serde_json::from_str(&content)?,
         })
     }
 
