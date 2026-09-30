@@ -2476,7 +2476,8 @@ Exit:
 
 Important evidence premise:
 - generic UI Coder + Penpot capability already PASSed in prior GSA capability testing;
-- do not repeat the broad capability experiment unless applicability becomes stale.
+- do not repeat the broad capability experiment unless applicability becomes stale;
+- before Local makes that PASS a runtime dependency, bind a durable prior evidence reference when available, or record the Human-provided accepted capability fact with an explicit applicability boundary.
 
 Goal: bind that proven capability into the Local runtime.
 
@@ -2499,6 +2500,7 @@ Goal: use Vercel agent-browser MCP as the primary browser execution layer while 
 
 Required:
 - standalone Local PROBE of launch/open/wait/snapshot/interact/re-snapshot/viewport/screenshot/console/error/cleanup capabilities;
+- agent-browser checkpoints require a browser-inspectable prototype/runnable target; non-browser Penpot artifacts use Penpot readback/export evidence plus Human review instead of synthetic browser PASS;
 - Tester-owned browser evidence workspace;
 - explicit screenshot/artifact paths for Human;
 - exact target/design/viewport evidence applicability;
