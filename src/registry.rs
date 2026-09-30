@@ -1981,6 +1981,231 @@ impl Registry {
         .transpose()
     }
 
+    pub fn prepare_tester_execution_step(
+        &self,
+        project_root: &Path,
+        owner: &str,
+        graph_version: i64,
+        checkpoint_id: &str,
+        attempt_id: &str,
+        target: &TesterTargetBinding,
+        execution_id: &str,
+        step_id: &str,
+        adapter_id: &str,
+        replay_safety: ReplaySafety,
+        fence_key: &str,
+        request_json: &serde_json::Value,
+    ) -> Result<()> {
+        for (name, value) in [
+            ("checkpoint_id", checkpoint_id),
+            ("attempt_id", attempt_id),
+            ("execution_id", execution_id),
+            ("step_id", step_id),
+            ("adapter_id", adapter_id),
+            ("fence_key", fence_key),
+        ] {
+            if value.trim().is_empty() {
+                bail!("Tester execution {name} must not be empty");
+            }
+        }
+        if execution_id != fence_key {
+            bail!("Tester execution_id must equal the deterministic fence_key");
+        }
+
+        let tx = self.conn.unchecked_transaction()?;
+        assert_lease_owner_tx(&tx, project_root, owner)?;
+        let graph_status: Option<String> = tx
+            .query_row(
+                "SELECT status FROM execution_graph WHERE version=?1",
+                params![graph_version],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if graph_status.as_deref() != Some("CURRENT") {
+            bail!("Tester execution requires CURRENT execution graph");
+        }
+
+        let checkpoint_json: String = tx
+            .query_row(
+                r#"
+                SELECT definition_json
+                FROM execution_test_checkpoints
+                WHERE graph_version=?1 AND checkpoint_id=?2
+                "#,
+                params![graph_version, checkpoint_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .context("Tester execution checkpoint definition is missing")?;
+        let checkpoint: TestCheckpointSpec = serde_json::from_str(&checkpoint_json)?;
+        target.validate_against_checkpoint(&checkpoint)?;
+        validate_tester_target_tx(&tx, graph_version, target)?;
+        let target_fingerprint = target.fingerprint(graph_version, checkpoint_id)?;
+
+        tx.execute(
+            r#"
+            INSERT INTO tester_execution_steps
+                (graph_version, checkpoint_id, attempt_id, execution_id,
+                 step_id, adapter_id, replay_safety, fence_key,
+                 target_fingerprint, request_json, status,
+                 observation_json, created_at, updated_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
+                    'PREPARED', NULL, ?11, ?11)
+            "#,
+            params![
+                graph_version,
+                checkpoint_id,
+                attempt_id,
+                execution_id,
+                step_id,
+                adapter_id,
+                replay_safety.as_str(),
+                fence_key,
+                target_fingerprint,
+                request_json.to_string(),
+                unix_seconds()?
+            ],
+        )
+        .context("Tester execution step/fence already exists or is invalid")?;
+
+        append_event_tx(
+            &tx,
+            "TESTER_EXECUTION_PREPARED",
+            &serde_json::json!({
+                "graph_version": graph_version,
+                "checkpoint_id": checkpoint_id,
+                "attempt_id": attempt_id,
+                "execution_id": execution_id,
+                "step_id": step_id,
+                "adapter_id": adapter_id,
+                "replay_safety": replay_safety.as_str(),
+                "fence_key": fence_key,
+                "target_fingerprint": target_fingerprint
+            }),
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn complete_tester_execution_step(
+        &self,
+        project_root: &Path,
+        owner: &str,
+        graph_version: i64,
+        checkpoint_id: &str,
+        attempt_id: &str,
+        observation: &TesterExecutionObservation,
+    ) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        assert_lease_owner_tx(&tx, project_root, owner)?;
+
+        let row: Option<(String, String, String, String, String)> = tx
+            .query_row(
+                r#"
+                SELECT step_id, adapter_id, replay_safety, fence_key, status
+                FROM tester_execution_steps
+                WHERE graph_version=?1 AND checkpoint_id=?2
+                  AND attempt_id=?3 AND execution_id=?4
+                "#,
+                params![
+                    graph_version,
+                    checkpoint_id,
+                    attempt_id,
+                    observation.execution_id
+                ],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .optional()?;
+        let Some((step_id, adapter_id, replay_safety, fence_key, status)) = row else {
+            bail!("Tester execution step is not PREPARED");
+        };
+        if status != "PREPARED"
+            || step_id != observation.step_id
+            || adapter_id != observation.adapter_id
+            || replay_safety != observation.replay_safety.as_str()
+            || fence_key != observation.fence_key
+            || observation.execution_id != observation.fence_key
+        {
+            bail!("Tester execution completion does not match the PREPARED fence");
+        }
+
+        let updated = tx.execute(
+            r#"
+            UPDATE tester_execution_steps
+            SET status=?5, observation_json=?6, updated_at=?7
+            WHERE graph_version=?1 AND checkpoint_id=?2
+              AND attempt_id=?3 AND execution_id=?4 AND status='PREPARED'
+            "#,
+            params![
+                graph_version,
+                checkpoint_id,
+                attempt_id,
+                observation.execution_id,
+                observation.status.as_str(),
+                serde_json::to_string(observation)?,
+                unix_seconds()?
+            ],
+        )?;
+        if updated != 1 {
+            bail!("Tester execution step changed before completion");
+        }
+
+        append_event_tx(
+            &tx,
+            "TESTER_EXECUTION_COMPLETED",
+            &serde_json::json!({
+                "graph_version": graph_version,
+                "checkpoint_id": checkpoint_id,
+                "attempt_id": attempt_id,
+                "execution_id": observation.execution_id,
+                "step_id": observation.step_id,
+                "adapter_id": observation.adapter_id,
+                "replay_safety": observation.replay_safety.as_str(),
+                "status": observation.status.as_str()
+            }),
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn tester_execution_observation(
+        &self,
+        graph_version: i64,
+        checkpoint_id: &str,
+        attempt_id: &str,
+        execution_id: &str,
+    ) -> Result<Option<(String, TesterExecutionObservation)>> {
+        let row: Option<(String, String)> = self
+            .conn
+            .query_row(
+                r#"
+                SELECT target_fingerprint, observation_json
+                FROM tester_execution_steps
+                WHERE graph_version=?1 AND checkpoint_id=?2
+                  AND attempt_id=?3 AND execution_id=?4
+                  AND status IN ('COMPLETED','FAILED')
+                "#,
+                params![graph_version, checkpoint_id, attempt_id, execution_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        row.map(|(target_fingerprint, json)| {
+            Ok((
+                target_fingerprint,
+                serde_json::from_str::<TesterExecutionObservation>(&json)?,
+            ))
+        })
+        .transpose()
+    }
+
     pub fn record_verification_evidence(
         &self,
         project_root: &Path,
@@ -2104,6 +2329,32 @@ impl Registry {
             )
             .optional()
             .map_err(Into::into)
+    }
+
+    pub fn verification_run_evidence(
+        &self,
+        run_id: i64,
+    ) -> Result<Option<VerificationEvidence>> {
+        let row: Option<(String, String, i64)> = self
+            .conn
+            .query_row(
+                r#"
+                SELECT profile_json, commands_json, test_surface_changed
+                FROM verification_runs
+                WHERE id=?1
+                "#,
+                params![run_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+        row.map(|(profile_json, commands_json, test_surface_changed)| {
+            Ok(VerificationEvidence {
+                profile: serde_json::from_str(&profile_json)?,
+                commands: serde_json::from_str(&commands_json)?,
+                test_surface_changed: test_surface_changed != 0,
+            })
+        })
+        .transpose()
     }
 
     pub fn checklist_checked(
