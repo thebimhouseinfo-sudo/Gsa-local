@@ -2118,6 +2118,38 @@ Acceptance: restart tại bất kỳ stage nào resume đúng Milestone/Job Pack
 
 ---
 
+## Resume / Recovery hardening derived from real interrupted sessions
+
+Full evidence and rationale: WORKFLOW_RESUME_LESSONS.md.
+
+Phase 12 must not be considered complete merely because latest_checkpoint and lease exist. Full resume additionally requires a shared recovery protocol:
+
+    durable workflow state
+      + live source revision
+      + open/terminal Run lineage
+      + canonical gate evidence
+      -> ResumeDecision
+      -> exactly one next safe action
+
+Required architecture additions:
+- Online Project resume remains only a Project lifecycle operation; interrupted execution needs a separate open-Run/recovery resolver.
+- Local PlanningWorkflow and CodingWorkflow must resolve existing durable workflow state before calling begin_*; begin_* is initialization, not resume.
+- Run/source binding must separate input target from result target.
+- source-ahead interrupted work must be classified before adoption.
+- gate evidence must have canonical runtime-maintained pointers instead of requiring the model to rewire ref arrays.
+- required UNVERIFIED/BLOCKED verification cannot produce terminal PASS.
+- Handoff availability and next-Task activation are separate states; Human-bounded task/phase transitions default to explicit start.
+- stale planning/runtime evidence needs structured supersession/invalidation semantics.
+- restart tests must cover every persisted workflow stage plus source/durable divergence.
+
+Acceptance extension for Phase 12:
+- restart cannot reset a partially completed workflow;
+- restart cannot create a duplicate Run/attempt or replay uncertain non-idempotent work;
+- restart cannot bind review/evidence to the wrong source revision;
+- restart cannot require conversation history to discover the execution point;
+- restart cannot silently enter the next Task/phase when activation requires explicit Human start;
+- recovery from source-ahead state is explicit and auditable.
+
 ## Phase 13 — Hardening
 
 Negative tests:
