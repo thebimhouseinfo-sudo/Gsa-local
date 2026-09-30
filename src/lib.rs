@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 pub mod agent_runtime;
 pub mod app;
 pub mod checkpoint;
