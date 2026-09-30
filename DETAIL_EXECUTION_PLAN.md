@@ -142,3 +142,70 @@ Future work must now include:
 - hardening covers evidence spoof/stale/context mismatch, checkpoint bypass, workspace escape and unsafe test execution.
 
 Only the current approved Job is implemented at a time. Runtime state, not Markdown checkboxes, remains authority.
+
+
+## Milestone F — Recovery / Rebaseline architecture (post-J-177F)
+
+This milestone is future architecture work, not part of the currently executing Tester task chain.
+
+Deliverables:
+- WorkCursor + ResumeDescriptor;
+- SourceTargetSet + plan/hash/graph binding;
+- START/RESUME/RECOVER resolvers for Planning/Coding/Tester;
+- crash-consistent durable transition identity;
+- MutationIntent write-ahead;
+- lease fencing token;
+- state-schema migration;
+- Human Rebaseline/Salvage;
+- AcceptedIntegrationBaseline.
+
+Gate:
+- crash or intentional Human architecture change can be reconciled without conversation history, blanket revert, duplicate non-idempotent action or stale authority.
+
+## Milestone G — UI architecture foundation
+
+Deliverables:
+- Designer / UX Coder / UI Coder role contracts;
+- UI_FIRST / UX_FIRST;
+- UX execution contract;
+- Design Coverage;
+- DESIGN_READY;
+- TEMPORARY_UI + durable UI requirement collection;
+- asset classes/contracts.
+
+Gate:
+- Planner can construct a UI-bearing topology without UI Coder inventing material product/design decisions.
+
+## Milestone H — Penpot + agent-browser capability binding
+
+Penpot premise:
+- generic UI Coder + Penpot capability is already PASSed;
+- validate only Local-specific invocation/readback/resume/artifact integration unless applicability becomes stale.
+
+Deliverables:
+- Local Penpot identity/binding;
+- UI DESIGN PHASE;
+- Vercel agent-browser MCP Tester executor;
+- standalone agent-browser PROBE;
+- Tester browser workspace;
+- direct Human screenshot paths;
+- ExternalOperation identity for Penpot/browser work.
+
+Gate:
+- Local can resume Penpot work and Tester can execute/reproduce a browser checkpoint against an exact target with directly inspectable evidence.
+
+## Milestone I — Human-approved design to SHELL_READY
+
+Deliverables:
+- UI DESIGN APPROVED baseline;
+- source implementation bound to design baseline;
+- Reviewer;
+- representative shell pilot;
+- Tester agent-browser verification;
+- SHELL_READY;
+- UX_FIRST UI Update Pack workflow.
+
+Gate:
+- shell is not scaled out until runtime evidence validates the approved design;
+- Human material architecture feedback routes through Rebaseline/Salvage;
+- coherent accepted boundaries become integration baselines rather than allowing unbounded commit accumulation.
