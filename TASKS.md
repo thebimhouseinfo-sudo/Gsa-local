@@ -217,7 +217,7 @@ Gate:
 - [ ] Tester may emit SPEC_GAP/PLAN_GAP evidence but cannot modify checkpoint topology.
 - [ ] Material gap pauses current graph.
 - [ ] Route to Planner/Human for a new PlanArtifact revision.
-- [ ] New topology requires Reviewer + Local CR again.
+- [ ] New topology requires Reviewer again; CR remains Human-invoked only and is never auto-dispatched.
 - [ ] Job Builder registers a superseding graph only after approval.
 - [ ] Non-material in-scope test adaptation does not force replanning.
 
