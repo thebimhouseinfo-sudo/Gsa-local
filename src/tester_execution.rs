@@ -47,7 +47,12 @@ impl TesterCapabilityAvailability {
             capabilities.insert("PROJECT_VERIFICATION".to_owned());
             capabilities.extend(self.verification_capabilities.iter().cloned());
         }
-        if self.workspace_python || self.workspace_node || self.project_verification {
+        let project_runtime_capable = self.project_verification
+            && self
+                .verification_capabilities
+                .iter()
+                .any(|capability| matches!(capability.as_str(), "INTEGRATION" | "BROWSER"));
+        if self.workspace_python || self.workspace_node || project_runtime_capable {
             capabilities.insert("RUNTIME_PROBE".to_owned());
         }
         capabilities.into_iter().collect()
@@ -950,6 +955,20 @@ mod tests {
         assert!(!names.iter().any(|name| name == "WORKSPACE_PYTHON"));
         assert!(!names.iter().any(|name| name == "PROJECT_VERIFICATION"));
         assert!(!names.iter().any(|name| name == "INTEGRATION"));
+    }
+
+    #[test]
+    fn build_only_project_verification_does_not_imply_runtime_probe() {
+        let build_only = TesterCapabilityAvailability {
+            workspace_python: false,
+            workspace_node: false,
+            project_verification: true,
+            verification_capabilities: vec!["BUILD_ONLY".into()],
+        };
+        let names = build_only.names();
+        assert!(names.iter().any(|name| name == "PROJECT_VERIFICATION"));
+        assert!(names.iter().any(|name| name == "BUILD_ONLY"));
+        assert!(!names.iter().any(|name| name == "RUNTIME_PROBE"));
     }
 
     #[test]
