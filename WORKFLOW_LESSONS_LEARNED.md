@@ -947,3 +947,95 @@ load durable state
 ```
 
 That should become a shared architectural contract for both **GSA Online** and **GSA Local**.
+
+
+---
+
+# 26. Handoff is not authorization to activate the next Task
+
+A Handoff is durable routing information. It records the expected next role, remaining work and required inputs.
+
+It must not itself mean:
+
+    next Task has started
+    next phase is active
+    execution may cross a Human stop boundary
+
+Observed workflow behavior around T-EXECUTION showed why this distinction matters: a valid Handoff may exist while the Human explicitly requires stopping before T-ORCHESTRATION.
+
+Recommended contract:
+
+    Handoff
+      activation_policy = EXPLICIT_START | AUTO_CONTINUE
+
+Default at Task/phase boundaries:
+
+    EXPLICIT_START
+
+Only an approved plan may opt into AUTO_CONTINUE.
+
+This prevents a successful prior gate from silently advancing execution beyond the Human-authorized boundary.
+
+---
+
+# 27. Required verification and verifier mutation authority are separate contracts
+
+A required deterministic check may be unavailable even when source review looks good.
+
+The runtime should represent:
+
+    goal_status
+      MET | PARTIAL | NOT_MET
+
+    verification_status
+      PASS | FAIL | BLOCKED | NOT_APPLICABLE
+
+    completion_gate
+      READY | NOT_READY | NEEDS_HUMAN
+
+A required verification in BLOCKED or UNOBSERVED state must prevent terminal success without rewriting the product criterion itself as failed.
+
+The verification surface must also remain read-only with respect to product source by default.
+
+A verifier/CI workflow must not auto-format, auto-commit or push source repairs merely to make its own check pass. Correct routing is:
+
+    verifier finds failure
+      -> Coder fixes
+      -> verifier reruns
+
+This preserves role boundaries and keeps evidence trustworthy.
+
+---
+
+# 28. Gate evidence needs a canonical current pointer
+
+Append-only Verification history is valuable, but completion gates should not require the model to manually replace arrays of refs until the expected record happens to be selected.
+
+Recommended runtime-owned pointers:
+
+    latest_goal_recheck
+    latest_code_review
+    latest_tester_verification
+    latest_required_ci
+
+When a newer exact-target record supersedes an older record, update the canonical pointer transactionally while keeping all historical records immutable.
+
+Completion validators consume the canonical semantic state.
+
+This removes a class of recovery work where the implementation is valid but the Run remains blocked by bookkeeping reference wiring.
+
+---
+
+# 29. Project resolution precedes Job resolution
+
+Opening an operation must first resolve the exact Project identity and registered PRIMARY/source repository before selecting any Job.
+
+Never infer the Project from:
+- the most recent Job;
+- the most recent Run;
+- recent conversation context alone.
+
+If a name can resolve to multiple Projects, return explicit candidates and block execution.
+
+This is especially important for Online GSA, where durable Project Memory for many repositories shares one Memory Repo.
+
