@@ -2513,7 +2513,7 @@ Execution strategy is allowed to differ by runtime capability.
 ```text
 GSA Local
   stronger Vercel agent-browser development/inspection loop
-  -> BROWSER_FIRST can be the default more often
+  -> source-render-browser refinement can be used more directly
 
 GSA Online
   more limited browser feedback/runtime interaction
@@ -2564,7 +2564,7 @@ Exit:
 
 Goal: make UI Coder a dedicated source/render/observe/refine workflow rather than ordinary code generation.
 
-State model:
+UI Coder-owned state model:
 
     UI_GROUND
       -> UI_IMPLEMENT
@@ -2573,10 +2573,18 @@ State model:
       -> UI_REFINE
            ↺ UI_RENDER
       -> UI_SELF_CHECK
-      -> REVIEW
-      -> UI_TEST_CHECKPOINT
-      -> HUMAN_REVIEW? 
-      -> UI_ACCEPTED / SHELL_READY
+      -> UI_HANDOFF_READY
+
+Post-self-check orchestration:
+
+    UI_HANDOFF_READY
+      -> REVIEW_PENDING        [owner: Orchestrator]
+      -> REVIEWING             [owner: Reviewer]
+      -> REVIEW_PASS
+      -> TEST_PENDING?         [owner: Orchestrator]
+      -> TESTING?              [owner: Tester]
+      -> HUMAN_REVIEW_PENDING? [owner: Orchestrator/Human gate]
+      -> UI_ACCEPTED / SHELL_READY [terminalized by Orchestrator from declared evidence]
 
 Required:
 - runnable source is the implementation/prototype truth;
@@ -2585,7 +2593,9 @@ Required:
 - UI workspace drafts/prototypes are non-runtime and may not be imported/bundled/served by the product; promoted assets move through canonical product asset paths with provenance/approval;
 - compile/test success alone does not prove UI completion;
 - material product/UX/shell-architecture changes exit the refine loop and route to Planner/Human;
-- resume reconstructs exact UI stage + workspace refs.
+- resume reconstructs exact UI stage + workspace refs;
+- every durable UI stage records stage_owner plus producing Run/evidence identity;
+- UI Coder cannot transition Reviewer/Tester/Human/terminal stages; role findings route through Orchestrator to a new bounded UI Coder correction/refine Run.
 
 Exit:
 - UI Coder can survive interruption and continue the exact visual implementation loop without chat-history reconstruction.
