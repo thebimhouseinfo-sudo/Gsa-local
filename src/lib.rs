@@ -13,5 +13,6 @@ pub mod registry;
 pub mod session;
 pub mod tools;
 pub mod tester_workspace;
+pub mod tester_evidence;
 pub mod verification;
 pub mod workflow;
