@@ -2536,15 +2536,31 @@ Required:
 - visual_authority_source = EXISTING_APPROVED_SHELL | EXISTING_DESIGN_SYSTEM | DESIGNER_SPEC | HUMAN_DIRECTION;
 - any existing shell is preserved by default;
 - substantial visual improvement is allowed directly in source;
-- discarding/rebuilding/replacing an existing shell requires explicit Human approval;
+- discarding/rebuilding/replacing an existing shell requires explicit Human approval plus Rebaseline/Salvage before destructive source mutation;
 - greenfield and rebuild work still execute in runnable source;
-- Designer supplies unresolved visual direction/specification without requiring a fixed design tool;
+- Designer supplies unresolved material visual direction/specification before affected source mutation; later in-loop Designer input is limited to non-material refinement;
 - Human retains subjective visual authority.
 
 Exit:
 - Planner can define UI work without UI Coder inventing material visual decisions and without introducing a mockup/source dual authority.
 
-## Phase 17 — UI Coder Browser-Driven Workflow
+## Phase 17 — Vercel agent-browser Shared UI Runtime
+
+Goal: use one browser technology for UI development observation and independent Tester verification without conflating their authority.
+
+Required:
+- standalone Local PROBE of launch/open/wait/snapshot/interact/re-snapshot/viewport/screenshot/diff/console/error/cleanup capabilities;
+- separate UI Coder development session and Tester verification session;
+- UI Coder browser observations never satisfy Tester PASS;
+- Tester-owned evidence workspace;
+- explicit screenshot/diff paths for Human;
+- exact target/viewport/browser-operation applicability;
+- PRODUCT_FAILURE / TEST_FAILURE / ENVIRONMENT_FAILURE / INTEGRATION_NOT_READY / SPEC_GAP / PLAN_GAP / NEEDS_HUMAN classification.
+
+Exit:
+- UI Coder can iterate on the real app while Tester can later independently verify the same exact runnable target.
+
+## Phase 18 — UI Coder Browser-Driven Workflow
 
 Goal: make UI Coder a dedicated source/render/observe/refine workflow rather than ordinary code generation.
 
@@ -2566,28 +2582,13 @@ Required:
 - runnable source is the implementation/prototype truth;
 - Vercel agent-browser drives UI Coder observation/refinement;
 - UI Coder workspace stores briefs/references/screenshots/comparisons/assets/prompts/tokens/notes/prototype material;
+- UI workspace drafts/prototypes are non-runtime and may not be imported/bundled/served by the product; promoted assets move through canonical product asset paths with provenance/approval;
 - compile/test success alone does not prove UI completion;
 - material product/UX/shell-architecture changes exit the refine loop and route to Planner/Human;
 - resume reconstructs exact UI stage + workspace refs.
 
 Exit:
 - UI Coder can survive interruption and continue the exact visual implementation loop without chat-history reconstruction.
-
-## Phase 18 — Vercel agent-browser Shared UI Runtime
-
-Goal: use one browser technology for UI development observation and independent Tester verification without conflating their authority.
-
-Required:
-- standalone Local PROBE of launch/open/wait/snapshot/interact/re-snapshot/viewport/screenshot/diff/console/error/cleanup capabilities;
-- separate UI Coder development session and Tester verification session;
-- UI Coder browser observations never satisfy Tester PASS;
-- Tester-owned evidence workspace;
-- explicit screenshot/diff paths for Human;
-- exact target/viewport/browser-operation applicability;
-- PRODUCT_FAILURE / TEST_FAILURE / ENVIRONMENT_FAILURE / INTEGRATION_NOT_READY / SPEC_GAP / PLAN_GAP / NEEDS_HUMAN classification.
-
-Exit:
-- UI Coder can iterate on the real app while Tester can later independently verify the same exact runnable target.
 
 ## Phase 19 — UI Acceptance + Shell Workflow
 
@@ -2614,7 +2615,7 @@ Greenfield or Human-approved shell rebuild:
       -> SHELL_READY
 
 Required:
-- existing shell cannot be discarded without Human approval;
+- existing shell cannot be discarded without Human approval and completed Rebaseline/Salvage of affected work;
 - no separate mockup authority exists;
 - representative content/responsive stress is used before broad scale-out when shell risk warrants it;
 - ordinary UI work need not create a SHELL_READY gate;
@@ -2690,13 +2691,13 @@ Immediate operational rebaseline
   -> Phase 14 Recovery foundations
   -> Phase 15 automated Rebaseline/Integration
   -> Phase 16 UI visual-authority contract
-  -> Phase 18 agent-browser shared runtime + PROBE
-  -> Phase 17 UI Coder browser-driven workflow
+  -> Phase 17 agent-browser shared runtime + PROBE
+  -> Phase 18 UI Coder browser-driven workflow
   -> Phase 19 UI acceptance/shell workflow
   -> Phase 20 UX_FIRST Update Packs
   -> Phase 22 pilots
 
-Phase 17
+Phase 18
   -> Phase 21 optional capability providers/skills
 ```
 
