@@ -310,6 +310,28 @@ fn attempt(
 }
 
 #[test]
+fn tester_plan_context_stays_bound_to_graph_when_newer_draft_plan_exists() {
+    let (_dir, registry, version, _verification_run_id) = setup();
+    let bound = registry
+        .plan_for_current_execution_graph(version)
+        .unwrap();
+    assert_eq!(bound.revision, 1);
+    assert_eq!(bound.artifact.goal, "Use observed runtime identity");
+
+    let mut newer = plan();
+    newer.goal = "Unapproved successor plan".into();
+    let newer_revision = registry.persist_plan_revision(&newer).unwrap();
+    assert_eq!(newer_revision.revision, 2);
+
+    let still_bound = registry
+        .plan_for_current_execution_graph(version)
+        .unwrap();
+    assert_eq!(still_bound.revision, 1);
+    assert_eq!(still_bound.hash, bound.hash);
+    assert_eq!(still_bound.artifact.goal, "Use observed runtime identity");
+}
+
+#[test]
 fn exact_target_probe_evidence_round_trips_from_registry() {
     let (dir, registry, version, verification_run_id) = setup();
     let artifact = workspace_artifact(&dir, version, "ATT-1");
