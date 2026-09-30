@@ -19,7 +19,7 @@ The Tester redesign has cross-phase impact. Earlier phases are not rolled back w
 | Phase 8 — Coder ↔ Reviewer | MEDIUM | Core loop stays unchanged. Coder context gains required OBSERVED evidence; Coder/Internal Fix must be denied writes to Tester-owned workspace; repair after Tester FAIL still returns through Reviewer before retest. |
 | Phase 9 — Verification Controller + Local CI | HIGH semantic change | Keep deterministic build/test capability discovery and Local CI evidence, but remove authority to decide where Tester appears. Phase 9 becomes a deterministic verification primitive/capability provider used by coding self-checks and declared checkpoints. |
 | Phase 10 — Tester subsystem | MAJOR | New independent checkpoint subsystem with its own workspace, test planning, execution, VERIFY/MEASURE/PROBE, empirical evidence and retest. |
-| Phase 11 — Job Pack Completion / Human-invoked CR backstop | MEDIUM | If Human invokes CR, its packet consumes checkpoint/evidence state relevant to the exact Job Pack/revision; CR is not an automatic completion gate. |
+| Phase 11 — Task/Job Pack Completion + Local CR | HIGH | Local CR auto-runs at mature Task and declared checkpoint boundaries after required Reviewer/verification/Tester evidence; terminalization requires compatible CR PASS where declared, but CR never runs after each edit. |
 | Phase 12 — Milestone Verification + Resume | HIGH | Milestone completion must require all declared milestone checkpoint requirements and must resume checkpoint state correctly after restart. |
 | Phase 13 — Hardening | HIGH | Add negative tests for evidence spoofing/staleness, checkpoint bypass, Tester workspace escape, fake measurements, guessed required variables and unsafe Tester execution. |
 
@@ -88,7 +88,7 @@ Tester rebaseline impact:
 Completed core:
 - revisioned Implementation Plan;
 - Planner↔Reviewer;
-- Human-invoked CR backstop when requested;
+- automatic Local CR after Reviewer PASS at the plan-finalization boundary;
 - PLAN_APPROVED binding;
 - Job Builder execution-graph registration.
 
@@ -129,13 +129,13 @@ Rebased work:
 5. implement exact-target empirical evidence;
 6. implement evidence consumer contract;
 7. implement repair → Reviewer PASS → RETEST;
-8. integrate later with Job Pack completion gates; CR remains Human-invoked only.
+8. integrate Local CR as an automatic downstream Task/checkpoint boundary after Reviewer and required verification/Tester evidence; never inside each edit loop.
 
 ## Milestone E — Completion / Resume / Hardening
 Future work must now include:
 - checkpoint state crash/resume is already handled in Phase 10 through latest_checkpoint + lease;
-- material Tester SPEC_GAP pauses the graph and requires new plan revision + Reviewer + any explicitly Human-invoked CR evidence + superseding graph;
-- CR packet consumes required checkpoint evidence;
+- material Tester SPEC_GAP pauses the graph and requires new plan revision + Reviewer + automatic Local CR + superseding graph;
+- automatic CR packet consumes exact target/revision plus required checkpoint evidence;
 - Job Pack completion rejects unsatisfied required checkpoints;
 - Milestone completion rejects unsatisfied milestone-level checkpoints;
 - restart resumes DUE/RUNNING/BLOCKED/NEEDS_HUMAN Tester state;
@@ -173,25 +173,9 @@ Deliverables:
 Gate:
 - crash or intentional Human architecture change can be reconciled without conversation history, blanket revert, duplicate non-idempotent action or stale authority.
 
-## UI execution policy review gate — UNDER REVIEW / CR REQUIRED
+## UI execution policy authority
 
-Status for Milestones G–I: **UNDER REVIEW**.
-
-This UI execution-mode architecture is intentionally provisional. It may be implemented as accepted Local architecture only after a **Human-invoked CR** independently reviews the exact plan revision, makes any required corrections, and explicitly clears the mark.
-
-Rules:
-- normal Reviewer PASS cannot remove this mark;
-- no automatic workflow may invoke CR to clear it;
-- CR remains stateless/fresh and uses durable source/plan evidence;
-- removing the mark requires explicit CR disposition on the Local-specific environment-aware policy;
-- until then, Milestones G–I must not become irreversible mandatory UI workflow authority.
-
-Environment premise under review:
-- Local has a stronger Vercel agent-browser development/inspection surface than GSA Online;
-- therefore Local can use source-render-browser refinement more directly;
-- Online may rationally prefer a heavier pre-code visual-design workflow while browser capability is weaker;
-- this difference is valid only if shared role authority, Tester independence, evidence semantics and Human visual acceptance remain common;
-- Planner must route from observed runtime capability plus design risk, not from deployment label alone.
+UI architecture uses the normal Local planning quality chain: Reviewer PASS followed by automatic fresh/stateless Local CR on the exact plan revision. Human remains responsible for subjective visual acceptance and material shell-rebuild approval, not for dispatching CR.
 
 ## Milestone G — UI visual-authority contract
 
