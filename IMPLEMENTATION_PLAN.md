@@ -2486,89 +2486,130 @@ Exit:
 | Bounded integration | Phase 15 AcceptedIntegrationBaseline |
 
 Coverage is complete only when each family has runtime acceptance tests or an explicit Human governance gate; prose reference alone is insufficient.
-## Phase 16 — UI Planning / Designer / Design Readiness
+## Phase 16 — UI Planning + UI Execution Mode
 
-Goal: bring Local to the newer UI architecture model.
+Goal: make Local choose the lightest safe UI workflow instead of routing all UI work through Penpot.
 
 Required:
-- Designer role;
-- UX Coder/UI Coder specialization;
-- UI_FIRST / UX_FIRST;
+- Designer role plus UX Coder/UI Coder specialization;
+- preserve UI_FIRST / UX_FIRST as product workflow classification;
+- add orthogonal ui_execution_mode = BROWSER_FIRST | DESIGN_FIRST;
 - UX execution contract;
-- Design Coverage;
-- DESIGN_READY;
-- TEMPORARY_UI and durable UI requirement backlog;
-- asset-contract model;
+- decision criteria: existing usable shell, shell complexity, visual uncertainty, cost of source rework, need for Human pre-approval;
+- existing usable shell => BROWSER_FIRST by default;
+- existing-shell rebuild/replacement => DESIGN_FIRST only after explicit Human approval;
+- greenfield does not imply Penpot; simple standard UI may remain BROWSER_FIRST;
+- assets are a routing signal only, never the sole condition;
 - Human subjective visual authority.
 
 Exit:
-- Planner can produce topology for UI_FIRST and UX_FIRST without leaving material UI/product decisions to Coder.
+- Planner can choose UI execution mode without equating GREENFIELD with Penpot or BROWNFIELD with browser-only work.
 
-## Phase 17 — UI Coder + Penpot Local Binding
+## Phase 17 — Optional Penpot / DESIGN_FIRST Capability
 
-Important evidence premise:
+Important premise:
+- Penpot is optional in GSA Local;
 - generic UI Coder + Penpot capability already PASSed in prior GSA capability testing;
-- do not repeat the broad capability experiment unless applicability becomes stale;
-- before Local makes that PASS a runtime dependency: use UPSTREAM_OBSERVED_REF when durable upstream evidence exists; otherwise record HUMAN_ACCEPTED_EXTERNAL as a planning premise only. Neither substitutes for Local integration OBSERVED evidence.
+- do not repeat broad capability testing unless applicability becomes stale;
+- use UPSTREAM_OBSERVED_REF when durable upstream evidence exists; otherwise HUMAN_ACCEPTED_EXTERNAL is a planning premise only;
+- neither substitutes for Local integration OBSERVED evidence when Penpot is actually used.
 
-Goal: bind that proven capability into the Local runtime.
+Goal: make DESIGN_FIRST available for shell build/rebuild or high design-risk work without making Penpot a prerequisite for ordinary UI editing.
 
 Required:
-- Local reachability/invocation validation;
+- optional Local Penpot reachability/invocation validation;
 - stable Penpot project/file identity;
 - Local fresh-process readback/resume;
 - artifact/export paths;
-- UI DESIGN PHASE;
-- full screen + representative content coverage;
-- UI DESIGN APPROVED durable baseline;
+- UI DESIGN PHASE only for DESIGN_FIRST work that requires pre-code visual architecture;
+- full screen + representative content coverage when the design phase is activated;
+- UI DESIGN APPROVED durable baseline where required;
 - Penpot ExternalOperation/replay identity where needed.
 
 Exit:
-- Local can resume an in-progress UI design and bind later source work to the exact approved Penpot baseline.
+- DESIGN_FIRST can resume an in-progress Penpot design and bind source work to the approved design baseline;
+- BROWSER_FIRST can proceed without Penpot.
 
-## Phase 18 — Tester Browser Executor: Vercel agent-browser MCP
+## Phase 18 — Vercel agent-browser Shared UI Runtime
 
-Goal: use Vercel agent-browser MCP as the primary browser execution layer while preserving Tester as the independent reasoning agent.
+Goal: use Vercel agent-browser MCP as the primary UI observation loop for Local source work while preserving Tester independence.
 
 Required:
-- standalone Local PROBE of launch/open/wait/snapshot/interact/re-snapshot/viewport/screenshot/console/error/cleanup capabilities;
-- agent-browser checkpoints require a browser-inspectable prototype/runnable target;
-- non-browser Penpot checkpoints use an immutable PenpotEvidenceBundle produced by connector/runtime readback/export (or capability-gated Tester read-only Penpot access) plus Human review; UI Coder self-report is not independent verification evidence;
+- standalone Local PROBE of launch/open/wait/snapshot/interact/re-snapshot/viewport/screenshot/diff/console/error/cleanup capabilities;
+- UI Coder uses a development/self-check browser session;
+- Tester uses an independent verification session;
+- UI Coder browser observations never satisfy Tester PASS;
+- agent-browser checkpoints require a browser-inspectable runnable/prototype target;
+- DESIGN_FIRST non-browser Penpot checkpoints use immutable PenpotEvidenceBundle produced by connector/runtime readback/export or capability-gated Tester read-only Penpot access;
 - Tester-owned browser evidence workspace;
 - explicit screenshot/artifact paths for Human;
-- exact target/design/viewport evidence applicability;
+- exact target/design/viewport applicability;
 - browser operation/session identity;
 - PRODUCT_FAILURE / TEST_FAILURE / ENVIRONMENT_FAILURE / INTEGRATION_NOT_READY / SPEC_GAP / PLAN_GAP / NEEDS_HUMAN classification.
 
 Exit:
-- Tester can independently plan and execute browser checkpoints and provide directly inspectable evidence without mutating product source.
+- UI Coder can iterate directly on runnable source with browser feedback;
+- Tester can independently verify the exact runnable target without inheriting UI Coder evidence authority.
 
-## Phase 19 — Human UI Design Loop + SHELL_READY
+## Phase 19 — Mode-specific UI Flow + SHELL_READY
 
-Goal: make design approval and runnable-shell verification distinct durable gates.
+Goal: converge BROWSER_FIRST and DESIGN_FIRST on reviewed, runnable, independently verified UI.
 
-Flow:
+BROWSER_FIRST:
 
-    DESIGN_READY
-      -> UI DESIGN PHASE
-      -> Tester browser evidence
+    Planner UX/UI contract
+      -> UI Coder source implementation
+      -> agent-browser development/refinement loop
+      -> Coder self-check
+      -> Reviewer
+      -> Tester independent agent-browser
+      -> Human review when required
+      -> accepted runtime baseline / SHELL_READY when required
+
+DESIGN_FIRST:
+
+    Planner UX/UI contract
+      -> Designer
+      -> UI Coder + Penpot
+      -> objective design evidence
       -> Human visual review
       -> UI DESIGN APPROVED
       -> source implementation
+      -> agent-browser development/refinement loop
       -> Reviewer
-      -> representative real-content pilot
-      -> Tester runtime verification
+      -> Tester independent agent-browser
       -> SHELL_READY
 
 Required:
-- resume-aware UI stages;
-- routine refinement loop without unnecessary Reviewer re-entry;
-- material feedback routes to Planner/Rebaseline;
-- Penpot design-to-code remains non-authoritative helper output;
+- no UI DESIGN APPROVED prerequisite for BROWSER_FIRST;
+- source implementation binds to UI DESIGN APPROVED only when DESIGN_FIRST requires that baseline;
+- existing-shell switch BROWSER_FIRST -> DESIGN_FIRST requires explicit Human rebuild/replacement approval;
+- routine visual refinement stays within the selected mode;
+- material architecture/flow/state/asset changes route to Planner/Rebaseline;
 - SHELL_READY requires runtime evidence.
 
 Exit:
-- broad UI scale-out starts only from a verified shell baseline.
+- broad scale-out uses a verified runtime baseline where the plan requires shell readiness;
+- Penpot is never ceremony for UI that can safely evolve directly in runnable source.
+
+## Phase 20 — UX_FIRST UI Update Packs + Pilots
+
+Goal: apply the same execution-mode rule to accumulated UX-driven UI work.
+
+Required:
+- durable UIRequirement records;
+- Planner grouping into coherent UI Update Packs;
+- each pack chooses BROWSER_FIRST or DESIGN_FIRST using the Phase 16 contract;
+- existing shell stays BROWSER_FIRST unless Human approves a shell rebuild;
+- real brownfield BROWSER_FIRST pilot;
+- simple greenfield BROWSER_FIRST pilot with no Penpot dependency;
+- DESIGN_FIRST/Penpot pilot for an approved shell build/rebuild or comparable high visual-risk case;
+- interruption/resume tests in both modes;
+- intentional Human BROWSER_FIRST -> DESIGN_FIRST rebuild decision with Rebaseline/Salvage;
+- bounded integration baseline validation.
+
+Exit:
+- workflow is calibrated from real Local evidence before becoming mandatory across Projects.
 
 ## Phase dependency gates
 
@@ -2577,27 +2618,21 @@ Immediate operational rebaseline
   -> replacement remaining-work Job
   -> Phase 14 Recovery foundations
   -> Phase 15 automated Rebaseline/Integration
-  -> Phase 16 UI planning/design foundation
-  -> Phase 17 Local Penpot binding
-  -> Phase 18 agent-browser executor + PROBE
-  -> Phase 19 Human design/source/SHELL_READY loop
+  -> Phase 16 UI execution-mode contract
+  -> Phase 18 agent-browser shared runtime + PROBE
+  -> Phase 19 BROWSER_FIRST runtime flow
+
+Phase 16 DESIGN_FIRST selection
+  -> Phase 17 optional Penpot binding
+  -> Phase 19 DESIGN_FIRST flow
+
+Phase 19
   -> Phase 20 UI Update Packs + pilots
 ```
 
-Cross-cutting gate: Phase 19 browser checkpoints cannot activate until Phase 18 PROBE is FUNCTIONAL/GOAL_MET for the required operation set. Source implementation cannot activate before the exact UI DESIGN APPROVED baseline where UI Design Phase is required.
-## Phase 20 — UX_FIRST UI Update Packs + Pilots
-
-Goal: prevent both per-feature redesign and permanent temporary UI.
-
-Required:
-- durable UIRequirement records;
-- Planner grouping into coherent UI Update Packs;
-- Designer/UI Coder/Tester/Human loop;
-- real UI_FIRST pilot;
-- real UX_FIRST/update-pack pilot;
-- interruption/resume test at UI design/Human/source/shell stages;
-- intentional Human architecture-change salvage test;
-- bounded integration baseline validation.
-
-Exit:
-- workflow is calibrated from real Local evidence before becoming mandatory across Projects.
+Cross-cutting gates:
+- BROWSER_FIRST source work does not wait for Penpot.
+- DESIGN_FIRST Penpot work cannot activate until Local Penpot integration evidence is sufficient for the required operations.
+- Tester browser checkpoints cannot activate until Phase 18 PROBE is FUNCTIONAL/GOAL_MET for their required operation set.
+- Existing-shell rebuild/replacement cannot switch to DESIGN_FIRST without explicit Human approval.
+- UI Coder agent-browser development evidence never substitutes for Tester OBSERVED verification.
