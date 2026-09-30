@@ -1,13 +1,14 @@
 use crate::{
     checkpoint::Checkpoint,
     execution_graph::{
-        EvidenceRequirementSpec, ExecutionGraph, PrerequisiteState, TestCheckpointSpec,
+        CheckpointBoundaryKind, EvidenceRequirementSpec, ExecutionGraph, PrerequisiteState,
+        TestCheckpointSpec,
     },
     plan::{PlanArtifact, PlanRevision},
     tester_evidence::{
         AdapterObservationField, ObservedValue, ReplaySafety, TesterAttemptEvidence,
-        TesterEvidenceOutputRecord, TesterEvidenceRef, TesterTargetBinding,
-        VerificationObservationField,
+        TesterClassification, TesterEvidenceOutputRecord, TesterEvidenceRef, TesterModeOutcome,
+        TesterPrerequisiteTarget, TesterTargetBinding, VerificationObservationField,
     },
     tester_execution::{TesterExecutionObservation, TesterExecutionStepRequest},
     tester_workspace::TesterWorkspaceRuntime,
@@ -116,6 +117,39 @@ pub struct ActiveWorkRecord {
     pub acceptance: Vec<String>,
     pub verification_hints: Vec<String>,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum TesterCheckpointDisposition {
+    Due,
+    Blocked,
+    NeedsHuman,
+    IntegrationNotReady,
+}
+
+impl TesterCheckpointDisposition {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Due => "DUE",
+            Self::Blocked => "BLOCKED",
+            Self::NeedsHuman => "NEEDS_HUMAN",
+            Self::IntegrationNotReady => "INTEGRATION_NOT_READY",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TesterCheckpointWorkRecord {
+    pub graph_version: i64,
+    pub plan_revision: i64,
+    pub checkpoint: TestCheckpointSpec,
+    pub target: Option<TesterTargetBinding>,
+    pub target_fingerprint: Option<String>,
+    pub disposition: TesterCheckpointDisposition,
+    pub reason: Option<String>,
+    pub next_attempt_id: Option<String>,
+}
+
 
 pub struct Registry {
     conn: Connection,
@@ -1852,6 +1886,153 @@ impl Registry {
             .map_err(Into::into)
     }
 
+
+    pub fn resolve_tester_checkpoint(
+        &self,
+        available_capabilities: &[String],
+    ) -> Result<Option<TesterCheckpointWorkRecord>> {
+        let tx = self.conn.unchecked_transaction()?;
+        let Some((graph_version, plan_revision, _plan_hash)) = current_graph_binding_tx(&tx)? else {
+            tx.commit()?;
+            return Ok(None);
+        };
+
+        let checkpoints = {
+            let mut statement = tx.prepare(
+                r#"
+                SELECT c.definition_json
+                FROM execution_test_checkpoints c
+                JOIN execution_milestones m
+                  ON m.graph_version=c.graph_version
+                 AND m.milestone_id=c.milestone_id
+                WHERE c.graph_version=?1
+                ORDER BY m.position ASC, c.checkpoint_id ASC
+                "#,
+            )?;
+            statement
+                .query_map(params![graph_version], |row| row.get::<_, String>(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+        };
+        let available = available_capabilities
+            .iter()
+            .map(|item| item.trim().to_ascii_uppercase())
+            .collect::<HashSet<_>>();
+
+        for checkpoint_json in checkpoints {
+            let checkpoint: TestCheckpointSpec = serde_json::from_str(&checkpoint_json)?;
+            let target = build_tester_target_tx(&tx, graph_version, &checkpoint)?;
+            let boundary = tester_boundary_state_tx(&tx, graph_version, &checkpoint, target.is_some())?;
+            if matches!(boundary, TesterBoundaryState::NotReached) {
+                continue;
+            }
+
+            let Some(target) = target else {
+                let reason = match boundary {
+                    TesterBoundaryState::Crossed(reason) => reason,
+                    TesterBoundaryState::Reached => {
+                        format!("checkpoint {} boundary is reached but prerequisites are not ready", checkpoint.id)
+                    }
+                    TesterBoundaryState::NotReached => unreachable!(),
+                };
+                tx.commit()?;
+                return Ok(Some(TesterCheckpointWorkRecord {
+                    graph_version,
+                    plan_revision,
+                    checkpoint,
+                    target: None,
+                    target_fingerprint: None,
+                    disposition: TesterCheckpointDisposition::Blocked,
+                    reason: Some(reason),
+                    next_attempt_id: None,
+                }));
+            };
+
+            let target_fingerprint = target.fingerprint(graph_version, &checkpoint.id)?;
+            if let Some(attempt) =
+                latest_tester_attempt_for_target_tx(&tx, graph_version, &checkpoint.id, &target_fingerprint)?
+            {
+                attempt.validate_against_checkpoint(&checkpoint)?;
+                validate_tester_target_tx(&tx, graph_version, &attempt.target)?;
+                if tester_attempt_satisfied(&attempt) {
+                    continue;
+                }
+                let (disposition, reason) = tester_attempt_blocking_state(&attempt);
+                tx.commit()?;
+                return Ok(Some(TesterCheckpointWorkRecord {
+                    graph_version,
+                    plan_revision,
+                    checkpoint,
+                    target: Some(target),
+                    target_fingerprint: Some(target_fingerprint),
+                    disposition,
+                    reason: Some(reason),
+                    next_attempt_id: None,
+                }));
+            }
+
+            if let TesterBoundaryState::Crossed(reason) = boundary {
+                tx.commit()?;
+                return Ok(Some(TesterCheckpointWorkRecord {
+                    graph_version,
+                    plan_revision,
+                    checkpoint,
+                    target: Some(target),
+                    target_fingerprint: Some(target_fingerprint),
+                    disposition: TesterCheckpointDisposition::Blocked,
+                    reason: Some(reason),
+                    next_attempt_id: None,
+                }));
+            }
+
+            let missing = checkpoint
+                .required_capabilities
+                .iter()
+                .filter(|required| !available.contains(&required.trim().to_ascii_uppercase()))
+                .cloned()
+                .collect::<Vec<_>>();
+            if !missing.is_empty() {
+                tx.commit()?;
+                return Ok(Some(TesterCheckpointWorkRecord {
+                    graph_version,
+                    plan_revision,
+                    checkpoint,
+                    target: Some(target),
+                    target_fingerprint: Some(target_fingerprint),
+                    disposition: TesterCheckpointDisposition::IntegrationNotReady,
+                    reason: Some(format!(
+                        "checkpoint requires unavailable capabilities: {}",
+                        missing.join(", ")
+                    )),
+                    next_attempt_id: None,
+                }));
+            }
+
+            let attempt_count: i64 = tx.query_row(
+                r#"
+                SELECT COUNT(*) FROM tester_evidence_attempts
+                WHERE graph_version=?1 AND checkpoint_id=?2
+                "#,
+                params![graph_version, checkpoint.id],
+                |row| row.get(0),
+            )?;
+            let next_attempt_id = format!("attempt-{:04}", attempt_count + 1);
+            tx.commit()?;
+            return Ok(Some(TesterCheckpointWorkRecord {
+                graph_version,
+                plan_revision,
+                checkpoint,
+                target: Some(target),
+                target_fingerprint: Some(target_fingerprint),
+                disposition: TesterCheckpointDisposition::Due,
+                reason: None,
+                next_attempt_id: Some(next_attempt_id),
+            }));
+        }
+
+        tx.commit()?;
+        Ok(None)
+    }
+
     pub fn record_tester_attempt_evidence(
         &self,
         project_root: &Path,
@@ -3019,117 +3200,271 @@ fn validate_tester_target_tx(
     graph_version: i64,
     target_binding: &TesterTargetBinding,
 ) -> Result<()> {
-    for target in &target_binding.prerequisites {
-        match target.state {
-            PrerequisiteState::ReviewPass => {
-                let workflow_state: Option<(Option<String>, String)> = tx
-                    .query_row(
-                        r#"
-                        SELECT change_set_id, status
-                        FROM code_workflow_state
-                        WHERE id=1 AND graph_version=?1 AND jobpack_id=?2
-                        "#,
-                        params![graph_version, target.jobpack_id],
-                        |row| Ok((row.get(0)?, row.get(1)?)),
-                    )
-                    .optional()?;
-                let Some((state_change_set, state_status)) = workflow_state else {
-                    bail!(
-                        "Tester target prerequisite {} has no current code workflow state",
-                        target.jobpack_id
-                    );
-                };
-                if state_status != "REVIEW_PASS"
-                    || state_change_set.as_deref() != target.change_set_id.as_deref()
-                {
-                    bail!(
-                        "Tester target prerequisite {} is not current REVIEW_PASS: status={} change_set={:?}",
-                        target.jobpack_id,
-                        state_status,
-                        state_change_set
-                    );
-                }
+    let checkpoint_states = target_binding
+        .prerequisites
+        .iter()
+        .map(|target| crate::execution_graph::CheckpointPrerequisiteSpec {
+            jobpack_id: target.jobpack_id.clone(),
+            state: target.state,
+        })
+        .collect::<Vec<_>>();
+    let synthetic = TestCheckpointSpec {
+        id: "__target_validation__".into(),
+        milestone_id: "__target_validation__".into(),
+        boundary: CheckpointBoundaryKind::AfterJobpackSet,
+        prerequisites: checkpoint_states,
+        before_jobpack_id: None,
+        evidence_need_ids: vec![],
+        modes: vec![crate::plan::EvidenceMode::Verify],
+        goal: "validate Tester target".into(),
+        criteria: vec!["exact prerequisite target".into()],
+        required_capabilities: vec![],
+        experiment_dimensions: vec![],
+        evidence_outputs: vec![],
+    };
+    let current = build_tester_target_tx(tx, graph_version, &synthetic)?
+        .context("Tester target prerequisites are not currently satisfied")?;
+    if &current != target_binding {
+        bail!("Tester target binding is stale for current reviewed prerequisite state");
+    }
+    Ok(())
+}
 
-                let latest: Option<(String, String)> = tx
-                    .query_row(
-                        r#"
-                        SELECT change_set_id, verdict
-                        FROM code_reviews
-                        WHERE graph_version=?1 AND jobpack_id=?2
-                        ORDER BY id DESC LIMIT 1
-                        "#,
-                        params![graph_version, target.jobpack_id],
-                        |row| Ok((row.get(0)?, row.get(1)?)),
-                    )
-                    .optional()?;
-                let Some((change_set_id, verdict)) = latest else {
-                    bail!(
-                        "Tester target prerequisite {} has no code review",
-                        target.jobpack_id
-                    );
-                };
-                if verdict != "PASS"
-                    || target.change_set_id.as_deref() != Some(change_set_id.as_str())
-                {
-                    bail!(
-                        "Tester target prerequisite {} is stale: latest review={} change_set={}",
-                        target.jobpack_id,
-                        verdict,
-                        change_set_id
-                    );
-                }
+#[derive(Debug)]
+enum TesterBoundaryState {
+    NotReached,
+    Reached,
+    Crossed(String),
+}
+
+fn tester_boundary_state_tx(
+    tx: &Transaction<'_>,
+    graph_version: i64,
+    checkpoint: &TestCheckpointSpec,
+    target_ready: bool,
+) -> Result<TesterBoundaryState> {
+    match checkpoint.boundary {
+        CheckpointBoundaryKind::AfterJobpackSet => {
+            if target_ready {
+                Ok(TesterBoundaryState::Reached)
+            } else {
+                Ok(TesterBoundaryState::NotReached)
             }
-            PrerequisiteState::Done => {
-                let status: Option<String> = tx
-                    .query_row(
-                        r#"
-                        SELECT status
-                        FROM execution_jobpacks
-                        WHERE graph_version=?1 AND jobpack_id=?2
-                        "#,
-                        params![graph_version, target.jobpack_id],
-                        |row| row.get(0),
-                    )
-                    .optional()?;
-                if status.as_deref() != Some("DONE") {
-                    bail!(
-                        "Tester DONE prerequisite {} is not DONE; found {:?}",
-                        target.jobpack_id,
-                        status
-                    );
-                }
-                let latest: Option<(String, String)> = tx
-                    .query_row(
-                        r#"
-                        SELECT change_set_id, verdict
-                        FROM code_reviews
-                        WHERE graph_version=?1 AND jobpack_id=?2
-                        ORDER BY id DESC LIMIT 1
-                        "#,
-                        params![graph_version, target.jobpack_id],
-                        |row| Ok((row.get(0)?, row.get(1)?)),
-                    )
-                    .optional()?;
-                let Some((change_set_id, verdict)) = latest else {
-                    bail!(
-                        "Tester DONE prerequisite {} has no code review",
-                        target.jobpack_id
-                    );
-                };
-                if verdict != "PASS"
-                    || target.change_set_id.as_deref() != Some(change_set_id.as_str())
-                {
-                    bail!(
-                        "Tester DONE prerequisite {} is stale: latest review={} change_set={}",
-                        target.jobpack_id,
-                        verdict,
-                        change_set_id
-                    );
-                }
+        }
+        CheckpointBoundaryKind::BeforeJobpack => {
+            let before = checkpoint
+                .before_jobpack_id
+                .as_deref()
+                .context("BEFORE_JOBPACK checkpoint is missing before_jobpack_id")?;
+            let status: Option<String> = tx
+                .query_row(
+                    r#"
+                    SELECT status FROM execution_jobpacks
+                    WHERE graph_version=?1 AND jobpack_id=?2
+                    "#,
+                    params![graph_version, before],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            match status.as_deref() {
+                Some("PENDING") if target_ready => Ok(TesterBoundaryState::Reached),
+                Some("PENDING") => Ok(TesterBoundaryState::NotReached),
+                Some("ACTIVE") | Some("DONE") => Ok(TesterBoundaryState::Crossed(format!(
+                    "checkpoint {} BEFORE_JOBPACK boundary was crossed by {} state {:?}",
+                    checkpoint.id, before, status
+                ))),
+                Some(other) => Ok(TesterBoundaryState::Crossed(format!(
+                    "checkpoint {} gated Job Pack {} is in blocking state {}",
+                    checkpoint.id, before, other
+                ))),
+                None => bail!("checkpoint {} references missing before Job Pack {}", checkpoint.id, before),
+            }
+        }
+        CheckpointBoundaryKind::MilestoneGate => {
+            let status: Option<String> = tx
+                .query_row(
+                    r#"
+                    SELECT status FROM execution_milestones
+                    WHERE graph_version=?1 AND milestone_id=?2
+                    "#,
+                    params![graph_version, checkpoint.milestone_id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            match status.as_deref() {
+                Some("VERIFY") if target_ready => Ok(TesterBoundaryState::Reached),
+                Some("VERIFY") => Ok(TesterBoundaryState::Crossed(format!(
+                    "milestone {} reached VERIFY before checkpoint {} prerequisites were ready",
+                    checkpoint.milestone_id, checkpoint.id
+                ))),
+                Some("COMPLETE") => Ok(TesterBoundaryState::Crossed(format!(
+                    "milestone {} completed before checkpoint {} was satisfied",
+                    checkpoint.milestone_id, checkpoint.id
+                ))),
+                Some("ACTIVE") | Some("LOCKED") => Ok(TesterBoundaryState::NotReached),
+                Some(other) => bail!(
+                    "milestone {} has invalid checkpoint boundary state {}",
+                    checkpoint.milestone_id,
+                    other
+                ),
+                None => bail!("checkpoint {} references missing milestone {}", checkpoint.id, checkpoint.milestone_id),
             }
         }
     }
-    Ok(())
+}
+
+fn build_tester_target_tx(
+    tx: &Transaction<'_>,
+    graph_version: i64,
+    checkpoint: &TestCheckpointSpec,
+) -> Result<Option<TesterTargetBinding>> {
+    let mut prerequisites = Vec::with_capacity(checkpoint.prerequisites.len());
+    for prerequisite in &checkpoint.prerequisites {
+        let jobpack_status: Option<String> = tx
+            .query_row(
+                r#"
+                SELECT status FROM execution_jobpacks
+                WHERE graph_version=?1 AND jobpack_id=?2
+                "#,
+                params![graph_version, prerequisite.jobpack_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(jobpack_status) = jobpack_status else {
+            bail!(
+                "checkpoint {} prerequisite {} references missing Job Pack",
+                checkpoint.id,
+                prerequisite.jobpack_id
+            );
+        };
+
+        let latest_review: Option<(String, String)> = tx
+            .query_row(
+                r#"
+                SELECT change_set_id, verdict
+                FROM code_reviews
+                WHERE graph_version=?1 AND jobpack_id=?2
+                ORDER BY id DESC LIMIT 1
+                "#,
+                params![graph_version, prerequisite.jobpack_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((change_set_id, verdict)) = latest_review else {
+            return Ok(None);
+        };
+        if verdict != "PASS" {
+            return Ok(None);
+        }
+
+        match prerequisite.state {
+            PrerequisiteState::ReviewPass => match jobpack_status.as_str() {
+                "ACTIVE" => {
+                    let workflow_state: Option<(Option<String>, String)> = tx
+                        .query_row(
+                            r#"
+                            SELECT change_set_id, status
+                            FROM code_workflow_state
+                            WHERE id=1 AND graph_version=?1 AND jobpack_id=?2
+                            "#,
+                            params![graph_version, prerequisite.jobpack_id],
+                            |row| Ok((row.get(0)?, row.get(1)?)),
+                        )
+                        .optional()?;
+                    let Some((state_change_set, state_status)) = workflow_state else {
+                        return Ok(None);
+                    };
+                    if state_status != "REVIEW_PASS"
+                        || state_change_set.as_deref() != Some(change_set_id.as_str())
+                    {
+                        return Ok(None);
+                    }
+                }
+                "DONE" => {}
+                _ => return Ok(None),
+            },
+            PrerequisiteState::Done => {
+                if jobpack_status != "DONE" {
+                    return Ok(None);
+                }
+            }
+        }
+
+        prerequisites.push(TesterPrerequisiteTarget {
+            jobpack_id: prerequisite.jobpack_id.clone(),
+            state: prerequisite.state,
+            change_set_id: Some(change_set_id),
+            target_revision: None,
+        });
+    }
+    let target = TesterTargetBinding { prerequisites };
+    target.validate_against_checkpoint(checkpoint)?;
+    Ok(Some(target))
+}
+
+fn latest_tester_attempt_for_target_tx(
+    tx: &Transaction<'_>,
+    graph_version: i64,
+    checkpoint_id: &str,
+    target_fingerprint: &str,
+) -> Result<Option<TesterAttemptEvidence>> {
+    let json: Option<String> = tx
+        .query_row(
+            r#"
+            SELECT attempt_json
+            FROM tester_evidence_attempts
+            WHERE graph_version=?1 AND checkpoint_id=?2 AND target_fingerprint=?3
+            ORDER BY created_at DESC, attempt_id DESC LIMIT 1
+            "#,
+            params![graph_version, checkpoint_id, target_fingerprint],
+            |row| row.get(0),
+        )
+        .optional()?;
+    json.map(|value| serde_json::from_str(&value).map_err(Into::into))
+        .transpose()
+}
+
+fn tester_attempt_satisfied(attempt: &TesterAttemptEvidence) -> bool {
+    attempt
+        .mode_results
+        .iter()
+        .all(|result| result.satisfies_output_requirement())
+}
+
+fn tester_attempt_blocking_state(
+    attempt: &TesterAttemptEvidence,
+) -> (TesterCheckpointDisposition, String) {
+    if attempt
+        .mode_results
+        .iter()
+        .any(|result| result.outcome == TesterModeOutcome::NeedsHuman)
+    {
+        return (
+            TesterCheckpointDisposition::NeedsHuman,
+            format!("Tester attempt {} requires Human evidence", attempt.attempt_id),
+        );
+    }
+    if attempt
+        .classifications
+        .iter()
+        .any(|item| *item == TesterClassification::IntegrationNotReady)
+    {
+        return (
+            TesterCheckpointDisposition::IntegrationNotReady,
+            format!(
+                "Tester attempt {} classified the checkpoint as INTEGRATION_NOT_READY",
+                attempt.attempt_id
+            ),
+        );
+    }
+
+    (
+        TesterCheckpointDisposition::Blocked,
+        format!(
+            "Tester attempt {} did not satisfy every declared checkpoint mode",
+            attempt.attempt_id
+        ),
+    )
 }
 
 fn validate_tester_evidence_refs(
