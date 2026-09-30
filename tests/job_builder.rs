@@ -1,6 +1,10 @@
 use gsa_local::{
-    execution_graph::{ExecutionGraph, JobPackSpec, MilestoneSpec, TodoSpec},
-    plan::PlanArtifact,
+    execution_graph::{
+        CheckpointBoundaryKind, CheckpointPrerequisiteSpec, EvidenceOutputSpec,
+        EvidenceRequirementSpec, ExecutionGraph, JobPackSpec, MilestoneSpec, PrerequisiteState,
+        TestCheckpointSpec, TodoSpec,
+    },
+    plan::{EvidenceMode, EvidenceNeed, PlanArtifact},
     registry::{Registry, ReviewActor, ReviewVerdict},
 };
 use tempfile::tempdir;
@@ -219,6 +223,72 @@ fn registration_is_normalized_checkpointed_and_not_active() {
         .unwrap();
     assert_eq!(required_inputs, vec!["foundation output"]);
     assert_eq!(expected_outputs, vec!["workflow output"]);
+}
+
+#[test]
+fn checkpoint_graph_contract_round_trips_through_registry() {
+    let dir = tempdir().unwrap();
+    let registry = Registry::open_at(&dir.path().join("state.db")).unwrap();
+
+    let mut artifact = plan("checkpoint registry");
+    artifact.evidence_needs.push(EvidenceNeed {
+        id: "runtime-id".into(),
+        question: "Which runtime id is stable?".into(),
+        purpose: "Prevent a guessed binding variable.".into(),
+        required: true,
+        consumer: "JP2".into(),
+        modes: vec![EvidenceMode::Probe],
+        intent: "Observe runtime identity after JP1 before JP2 consumes it.".into(),
+    });
+    let (revision, hash) = approve(&registry, artifact);
+
+    let mut graph = valid_graph();
+    graph.checkpoints.push(TestCheckpointSpec {
+        id: "CP1".into(),
+        milestone_id: "M1".into(),
+        boundary: CheckpointBoundaryKind::AfterJobpackSet,
+        prerequisites: vec![CheckpointPrerequisiteSpec {
+            jobpack_id: "JP1".into(),
+            state: PrerequisiteState::ReviewPass,
+        }],
+        before_jobpack_id: None,
+        evidence_need_ids: vec!["runtime-id".into()],
+        modes: vec![EvidenceMode::Probe],
+        goal: "Observe runtime identity".into(),
+        criteria: vec!["Capture real runtime identity behavior".into()],
+        required_capabilities: vec!["RUNTIME".into()],
+        experiment_dimensions: vec!["session boundary".into()],
+        evidence_outputs: vec![EvidenceOutputSpec {
+            id: "runtime-id-observation".into(),
+            mode: EvidenceMode::Probe,
+            description: "Observed runtime identity behavior".into(),
+            required: true,
+            evidence_need_id: Some("runtime-id".into()),
+        }],
+    });
+    graph.evidence_requirements.push(EvidenceRequirementSpec {
+        consumer_jobpack_id: "JP2".into(),
+        checkpoint_id: "CP1".into(),
+        output_id: "runtime-id-observation".into(),
+        required: true,
+    });
+
+    let version = registry
+        .register_execution_graph(revision, &hash, &graph)
+        .unwrap();
+
+    assert_eq!(
+        registry.execution_checkpoint_counts(version).unwrap(),
+        (1, 1, 1, 1)
+    );
+    assert_eq!(
+        registry.execution_test_checkpoints(version).unwrap(),
+        graph.checkpoints
+    );
+    assert_eq!(
+        registry.execution_evidence_requirements(version).unwrap(),
+        graph.evidence_requirements
+    );
 }
 
 #[test]
