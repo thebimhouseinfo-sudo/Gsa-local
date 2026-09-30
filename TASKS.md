@@ -221,15 +221,15 @@ Gate:
 - [ ] Job Builder registers a superseding graph only after approval.
 - [ ] Non-material in-scope test adaptation does not force replanning.
 
-## G. Phase 11 impact — Local CR / Job Pack completion
+## G. Phase 11 impact — Job Pack completion / Human-invoked CR backstop
 
 Do not implement yet.
 
 Required future updates:
-- [ ] CR packet includes checkpoint evidence relevant to Job Pack acceptance.
+- [ ] If Human invokes CR, its packet includes checkpoint evidence relevant to the exact Job Pack/revision.
 - [ ] Job Pack completion rejects unsatisfied required checkpoints.
 - [ ] Job Pack completion rejects unresolved required empirical evidence.
-- [ ] CR PASS alone still cannot mark DONE.
+- [ ] CR is never auto-dispatched; CR evidence alone cannot mark DONE.
 
 ## H. Phase 12 impact — Milestone verification / resume
 
