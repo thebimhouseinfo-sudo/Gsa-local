@@ -276,9 +276,6 @@ impl ExecutionGraph {
                         need_id
                     );
                 };
-                if need.required {
-                    mapped_required.insert(need.id.as_str());
-                }
             }
 
             for output in &checkpoint.evidence_outputs {
@@ -497,6 +494,21 @@ impl ExecutionGraph {
                 )
             })
             .collect();
+
+        for checkpoint in &self.checkpoints {
+            if checkpoint.boundary == CheckpointBoundaryKind::BeforeJobpack {
+                let before = checkpoint
+                    .before_jobpack_id
+                    .as_deref()
+                    .expect("BEFORE_JOBPACK was validated to have before_jobpack_id");
+                for prerequisite in &checkpoint.prerequisites {
+                    augmented_dependencies
+                        .entry(before)
+                        .or_default()
+                        .push(prerequisite.jobpack_id.as_str());
+                }
+            }
+        }
 
         for requirement in &self.evidence_requirements {
             require_text(
@@ -825,6 +837,87 @@ mod tests {
         assert!(graph.validate_against_plan(&plan).is_err());
         plan.evidence_needs[0].required = false;
         graph.validate_against_plan(&plan).unwrap();
+    }
+
+    #[test]
+    fn required_need_declaration_without_required_output_is_rejected() {
+        let mut graph = valid_graph();
+        graph.checkpoints.push(TestCheckpointSpec {
+            id: "CP1".into(),
+            milestone_id: "M1".into(),
+            boundary: CheckpointBoundaryKind::AfterJobpackSet,
+            prerequisites: vec![CheckpointPrerequisiteSpec {
+                jobpack_id: "JP1".into(),
+                state: PrerequisiteState::ReviewPass,
+            }],
+            before_jobpack_id: None,
+            evidence_need_ids: vec!["runtime-id".into()],
+            modes: vec![EvidenceMode::Probe],
+            goal: "Observe runtime identity".into(),
+            criteria: vec!["Observation captured".into()],
+            required_capabilities: vec![],
+            experiment_dimensions: vec!["session boundary".into()],
+            evidence_outputs: vec![EvidenceOutputSpec {
+                id: "unrelated-output".into(),
+                mode: EvidenceMode::Probe,
+                description: "Probe output that does not satisfy the required need".into(),
+                required: true,
+                evidence_need_id: None,
+            }],
+        });
+        let plan = crate::plan::PlanArtifact {
+            goal: "Use measured runtime identity".into(),
+            current_architecture: "unknown identity lifetime".into(),
+            required_changes: vec!["measure identity".into()],
+            implementation_approach: vec!["probe before consumer".into()],
+            dependencies: vec![],
+            sequence: vec!["probe".into(), "consume".into()],
+            risks: vec!["guessed id".into()],
+            acceptance_direction: vec!["observed evidence only".into()],
+            evidence_needs: vec![crate::plan::EvidenceNeed {
+                id: "runtime-id".into(),
+                question: "Which id is stable?".into(),
+                purpose: "Choose a real binding key.".into(),
+                required: true,
+                consumer: "session controller".into(),
+                modes: vec![EvidenceMode::Probe],
+                intent: "Observe identity across boundaries.".into(),
+            }],
+        };
+
+        assert!(graph.validate_against_plan(&plan).is_err());
+    }
+
+    #[test]
+    fn before_jobpack_checkpoint_rejects_implicit_dependency_cycle() {
+        let mut graph = valid_graph();
+        graph.jobpacks[1].milestone_id = "M1".into();
+        graph.milestones.pop();
+        graph.checkpoints.push(TestCheckpointSpec {
+            id: "CP1".into(),
+            milestone_id: "M1".into(),
+            boundary: CheckpointBoundaryKind::BeforeJobpack,
+            prerequisites: vec![CheckpointPrerequisiteSpec {
+                jobpack_id: "JP2".into(),
+                state: PrerequisiteState::ReviewPass,
+            }],
+            before_jobpack_id: Some("JP1".into()),
+            evidence_need_ids: vec![],
+            modes: vec![EvidenceMode::Verify],
+            goal: "Gate JP1 on reviewed JP2".into(),
+            criteria: vec!["Gate is topologically possible".into()],
+            required_capabilities: vec![],
+            experiment_dimensions: vec![],
+            evidence_outputs: vec![EvidenceOutputSpec {
+                id: "gate-verdict".into(),
+                mode: EvidenceMode::Verify,
+                description: "Gate result".into(),
+                required: true,
+                evidence_need_id: None,
+            }],
+        });
+
+        assert!(graph.validate().is_err());
     }
 
     #[test]
