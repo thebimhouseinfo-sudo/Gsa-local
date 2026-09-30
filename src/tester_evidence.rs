@@ -127,23 +127,39 @@ impl ObservedValue {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum VerificationObservationField {
+    Stdout,
+    Stderr,
+    ExitCode,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum TesterEvidenceRef {
     WorkspaceArtifact { artifact: TesterArtifactRef },
     VerificationRun { run_id: i64 },
+    VerificationObservation {
+        run_id: i64,
+        command_id: String,
+        field: VerificationObservationField,
+        observed: ObservedValue,
+    },
     AdapterObservation {
         adapter_id: String,
         execution_id: String,
+        observed: ObservedValue,
     },
 }
 
 impl TesterEvidenceRef {
-    fn is_runtime_observation(&self) -> bool {
-        matches!(
-            self,
-            Self::VerificationRun { .. } | Self::AdapterObservation { .. }
-        )
+    fn is_runtime_observation_for(&self, value: &ObservedValue) -> bool {
+        match self {
+            Self::VerificationObservation { observed, .. }
+            | Self::AdapterObservation { observed, .. } => observed == value,
+            _ => false,
+        }
     }
 
     fn validate(&self) -> Result<()> {
@@ -157,12 +173,26 @@ impl TesterEvidenceRef {
                     bail!("verification run evidence ref must be positive");
                 }
             }
+            Self::VerificationObservation {
+                run_id,
+                command_id,
+                observed,
+                ..
+            } => {
+                if *run_id <= 0 {
+                    bail!("verification observation run_id must be positive");
+                }
+                require_text("verification observation command_id", command_id)?;
+                observed.validate()?;
+            }
             Self::AdapterObservation {
                 adapter_id,
                 execution_id,
+                observed,
             } => {
                 require_text("adapter observation adapter_id", adapter_id)?;
                 require_text("adapter observation execution_id", execution_id)?;
+                observed.validate()?;
             }
         }
         Ok(())
@@ -196,9 +226,9 @@ impl ExperimentObservation {
         if !self
             .evidence_refs
             .iter()
-            .any(TesterEvidenceRef::is_runtime_observation)
+            .any(|evidence_ref| evidence_ref.is_runtime_observation_for(&self.value))
         {
-            bail!("experiment observation requires a runtime-backed evidence ref");
+            bail!("experiment observation requires a runtime-backed evidence ref bound to the observed value");
         }
         validate_text_items("experiment observation limitation", &self.limitations)
     }
@@ -569,12 +599,13 @@ impl TesterEvidenceOutputRecord {
                 if self.value.is_none() || self.evidence_refs.is_empty() {
                     bail!("OBSERVED evidence requires a value and evidence refs");
                 }
+                let value = self.value.as_ref().expect("OBSERVED value validated above");
                 if !self
                     .evidence_refs
                     .iter()
-                    .any(TesterEvidenceRef::is_runtime_observation)
+                    .any(|evidence_ref| evidence_ref.is_runtime_observation_for(value))
                 {
-                    bail!("OBSERVED evidence requires a runtime-backed evidence ref");
+                    bail!("OBSERVED evidence requires a runtime-backed evidence ref bound to the observed value");
                 }
             }
             EvidenceProvenance::Implication => {
