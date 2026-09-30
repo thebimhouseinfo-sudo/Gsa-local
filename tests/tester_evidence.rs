@@ -12,7 +12,7 @@ use gsa_local::{
         EvidenceProvenance, ExperimentContext, ExperimentObservation, ExperimentSample,
         ObservedValue, RevalidationPolicy, TesterAttemptEvidence, TesterEvidenceOutputRecord,
         TesterEvidenceRef, TesterModeOutcome, TesterModeResult, TesterPrerequisiteTarget,
-        TesterTargetBinding,
+        TesterTargetBinding, VerificationObservationField,
     },
     tester_workspace::{TesterArtifactRef, TesterWorkspaceRuntime},
     verification::{
@@ -242,8 +242,11 @@ fn attempt(
     verification_run_id: i64,
 ) -> TesterAttemptEvidence {
     let artifact_ref = TesterEvidenceRef::WorkspaceArtifact { artifact };
-    let runtime_ref = TesterEvidenceRef::VerificationRun {
+    let runtime_ref = TesterEvidenceRef::VerificationObservation {
         run_id: verification_run_id,
+        command_id: "runtime-probe".into(),
+        field: VerificationObservationField::Stdout,
+        observed: ObservedValue::Text("runtime-1".into()),
     };
     TesterAttemptEvidence {
         graph_version: version,
@@ -404,10 +407,35 @@ fn adapter_observation_ref_is_rejected_until_execution_records_exist() {
     let adapter_ref = TesterEvidenceRef::AdapterObservation {
         adapter_id: "future-adapter".into(),
         execution_id: "exec-1".into(),
+        observed: ObservedValue::Text("runtime-1".into()),
     };
     evidence.experiment.as_mut().unwrap().samples[0].observations[0].evidence_refs =
         vec![adapter_ref.clone()];
     evidence.outputs[0].evidence_refs = vec![adapter_ref];
+
+    assert!(registry
+        .record_tester_attempt_evidence(dir.path(), "owner-a", &evidence)
+        .is_err());
+}
+
+#[test]
+fn observed_value_must_match_persisted_verification_output() {
+    let (dir, registry, version, verification_run_id) = setup();
+    let artifact = workspace_artifact(&dir, version, "ATT-MISMATCH");
+    let mut evidence = attempt(
+        version,
+        "ATT-MISMATCH",
+        "change-1",
+        artifact,
+        verification_run_id,
+    );
+    evidence.outputs[0].value = Some(ObservedValue::Text("invented-runtime".into()));
+    evidence.outputs[0].evidence_refs = vec![TesterEvidenceRef::VerificationObservation {
+        run_id: verification_run_id,
+        command_id: "runtime-probe".into(),
+        field: VerificationObservationField::Stdout,
+        observed: ObservedValue::Text("invented-runtime".into()),
+    }];
 
     assert!(registry
         .record_tester_attempt_evidence(dir.path(), "owner-a", &evidence)
