@@ -2743,8 +2743,9 @@ fn validate_tester_evidence_refs(
                 }
             }
             TesterEvidenceRef::AdapterObservation { .. } => {
-                // T-EXECUTION owns adapter execution records. The ref shape is validated
-                // here; runtime existence/fencing is added when that subsystem exists.
+                bail!(
+                    "adapter observation refs cannot be persisted until T-EXECUTION can validate their execution record"
+                );
             }
         }
     }
