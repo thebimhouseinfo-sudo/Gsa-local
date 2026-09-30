@@ -921,6 +921,19 @@ mod tests {
     }
 
     #[test]
+    fn legacy_graph_json_defaults_checkpoint_fields() {
+        let mut value = serde_json::to_value(valid_graph()).unwrap();
+        let object = value.as_object_mut().unwrap();
+        object.remove("checkpoints");
+        object.remove("evidence_requirements");
+
+        let graph: ExecutionGraph = serde_json::from_value(value).unwrap();
+        assert!(graph.checkpoints.is_empty());
+        assert!(graph.evidence_requirements.is_empty());
+        graph.validate().unwrap();
+    }
+
+    #[test]
     fn valid_graph_passes() {
         valid_graph().validate().unwrap();
     }
