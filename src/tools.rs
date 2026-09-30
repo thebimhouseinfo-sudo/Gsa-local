@@ -552,10 +552,12 @@ fn is_tester_workspace_path(path: &Path) -> bool {
         Component::Normal(part) => part.to_str(),
         _ => None,
     });
-    matches!(
-        (components.next(), components.next()),
-        (Some(".gsa"), Some("tester"))
-    )
+    match (components.next(), components.next()) {
+        (Some(first), Some(second)) => {
+            first.eq_ignore_ascii_case(".gsa") && second.eq_ignore_ascii_case("tester")
+        }
+        _ => false,
+    }
 }
 
 fn should_skip(relative: &Path) -> bool {
