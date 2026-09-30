@@ -636,7 +636,7 @@ Dependencies: N1, L4, K7.
 ## O. UI review / Human loop / SHELL_READY
 
 ### O1 — normal UI change flow
-Dependencies: N2, M4.
+Dependencies: N2, N2a, M4.
 
 - [ ] Planner/Designer visual authority -> UI Coder source/browser loop -> UI_SELF_CHECK -> Reviewer -> Tester independent agent-browser.
 - [ ] Human evidence review is added only where product plan or subjective visual acceptance requires it.
@@ -644,7 +644,7 @@ Dependencies: N2, M4.
 - [ ] Material UX/flow/state/shell-architecture changes route to Planner/Human.
 
 ### O2 — shell creation/rebuild flow
-Dependencies: N4, M4.
+Dependencies: N4, N2a, M4.
 
 - [ ] Greenfield shell creation or Human-approved shell rebuild uses the same source/browser loop.
 - [ ] Use representative content and responsive states while the shell is still cheap to change.
@@ -659,7 +659,7 @@ Dependencies: O1 or O2.
 - [ ] Tester verifies runnable shell with independent agent-browser.
 
 ### O4 — UI_ACCEPTED / SHELL_READY
-Dependencies: O3 when shell-level readiness is required; otherwise O1.
+Dependencies: N2a plus O3 when shell-level readiness is required; otherwise N2a + O1.
 
 - [ ] Ordinary bounded UI changes may terminate at UI_ACCEPTED after declared review/test/Human gates.
 - [ ] SHELL_READY is reserved for greenfield/rebuilt/material shell baselines where broad scale-out depends on shell stability.
@@ -677,7 +677,7 @@ Dependencies: L2.
 - [ ] Existing shell remains the baseline unless Human explicitly approves a shell rebuild.
 
 ### P2 — UI Update Pack execution
-Dependencies: P1, L3, N2, M4.
+Dependencies: P1, L3, N2, N2a, M4.
 
 - [ ] Planner groups coherent requirements by affected shell/surface.
 - [ ] Designer resolves material visual direction when current authority is insufficient.
