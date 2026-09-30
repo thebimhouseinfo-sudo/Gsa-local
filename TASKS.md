@@ -542,6 +542,44 @@ Dependencies: L4.
 - [ ] Asset generation/acquisition remains capability-gated and independently attributable.
 - [ ] No specific icon/font/asset provider is mandatory in the core workflow.
 
+## M. Vercel agent-browser for UI Coder and Tester
+
+### M1 — shared browser executor
+Dependencies: K10 and rebaselined Tester checkpoint subsystem.
+
+- [ ] Add Vercel agent-browser MCP as the primary browser observation/execution layer for Local UI work.
+- [ ] UI Coder uses it for development feedback/self-check.
+- [ ] Tester uses it independently for checkpoint verification.
+- [ ] Preserve separate sessions/operation identities and evidence authority for UI Coder vs Tester.
+- [ ] Enforce open -> wait -> snapshot -> interact -> re-snapshot -> observe -> screenshot/report discipline.
+- [ ] Treat stale element refs as TEST_FAILURE in Tester runs and invalid development refs in UI Coder loops.
+
+### M2 — standalone Local agent-browser PROBE
+Dependencies: M1.
+
+- [ ] Prove launch, target open, load wait, snapshot, click/fill, re-snapshot, viewport handling, screenshot, diff where required, evidence path, console/page error collection and deterministic cleanup.
+- [ ] Probe state/session save/load only where required.
+- [ ] Prove separate UI Coder and Tester sessions can target the same runnable app without sharing verification authority.
+- [ ] Missing required operation => INTEGRATION_NOT_READY; tool presence never implies FUNCTIONAL.
+
+### M3 — Tester browser evidence workspace
+Dependencies: M2.
+
+- [ ] Store Tester browser sessions/snapshots/screenshots/diffs/console evidence in Tester-owned workspace.
+- [ ] Product source remains read-only to Tester.
+- [ ] Bind artifacts to checkpoint, exact runnable target, viewport and browser operation identity.
+- [ ] Surface direct screenshot/diff paths to Human; no manual directory hunting.
+
+### M4 — Tester UI checkpoint semantics
+Dependencies: M2, M3.
+
+- [ ] Tester independently plans the checkpoint.
+- [ ] Verify the exact runnable source target with an independent agent-browser session.
+- [ ] Verify objective screen/state/flow/responsive/clipping/asset/runtime criteria only through capabilities actually available for that target.
+- [ ] UI Coder self-check artifacts may be context but cannot satisfy Tester verification.
+- [ ] Subjective visual judgement routes to NEEDS_HUMAN.
+- [ ] Tester evidence follows dimension-aware applicability.
+
 ## N. UI Coder browser-driven workflow
 
 ### N1 — dedicated UI Coder state machine
@@ -581,44 +619,6 @@ Dependencies: N1, L4, K7.
 - [ ] UI Coder repeatedly render/inspect/refine with agent-browser until the shell reaches UI_SELF_CHECK.
 - [ ] Human may review runnable screenshots/live result at meaningful shell checkpoints.
 - [ ] Do not create a parallel mockup authority that can drift from production source.
-
-## M. Vercel agent-browser for UI Coder and Tester
-
-### M1 — shared browser executor
-Dependencies: K10 and rebaselined Tester checkpoint subsystem.
-
-- [ ] Add Vercel agent-browser MCP as the primary browser observation/execution layer for Local UI work.
-- [ ] UI Coder uses it for development feedback/self-check.
-- [ ] Tester uses it independently for checkpoint verification.
-- [ ] Preserve separate sessions/operation identities and evidence authority for UI Coder vs Tester.
-- [ ] Enforce open -> wait -> snapshot -> interact -> re-snapshot -> observe -> screenshot/report discipline.
-- [ ] Treat stale element refs as TEST_FAILURE in Tester runs and invalid development refs in UI Coder loops.
-
-### M2 — standalone Local agent-browser PROBE
-Dependencies: M1.
-
-- [ ] Prove launch, target open, load wait, snapshot, click/fill, re-snapshot, viewport handling, screenshot, diff where required, evidence path, console/page error collection and deterministic cleanup.
-- [ ] Probe state/session save/load only where required.
-- [ ] Prove separate UI Coder and Tester sessions can target the same runnable app without sharing verification authority.
-- [ ] Missing required operation => INTEGRATION_NOT_READY; tool presence never implies FUNCTIONAL.
-
-### M3 — Tester browser evidence workspace
-Dependencies: N2.
-
-- [ ] Store Tester browser sessions/snapshots/screenshots/diffs/console evidence in Tester-owned workspace.
-- [ ] Product source remains read-only to Tester.
-- [ ] Bind artifacts to checkpoint, exact runnable target, viewport and browser operation identity.
-- [ ] Surface direct screenshot/diff paths to Human; no manual directory hunting.
-
-### M4 — Tester UI checkpoint semantics
-Dependencies: M2, M3.
-
-- [ ] Tester independently plans the checkpoint.
-- [ ] Verify the exact runnable source target with an independent agent-browser session.
-- [ ] Verify objective screen/state/flow/responsive/clipping/asset/runtime criteria only through capabilities actually available for that target.
-- [ ] UI Coder self-check artifacts may be context but cannot satisfy Tester verification.
-- [ ] Subjective visual judgement routes to NEEDS_HUMAN.
-- [ ] Tester evidence follows dimension-aware applicability.
 
 ## O. UI review / Human loop / SHELL_READY
 
@@ -701,6 +701,7 @@ Dependencies: K10, L5, N4, M4, O4, P2.
 - [ ] Verify Designer can supply visual direction without any fixed design application.
 - [ ] Verify UI workspace resume at UI_GROUND / UI_IMPLEMENT / UI_RENDER / UI_INSPECT / UI_REFINE / UI_SELF_CHECK / UI_TEST_CHECKPOINT.
 - [ ] Verify Rebaseline/Salvage on a genuine or controlled shell-rebuild transition.
-- [ ] Verify optional capability-provider absence does not break core source + browser UI workflow.
+- [ ] Verify the core source + browser UI workflow works with no optional provider configured.
+- [ ] After Q1 exists, verify provider-selection fallback/absence behavior separately without making Q1 a prerequisite for the core pilot.
 - [ ] Verify bounded integration baselines prevent unbounded commit accumulation.
 - [ ] Calibrate before making the workflow mandatory across all Projects.
