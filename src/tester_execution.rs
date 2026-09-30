@@ -624,8 +624,14 @@ impl<'a> TesterWorkflow<'a> {
                 .iter()
                 .any(|call| call.function.name == "submit_tester_report")
             {
-                if calls.len() != 1 || calls[0].function.name != "submit_tester_report" {
-                    bail!("submit_tester_report must be the only tool call in its response");
+                if let Err(error) = validate_report_call_shape(
+                    calls.iter().map(|call| call.function.name.as_str()),
+                ) {
+                    if should_retry_invalid_report(round) {
+                        messages.push(invalid_report_feedback(&error));
+                        continue;
+                    }
+                    return Err(error).context("Tester report remained invalid after bounded retries");
                 }
                 let report_result = (|| -> Result<TesterAttemptEvidence> {
                     let report: TesterReportSubmission =
@@ -659,15 +665,7 @@ impl<'a> TesterWorkflow<'a> {
                 match report_result {
                     Ok(attempt) => return Ok(attempt),
                     Err(error) if should_retry_invalid_report(round) => {
-                        messages.push(ChatMessage::tool(
-                            "submit_tester_report",
-                            json!({
-                                "ok": false,
-                                "error": format!("{error:#}"),
-                                "instruction": "Correct the report or gather missing evidence inside the same checkpoint scope, then resubmit."
-                            })
-                            .to_string(),
-                        ));
+                        messages.push(invalid_report_feedback(&error));
                         continue;
                     }
                     Err(error) => {
@@ -751,8 +749,30 @@ fn validate_report_execution_coverage(
     Ok(())
 }
 
+fn validate_report_call_shape<'a>(
+    names: impl IntoIterator<Item = &'a str>,
+) -> Result<()> {
+    let names = names.into_iter().collect::<Vec<_>>();
+    if names.len() != 1 || names[0] != "submit_tester_report" {
+        bail!("submit_tester_report must be the only tool call in its response");
+    }
+    Ok(())
+}
+
 fn should_retry_invalid_report(round: usize) -> bool {
     round + 1 < MAX_TESTER_TOOL_ROUNDS
+}
+
+fn invalid_report_feedback(error: &anyhow::Error) -> ChatMessage {
+    ChatMessage::tool(
+        "submit_tester_report",
+        json!({
+            "ok": false,
+            "error": format!("{error:#}"),
+            "instruction": "Correct the report or gather missing evidence inside the same checkpoint scope, then resubmit."
+        })
+        .to_string(),
+    )
 }
 
 fn tester_execute_tool() -> ToolDefinition {
@@ -932,6 +952,21 @@ mod tests {
         assert!(should_retry_invalid_report(0));
         assert!(should_retry_invalid_report(MAX_TESTER_TOOL_ROUNDS - 2));
         assert!(!should_retry_invalid_report(MAX_TESTER_TOOL_ROUNDS - 1));
+    }
+
+    #[test]
+    fn mixed_report_and_tool_calls_are_invalid_report_shape() {
+        assert!(validate_report_call_shape(["submit_tester_report"]).is_ok());
+        assert!(validate_report_call_shape([
+            "submit_tester_report",
+            "tester_workspace_read",
+        ])
+        .is_err());
+        assert!(validate_report_call_shape([
+            "tester_workspace_read",
+            "submit_tester_report",
+        ])
+        .is_err());
     }
 
     #[test]
