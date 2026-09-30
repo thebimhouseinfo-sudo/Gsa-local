@@ -1,6 +1,4 @@
-use crate::registry::{
-    ActiveWorkRecord, Registry, TesterCheckpointRuntime,
-};
+use crate::registry::{ActiveWorkRecord, Registry, TesterCheckpointRuntime};
 use anyhow::Result;
 use std::path::Path;
 
@@ -63,7 +61,6 @@ impl<'a> MilestoneController<'a> {
             .resolve_or_activate_work(self.project_root, self.lease_owner)
             .map(|work| work.map(Into::into))
     }
-
 
     pub fn resolve_due_tester_checkpoint(
         &self,
