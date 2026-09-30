@@ -19,7 +19,7 @@ The Tester redesign has cross-phase impact. Earlier phases are not rolled back w
 | Phase 8 — Coder ↔ Reviewer | MEDIUM | Core loop stays unchanged. Coder context gains required OBSERVED evidence; Coder/Internal Fix must be denied writes to Tester-owned workspace; repair after Tester FAIL still returns through Reviewer before retest. |
 | Phase 9 — Verification Controller + Local CI | HIGH semantic change | Keep deterministic build/test capability discovery and Local CI evidence, but remove authority to decide where Tester appears. Phase 9 becomes a deterministic verification primitive/capability provider used by coding self-checks and declared checkpoints. |
 | Phase 10 — Tester subsystem | MAJOR | New independent checkpoint subsystem with its own workspace, test planning, execution, VERIFY/MEASURE/PROBE, empirical evidence and retest. |
-| Phase 11 — Code Local CR | MEDIUM | CR packet must consume checkpoint/evidence state relevant to final Job Pack acceptance, but CR remains after implementation/verification gates. |
+| Phase 11 — Job Pack Completion / Human-invoked CR backstop | MEDIUM | CR packet must consume checkpoint/evidence state relevant to final Job Pack acceptance, but CR remains after implementation/verification gates. |
 | Phase 12 — Milestone Verification + Resume | HIGH | Milestone completion must require all declared milestone checkpoint requirements and must resume checkpoint state correctly after restart. |
 | Phase 13 — Hardening | HIGH | Add negative tests for evidence spoofing/staleness, checkpoint bypass, Tester workspace escape, fake measurements, guessed required variables and unsafe Tester execution. |
 
@@ -88,7 +88,7 @@ Tester rebaseline impact:
 Completed core:
 - revisioned Implementation Plan;
 - Planner↔Reviewer;
-- Local CR;
+- Human-invoked CR backstop when requested;
 - PLAN_APPROVED binding;
 - Job Builder execution-graph registration.
 
@@ -129,7 +129,7 @@ Rebased work:
 5. implement exact-target empirical evidence;
 6. implement evidence consumer contract;
 7. implement repair → Reviewer PASS → RETEST;
-8. integrate later with Local CR final gate only after Phase 10 is complete.
+8. integrate later with Job Pack completion gates; CR remains Human-invoked only.
 
 ## Milestone E — Completion / Resume / Hardening
 Future work must now include:
