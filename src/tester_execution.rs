@@ -763,15 +763,49 @@ fn tester_execute_tool() -> ToolDefinition {
 fn tester_report_tool() -> ToolDefinition {
     ToolDefinition::function(
         "submit_tester_report",
-        "Submit the complete exact-target Tester report. Runtime validates all mode outcomes, provenance, evidence refs and applicability before persistence.",
+        "Submit the complete exact-target Tester report. Copy runtime evidence refs returned by tester_execute; do not invent ids or observed values. Runtime validates mode outcomes, provenance, evidence refs and applicability before persistence.",
         json!({
             "type":"object",
             "required":["mode_results","classifications","outputs","limitations"],
             "properties":{
-                "mode_results":{"type":"array","items":{"type":"object"}},
-                "classifications":{"type":"array","items":{"type":"string","enum":["PRODUCT_FAILURE","TEST_FAILURE","ENVIRONMENT_FAILURE","NOT_READY","INTEGRATION_NOT_READY","SPEC_GAP"]}},
-                "experiment":{"type":["object","null"]},
-                "outputs":{"type":"array","items":{"type":"object"}},
+                "mode_results":{
+                    "type":"array",
+                    "items":{
+                        "type":"object",
+                        "required":["mode","outcome"],
+                        "properties":{
+                            "mode":{"type":"string","enum":["VERIFY","MEASURE","PROBE"]},
+                            "outcome":{"type":"string","enum":["PASS","FAIL","COMPLETE","BLOCKED","NEEDS_HUMAN"]},
+                            "reason":{"type":["string","null"]}
+                        }
+                    }
+                },
+                "classifications":{
+                    "type":"array",
+                    "items":{"type":"string","enum":["PRODUCT_FAILURE","TEST_FAILURE","ENVIRONMENT_FAILURE","NOT_READY","INTEGRATION_NOT_READY","SPEC_GAP"]}
+                },
+                "experiment":{
+                    "description":"For completed MEASURE/PROBE, provide dimensions and samples. Each sample contains variables, boundary_event/target/runtime identity when observed, and observations with copied runtime evidence_refs.",
+                    "type":["object","null"]
+                },
+                "outputs":{
+                    "type":"array",
+                    "description":"Named checkpoint outputs. OBSERVED outputs require value plus runtime-backed evidence_refs returned by tester_execute.",
+                    "items":{
+                        "type":"object",
+                        "required":["output_id","mode","provenance","evidence_refs","limitations","applicability"],
+                        "properties":{
+                            "output_id":{"type":"string","minLength":1},
+                            "mode":{"type":"string","enum":["VERIFY","MEASURE","PROBE"]},
+                            "provenance":{"type":"string","enum":["OBSERVED","IMPLICATION","UNRESOLVED"]},
+                            "value":{"type":["object","null"],"description":"ObservedValue uses {type: TEXT|INTEGER|DECIMAL|BOOLEAN, value: ...}."},
+                            "unit":{"type":["string","null"]},
+                            "evidence_refs":{"type":"array","items":{"type":"object"},"description":"Copy exact refs returned by tester_execute or other runtime-validated refs."},
+                            "limitations":{"type":"array","items":{"type":"string"}},
+                            "applicability":{"type":"object","description":"Provide policy REUSE_IF_MATCHES or ALWAYS_REVALIDATE plus finite matcher objects defined by the approved evidence contract."}
+                        }
+                    }
+                },
                 "limitations":{"type":"array","items":{"type":"string"}}
             }
         }),
