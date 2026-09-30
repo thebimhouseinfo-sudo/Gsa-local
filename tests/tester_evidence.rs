@@ -15,6 +15,10 @@ use gsa_local::{
         TesterTargetBinding,
     },
     tester_workspace::{TesterArtifactRef, TesterWorkspaceRuntime},
+    verification::{
+        CommandEvidence, DiscoveryStatus, VerificationCapability, VerificationCommand,
+        VerificationCommandKind, VerificationEvidence, VerificationProfile, VerificationResult,
+    },
 };
 use serde_json::json;
 use std::{collections::BTreeMap, time::Duration};
@@ -94,7 +98,7 @@ fn graph() -> ExecutionGraph {
     }
 }
 
-fn setup() -> (tempfile::TempDir, Registry, i64) {
+fn setup() -> (tempfile::TempDir, Registry, i64, i64) {
     let dir = tempdir().unwrap();
     let registry = Registry::open(dir.path()).unwrap();
     registry.begin_plan_workflow().unwrap();
@@ -161,7 +165,53 @@ fn setup() -> (tempfile::TempDir, Registry, i64) {
         )
         .unwrap();
 
-    (dir, registry, version)
+    let command = VerificationCommand {
+        id: "runtime-probe".into(),
+        kind: VerificationCommandKind::Test,
+        capability: VerificationCapability::Integration,
+        argv: vec!["probe-runtime".into()],
+        source_paths: vec!["tests/runtime_probe.rs".into()],
+        config_hash: "probe-config".into(),
+    };
+    let verification = VerificationEvidence {
+        profile: VerificationProfile {
+            status: DiscoveryStatus::Applicable,
+            capabilities: vec![VerificationCapability::Integration],
+            commands: vec![command.clone()],
+            reason: None,
+        },
+        commands: vec![CommandEvidence {
+            command_id: command.id,
+            config_hash: command.config_hash,
+            argv: command.argv,
+            exit_code: Some(0),
+            duration_ms: 5,
+            timed_out: false,
+            blocked_reason: None,
+            stdout: "runtime-1".into(),
+            stderr: String::new(),
+        }],
+        test_surface_changed: false,
+    };
+    assert_eq!(
+        registry
+            .record_verification_evidence(
+                dir.path(),
+                "owner-a",
+                version,
+                "JP1",
+                "change-1",
+                &verification,
+            )
+            .unwrap(),
+        VerificationResult::TestPass
+    );
+    let verification_run_id = registry
+        .latest_verification_run_id(version, "JP1", "change-1")
+        .unwrap()
+        .unwrap();
+
+    (dir, registry, version, verification_run_id)
 }
 
 fn workspace_artifact(
@@ -189,8 +239,12 @@ fn attempt(
     attempt_id: &str,
     change_set_id: &str,
     artifact: TesterArtifactRef,
+    verification_run_id: i64,
 ) -> TesterAttemptEvidence {
-    let evidence_ref = TesterEvidenceRef::WorkspaceArtifact { artifact };
+    let artifact_ref = TesterEvidenceRef::WorkspaceArtifact { artifact };
+    let runtime_ref = TesterEvidenceRef::VerificationRun {
+        run_id: verification_run_id,
+    };
     TesterAttemptEvidence {
         graph_version: version,
         checkpoint_id: "CP1".into(),
@@ -223,7 +277,7 @@ fn attempt(
                     name: "runtime_id".into(),
                     value: ObservedValue::Text("runtime-1".into()),
                     unit: None,
-                    evidence_refs: vec![evidence_ref.clone()],
+                    evidence_refs: vec![runtime_ref.clone(), artifact_ref.clone()],
                     limitations: vec![],
                 }],
             }],
@@ -234,7 +288,7 @@ fn attempt(
             provenance: EvidenceProvenance::Observed,
             value: Some(ObservedValue::Text("runtime-1".into())),
             unit: None,
-            evidence_refs: vec![evidence_ref],
+            evidence_refs: vec![runtime_ref, artifact_ref],
             limitations: vec![],
             applicability: EvidenceApplicability {
                 policy: RevalidationPolicy::ReuseIfMatches,
@@ -249,9 +303,15 @@ fn attempt(
 
 #[test]
 fn exact_target_probe_evidence_round_trips_from_registry() {
-    let (dir, registry, version) = setup();
+    let (dir, registry, version, verification_run_id) = setup();
     let artifact = workspace_artifact(&dir, version, "ATT-1");
-    let attempt = attempt(version, "ATT-1", "change-1", artifact);
+    let attempt = attempt(
+        version,
+        "ATT-1",
+        "change-1",
+        artifact,
+        verification_run_id,
+    );
 
     let fingerprint = registry
         .record_tester_attempt_evidence(dir.path(), "owner-a", &attempt)
@@ -286,9 +346,15 @@ fn exact_target_probe_evidence_round_trips_from_registry() {
 
 #[test]
 fn stale_review_target_cannot_record_tester_evidence() {
-    let (dir, registry, version) = setup();
+    let (dir, registry, version, verification_run_id) = setup();
     let artifact = workspace_artifact(&dir, version, "ATT-STALE");
-    let stale = attempt(version, "ATT-STALE", "change-old", artifact);
+    let stale = attempt(
+        version,
+        "ATT-STALE",
+        "change-old",
+        artifact,
+        verification_run_id,
+    );
 
     assert!(registry
         .record_tester_attempt_evidence(dir.path(), "owner-a", &stale)
@@ -301,13 +367,14 @@ fn stale_review_target_cannot_record_tester_evidence() {
 
 #[test]
 fn stale_workspace_artifact_ref_cannot_be_persisted_as_observed() {
-    let (dir, registry, version) = setup();
+    let (dir, registry, version, verification_run_id) = setup();
     let artifact = workspace_artifact(&dir, version, "ATT-STALE-ARTIFACT");
     let stale = attempt(
         version,
         "ATT-STALE-ARTIFACT",
         "change-1",
         artifact.clone(),
+        verification_run_id,
     );
     std::fs::write(
         dir.path()
@@ -325,9 +392,15 @@ fn stale_workspace_artifact_ref_cannot_be_persisted_as_observed() {
 
 #[test]
 fn adapter_observation_ref_is_rejected_until_execution_records_exist() {
-    let (dir, registry, version) = setup();
+    let (dir, registry, version, verification_run_id) = setup();
     let artifact = workspace_artifact(&dir, version, "ATT-ADAPTER");
-    let mut evidence = attempt(version, "ATT-ADAPTER", "change-1", artifact);
+    let mut evidence = attempt(
+        version,
+        "ATT-ADAPTER",
+        "change-1",
+        artifact,
+        verification_run_id,
+    );
     let adapter_ref = TesterEvidenceRef::AdapterObservation {
         adapter_id: "future-adapter".into(),
         execution_id: "exec-1".into(),
@@ -343,9 +416,15 @@ fn adapter_observation_ref_is_rejected_until_execution_records_exist() {
 
 #[test]
 fn successful_required_probe_output_must_be_observed() {
-    let (dir, _registry, version) = setup();
+    let (dir, _registry, version, verification_run_id) = setup();
     let artifact = workspace_artifact(&dir, version, "ATT-IMPLIED");
-    let mut implied = attempt(version, "ATT-IMPLIED", "change-1", artifact);
+    let mut implied = attempt(
+        version,
+        "ATT-IMPLIED",
+        "change-1",
+        artifact,
+        verification_run_id,
+    );
     implied.outputs[0].provenance = EvidenceProvenance::Implication;
 
     assert!(implied.validate_against_checkpoint(&graph().checkpoints[0]).is_err());
