@@ -343,3 +343,190 @@ Gate:
 12. Run regression/CI.
 13. Reviewer.
 14. Stop. Do not enter Phase 11 automatically.
+
+
+## K. Workflow Recovery / Rebaseline v2 migration
+
+Sources (read-only):
+- WORKFLOW_LESSONS_LEARNED.md
+- GSA_LOCAL_UI_TESTER_TARGET_ARCHITECTURE.md
+
+These tasks are future architecture work and MUST NOT be pulled into the active J-177F Tester implementation unless a dependency is explicitly required.
+
+### K1 — authoritative WorkCursor / ResumeDescriptor
+- [ ] Add one runtime-owned WorkCursor per active Job execution lineage.
+- [ ] Bind Project, Job, plan revision/hash, execution graph version, Task/JobPack, active Run, workflow stage, pending gate, continuation policy and SourceTargetSet.
+- [ ] Resume reads WorkCursor first; it must not infer the active Run by newest timestamp/commit.
+- [ ] Reconcile multiple legacy IN_PROGRESS Runs before assigning the cursor.
+
+### K2 — start vs resume vs recover
+- [ ] Separate START / RESUME / RECOVER operations.
+- [ ] Planning and Coding entry resolvers must inspect durable state before any begin_* initializer.
+- [ ] begin_* may initialize only genuinely absent/new state.
+- [ ] Attempt/review/checklist/TODO/change-set counters survive restart.
+
+### K3 — crash-consistent durable transitions
+- [ ] Introduce transition_id/idempotency_key for Run/Verification/Handoff/finalization writes.
+- [ ] Make interrupted partial persistence recoverable without duplicate durable records.
+- [ ] Add durable ExternalOperation identity for CI, Penpot and browser operations.
+- [ ] Repeated finalization converges to one terminal state.
+
+### K4 — source mutation write-ahead
+- [ ] Add MutationIntent PREPARED/APPLIED/CHECKPOINTED/ABORTED.
+- [ ] Bind expected-before and intended-after hashes.
+- [ ] Use atomic replace where applicable.
+- [ ] Recover source-ahead mutations without forensic guesswork.
+
+### K5 — lease fencing
+- [ ] Replace PID-only lease identity with owner nonce + process identity + monotonic fencing token/epoch.
+- [ ] Every mutating Registry transition validates the current fencing token.
+- [ ] Stale owners cannot mutate after takeover.
+
+### K6 — schema evolution
+- [ ] Add durable schema/version compatibility contract.
+- [ ] Migrations are ordered, idempotent and transactionally recorded.
+- [ ] Compatible migrations preserve active workflow identity/budgets/evidence lineage.
+- [ ] Semantic incompatibility routes to explicit stale/rebaseline state rather than silent reset.
+
+### K7 — Human architecture rebaseline + salvage
+- [ ] Add HUMAN_REBASELINE_REQUIRED / REBASELINING workflow boundary.
+- [ ] FREEZE affected work and capture source/Run/evidence snapshot.
+- [ ] Classify prior work: ADOPT_AS_IS / ADOPT_REVIEW_REQUIRED / ADAPT_TO_NEW_CONTRACT / PARTIAL_SALVAGE / SUPERSEDED / REVERT_REQUIRED / FOREIGN_TASK / USER_OWNED / UNKNOWN.
+- [ ] Propagate dependency impact from changed upstream contracts.
+- [ ] New plan starts from frozen live SourceTargetSet + accepted salvage decisions.
+- [ ] Old Runs receive explicit rebaseline/supersession semantics; no blanket revert/reset.
+
+### K8 — bounded integration checkpoints
+- [ ] Add AcceptedIntegrationBaseline at coherent reviewed/verified boundaries.
+- [ ] Distinguish READY_FOR_INTEGRATION from AUTHORIZED_TO_MERGE.
+- [ ] Direct-main repositories still record stable accepted revisions.
+- [ ] Multi-repo integration may be partial but must be explicit.
+- [ ] Architecture rebaseline uses the latest accepted baseline as a stable anchor.
+
+### K9 — multi-repo SourceTargetSet
+- [ ] Replace singular source-target assumptions with SourceTargetSet.
+- [ ] Bind review/evidence to exact repo/ref/revision combinations.
+- [ ] Bind WorkCursor to plan_revision + plan_hash + graph_version.
+- [ ] Detect PARTIAL_SOURCE_ADVANCE / STALE_GRAPH_BINDING / SOURCE_SET_CONFLICT.
+
+### K10 — recovery regression matrix
+- [ ] Restart before/after mutation, checkpoint, Reviewer, Internal Fix, Verification and Handoff.
+- [ ] Recover partial durable writes idempotently.
+- [ ] Recover source-ahead known-lineage work.
+- [ ] Block unknown-lineage adoption.
+- [ ] Preserve monotonic retry/attempt budgets across restart.
+- [ ] Ensure Human stop/EXPLICIT_START remains durable.
+
+## L. UI / Design architecture rebaseline
+
+Target source: GSA_LOCAL_UI_TESTER_TARGET_ARCHITECTURE.md.
+
+### L1 — role/workflow model
+- [ ] Add Designer plus UX Coder/UI Coder specialization contracts.
+- [ ] Preserve Planner functional intent, Designer visual intent, Coder source HOW.
+- [ ] Preserve Tester independence and Human subjective acceptance authority.
+
+### L2 — UI_FIRST / UX_FIRST planning contract
+- [ ] Planner classifies every UI-bearing Project/Job as UI_FIRST or UX_FIRST.
+- [ ] Define UX execution contract before visual architecture.
+- [ ] UX_FIRST supports approved TEMPORARY_UI + durable UI requirement collection.
+- [ ] Changing classification is a material Human decision.
+
+### L3 — design readiness model
+- [ ] Add Design Coverage, DESIGN_READY, UI DESIGN APPROVED and SHELL_READY semantics.
+- [ ] Bind design baselines to exact design/source/evidence refs.
+- [ ] Material design changes supersede prior baseline explicitly.
+
+### L4 — asset contract
+- [ ] Distinguish Penpot-native shell assets, reviewed generated-asset contracts and deep-content assets.
+- [ ] Preserve reviewed asset ID/filename/prompt/usage/ratio contracts.
+- [ ] Do not let UI Coder replace explicit generated artwork contracts with generic primitives without approval.
+
+## M. UI Coder + Penpot Local integration
+
+Generic UI Coder + Penpot capability has already PASSed in prior GSA capability testing. Do NOT repeat the broad capability experiment by default.
+
+### M1 — Local Penpot binding
+- [ ] Integrate the already-capable UI Coder/Penpot surface into Local.
+- [ ] Verify Local reachability/invocation only.
+- [ ] Persist Penpot project/file/object identity needed for resume.
+- [ ] Verify readback/export/artifact paths across fresh Local process/session.
+- [ ] Treat upstream Penpot evidence as reusable only while applicability remains valid.
+
+### M2 — UI Design Phase
+- [ ] Insert UI DESIGN PHASE after DESIGN_READY/review and before source UI implementation when required.
+- [ ] Require full screen coverage + representative content coverage.
+- [ ] Allow Penpot components/tokens/responsive variants/assets/design-to-code as implementation aids.
+- [ ] Do not narrow existing UI Coder source responsibilities.
+
+### M3 — design baseline persistence
+- [ ] Persist ui_design_baseline_id + Penpot identity/version + coverage + asset refs + Tester refs + Human approval.
+- [ ] Resume exact UI_DESIGN / WAITING_HUMAN_DESIGN / UI_DESIGN_APPROVED stage.
+- [ ] Human Rebaseline invalidates obsolete design authority without deleting reusable artifacts.
+
+## N. Tester + Vercel agent-browser MCP
+
+### N1 — executor integration
+- [ ] Add Vercel agent-browser MCP as primary browser executor for Local Tester.
+- [ ] Keep Tester as the reasoning agent; browser MCP is execution only.
+- [ ] Enforce open -> snapshot -> interact -> re-snapshot -> observe -> screenshot/report discipline.
+- [ ] Treat stale element refs as TEST_FAILURE.
+
+### N2 — standalone agent-browser PROBE
+- [ ] Prove launch, target open, load wait, snapshot, click/fill, re-snapshot, viewport handling, screenshot, evidence path, console/page error collection and deterministic cleanup.
+- [ ] Probe state/session save/load only where required.
+- [ ] Missing operation => INTEGRATION_NOT_READY; tool presence never implies FUNCTIONAL.
+
+### N3 — Tester evidence workspace
+- [ ] Store browser sessions/snapshots/screenshots/diffs/console evidence in Tester-owned workspace.
+- [ ] Product source remains read-only.
+- [ ] Bind artifacts to checkpoint, exact target/design baseline, viewport and browser operation identity.
+- [ ] Surface direct screenshot paths to Human; no manual directory hunting.
+
+### N4 — UI checkpoint semantics
+- [ ] Tester independently plans the UI checkpoint.
+- [ ] Verify objective screen/state/flow/responsive/clipping/asset/runtime criteria.
+- [ ] Subjective visual judgement routes to NEEDS_HUMAN.
+- [ ] Tester evidence follows dimension-aware applicability.
+
+## O. Human design loop / SHELL_READY
+
+### O1 — Human design loop
+- [ ] UI Coder + Penpot -> Tester evidence -> Human -> UI Coder revision -> Tester retest.
+- [ ] Routine visual refinements stay inside the loop.
+- [ ] Material flow/state/topology/asset/architecture changes trigger Planner/Rebaseline.
+
+### O2 — source binding
+- [ ] UI source implementation must bind to UI DESIGN APPROVED baseline.
+- [ ] Penpot design-to-code is an accelerator, not canonical source.
+- [ ] Coder self-check + Reviewer remain required.
+
+### O3 — representative shell pilot
+- [ ] Implement representative real-content pilot before scale-out.
+- [ ] Include long/short/media/error/loading/responsive stress cases.
+- [ ] Tester verifies runnable shell with agent-browser.
+
+### O4 — SHELL_READY
+- [ ] SHELL_READY requires runtime evidence, not design approval alone.
+- [ ] SHELL_READY becomes an AcceptedIntegrationBaseline candidate.
+- [ ] Only after SHELL_READY may broad screen/content scale-out proceed.
+
+## P. UX_FIRST UI Update Packs
+
+### P1 — durable UI requirements
+- [ ] Record UIRequirement with source Job/Task, affected surface, reason, evidence and provisional UI ref.
+- [ ] Temporary UI is explicitly provisional.
+
+### P2 — UI Update Pack
+- [ ] Planner groups coherent requirements by affected shell/surface.
+- [ ] Designer -> UI Coder/Penpot -> Tester -> Human -> source refinement.
+- [ ] Avoid redesign after every UX change and avoid permanent temporary UI.
+
+## Q. UI architecture pilot
+
+- [ ] Run one real UI_FIRST pilot.
+- [ ] Run one UX_FIRST/update-pack pilot when appropriate.
+- [ ] Verify resume at DESIGNER / UI_DESIGN / WAITING_HUMAN / UI_IMPLEMENTATION / SHELL_TEST stages.
+- [ ] Verify Rebaseline/Salvage with an intentional Human architecture change.
+- [ ] Verify bounded integration baselines prevent unbounded commit accumulation.
+- [ ] Calibrate before making the workflow mandatory across all Projects.
