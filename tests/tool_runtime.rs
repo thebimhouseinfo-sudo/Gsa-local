@@ -183,11 +183,11 @@ fn create_only_never_overwrites_existing_file() {
     );
 }
 #[test]
-fn reviewer_and_cr_are_read_only_but_coder_can_write() {
+fn reviewer_tester_and_cr_are_read_only_but_coder_can_write() {
     let dir = tempdir().unwrap();
     let mut runtime = ProjectToolRuntime::new(dir.path()).unwrap();
 
-    for agent in [AgentId::Reviewer, AgentId::LocalCr] {
+    for agent in [AgentId::Reviewer, AgentId::Tester, AgentId::LocalCr] {
         let names = runtime
             .tool_definitions(agent)
             .into_iter()
@@ -214,6 +214,55 @@ fn reviewer_and_cr_are_read_only_but_coder_can_write() {
         .collect::<Vec<_>>();
     assert!(coder_names.iter().any(|name| name == "project_write"));
 }
+#[test]
+fn coder_and_internal_fix_cannot_write_tester_owned_workspace() {
+    let dir = tempdir().unwrap();
+    let protected = dir
+        .path()
+        .join(".gsa/tester/1/CP-1/ATT-1/tests");
+    std::fs::create_dir_all(&protected).unwrap();
+    std::fs::write(protected.join("owned.txt"), "tester-owned").unwrap();
+
+    let mut runtime = ProjectToolRuntime::new(dir.path()).unwrap();
+    for agent in [AgentId::Coder, AgentId::InternalFix] {
+        assert!(runtime
+            .execute(
+                agent,
+                "project_write",
+                &json!({
+                    "path":".gsa/tester/1/CP-1/ATT-1/tests/new.txt",
+                    "content":"blocked",
+                    "create_only":true
+                })
+            )
+            .is_err());
+
+        let read = runtime
+            .execute(
+                agent,
+                "project_read",
+                &json!({"path":".gsa/tester/1/CP-1/ATT-1/tests/owned.txt"}),
+            )
+            .unwrap();
+        assert!(runtime
+            .execute(
+                agent,
+                "project_write",
+                &json!({
+                    "path":".gsa/tester/1/CP-1/ATT-1/tests/owned.txt",
+                    "content":"tampered",
+                    "expected_sha256":read["sha256"]
+                })
+            )
+            .is_err());
+    }
+
+    assert_eq!(
+        std::fs::read_to_string(protected.join("owned.txt")).unwrap(),
+        "tester-owned"
+    );
+}
+
 #[test]
 fn mutation_change_set_id_is_deterministic_and_order_sensitive() {
     let dir_a = tempdir().unwrap();
