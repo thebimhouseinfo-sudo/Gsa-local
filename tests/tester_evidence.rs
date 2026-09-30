@@ -460,6 +460,22 @@ fn completed_adapter_observation_can_back_observed_evidence() {
             &serde_json::to_value(&request).unwrap(),
         )
         .unwrap();
+    assert!(registry
+        .prepare_tester_execution_step(
+            dir.path(),
+            "owner-a",
+            version,
+            "CP1",
+            "ATT-EXEC",
+            &target,
+            &fence,
+            &request.step_id,
+            request.adapter.adapter_id(),
+            request.replay_safety,
+            &fence,
+            &serde_json::to_value(&request).unwrap(),
+        )
+        .is_err());
 
     let observation = TesterExecutionObservation {
         execution_id: fence.clone(),
