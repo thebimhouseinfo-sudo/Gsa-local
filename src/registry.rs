@@ -5,9 +5,10 @@ use crate::{
     },
     plan::{PlanArtifact, PlanRevision},
     tester_evidence::{
-        ObservedValue, TesterAttemptEvidence, TesterEvidenceOutputRecord, TesterEvidenceRef,
-        VerificationObservationField,
+        ObservedValue, ReplaySafety, TesterAttemptEvidence, TesterEvidenceOutputRecord,
+        TesterEvidenceRef, TesterTargetBinding, VerificationObservationField,
     },
+    tester_execution::{TesterExecutionObservation, TesterExecutionStatus},
     tester_workspace::TesterWorkspaceRuntime,
     verification::{CommandEvidence, VerificationEvidence, VerificationResult},
 };
@@ -368,6 +369,29 @@ impl Registry {
                     ON DELETE CASCADE,
                 FOREIGN KEY (graph_version, checkpoint_id, output_id)
                     REFERENCES execution_evidence_outputs(graph_version, checkpoint_id, output_id)
+                    ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS tester_execution_steps (
+                graph_version INTEGER NOT NULL,
+                checkpoint_id TEXT NOT NULL,
+                attempt_id TEXT NOT NULL,
+                execution_id TEXT NOT NULL,
+                step_id TEXT NOT NULL,
+                adapter_id TEXT NOT NULL,
+                replay_safety TEXT NOT NULL,
+                fence_key TEXT NOT NULL,
+                target_fingerprint TEXT NOT NULL,
+                request_json TEXT NOT NULL,
+                status TEXT NOT NULL,
+                observation_json TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (graph_version, checkpoint_id, attempt_id, execution_id),
+                UNIQUE (graph_version, checkpoint_id, attempt_id, step_id),
+                UNIQUE (graph_version, checkpoint_id, attempt_id, fence_key),
+                FOREIGN KEY (graph_version, checkpoint_id)
+                    REFERENCES execution_test_checkpoints(graph_version, checkpoint_id)
                     ON DELETE CASCADE
             );
 
