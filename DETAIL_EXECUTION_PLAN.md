@@ -180,6 +180,7 @@ Gate:
 
 Penpot premise:
 - generic UI Coder + Penpot capability is already PASSed;
+- bind/import its durable evidence reference when available, or record the Human-provided accepted capability fact and applicability boundary;
 - validate only Local-specific invocation/readback/resume/artifact integration unless applicability becomes stale.
 
 Deliverables:
@@ -192,7 +193,9 @@ Deliverables:
 - ExternalOperation identity for Penpot/browser work.
 
 Gate:
-- Local can resume Penpot work and Tester can execute/reproduce a browser checkpoint against an exact target with directly inspectable evidence.
+- Local can resume Penpot work;
+- when a browser-inspectable prototype/runnable target exists, Tester can execute/reproduce an agent-browser checkpoint against the exact target with directly inspectable evidence;
+- when the design target is not browser-inspectable, Penpot readback/export evidence plus Human review is used and browser verification remains explicitly not applicable/unverified.
 
 ## Milestone I — Human-approved design to SHELL_READY
 
