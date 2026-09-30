@@ -519,6 +519,8 @@ Dependencies: L2.
 - [ ] Greenfield evaluates shell complexity, visual uncertainty, cost of source rework and need for Human pre-approval.
 - [ ] Greenfield with simple/standard UI may use BROWSER_FIRST even with no existing shell.
 - [ ] DESIGN_FIRST is selected only when pre-code visual architecture materially reduces risk.
+- [ ] Resolve visual_authority_source separately from execution mode: EXISTING_APPROVED_SHELL / EXISTING_DESIGN_SYSTEM / DESIGNER_SPEC / HUMAN_DIRECTION.
+- [ ] BROWSER_FIRST does not bypass Designer: if material visual decisions remain unresolved, Designer supplies visual direction/spec without requiring Penpot before UI Coder edits source.
 - [ ] Asset presence is a signal only, never the sole routing criterion.
 
 ### L4 — design/readiness semantics by mode
@@ -624,7 +626,8 @@ Conditional dependencies:
 ### O1 — BROWSER_FIRST flow
 Dependencies: M1, N4.
 
-- [ ] Planner UX/UI contract -> UI Coder source -> agent-browser development loop -> Coder self-check -> Reviewer -> Tester independent agent-browser -> Human evidence review when required.
+- [ ] Planner resolves visual authority first: existing approved shell/design system/Human direction may be sufficient; otherwise Designer supplies visual direction/spec without requiring Penpot.
+- [ ] Then UI Coder source -> agent-browser development loop -> Coder self-check -> Reviewer -> Tester independent agent-browser -> Human evidence review when required.
 - [ ] No Penpot/UI DESIGN APPROVED gate is required unless Human changes the mode to DESIGN_FIRST.
 - [ ] Human visual feedback that remains within existing shell authority returns to UI Coder without unnecessary architecture replanning.
 - [ ] Material decision to discard/rebuild shell triggers Human Rebaseline and switches to DESIGN_FIRST only after approval.
@@ -679,6 +682,6 @@ Dependencies: K10, L5, M1, N4, O4, P2. M2/M3 are conditional only when a DESIGN_
 - [ ] Verify UI Coder agent-browser development session and Tester independent session remain separate.
 - [ ] Verify mode switch BROWSER_FIRST -> DESIGN_FIRST requires Human approval when rebuilding an existing shell.
 - [ ] Verify resume at source/browser, UI_DESIGN/WAITING_HUMAN when applicable, UI_IMPLEMENTATION and SHELL_TEST stages.
-- [ ] Verify Rebaseline/Salvage with an intentional Human shell-rebuild decision.
+- [ ] Verify BROWSER_FIRST -> DESIGN_FIRST Rebaseline/Salvage only on a genuine Human-approved rebuild case or a controlled fixture/sandbox; never manufacture a product rebuild solely to exercise the workflow.
 - [ ] Verify bounded integration baselines prevent unbounded commit accumulation.
 - [ ] Calibrate before making the workflow mandatory across all Projects.
