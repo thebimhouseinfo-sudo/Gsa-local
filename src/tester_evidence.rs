@@ -110,8 +110,17 @@ pub enum ObservedValue {
 impl ObservedValue {
     fn validate(&self) -> Result<()> {
         match self {
-            Self::Text(value) | Self::Decimal(value) if value.trim().is_empty() => {
-                bail!("observed text/decimal value cannot be empty")
+            Self::Text(value) if value.trim().is_empty() => {
+                bail!("observed text value cannot be empty")
+            }
+            Self::Decimal(value) => {
+                let parsed = value
+                    .parse::<f64>()
+                    .map_err(|_| anyhow::anyhow!("observed decimal value is not numeric"))?;
+                if !parsed.is_finite() {
+                    bail!("observed decimal value must be finite");
+                }
+                Ok(())
             }
             _ => Ok(()),
         }
@@ -330,9 +339,10 @@ impl ApplicabilityMatcher {
                 for (path, sha256) in hashes {
                     require_text("SOURCE_PATH_HASH_SET path", path)?;
                     if path.starts_with('/')
-                        || path.starts_with('\\')
+                        || path.contains('\\')
+                        || path.contains(':')
                         || path
-                            .split(|character| character == '/' || character == '\\')
+                            .split('/')
                             .any(|part| part == "..")
                     {
                         bail!("SOURCE_PATH_HASH_SET contains unsafe path {path}");
@@ -474,7 +484,9 @@ impl TesterTargetBinding {
         }
         require_text("target checkpoint_id", checkpoint_id)?;
         self.validate()?;
-        let canonical = serde_json::to_vec(&(graph_version, checkpoint_id, self))?;
+        let mut prerequisites = self.prerequisites.clone();
+        prerequisites.sort_by(|left, right| left.jobpack_id.cmp(&right.jobpack_id));
+        let canonical = serde_json::to_vec(&(graph_version, checkpoint_id, prerequisites))?;
         Ok(hex_digest(Sha256::digest(canonical)))
     }
 
@@ -798,6 +810,33 @@ mod tests {
                 .evaluate(&ApplicabilityContext::default())
                 .unwrap(),
             ApplicabilityDecision::RevalidationRequired
+        );
+    }
+
+    #[test]
+    fn target_fingerprint_is_stable_across_prerequisite_order() {
+        let left = TesterTargetBinding {
+            prerequisites: vec![
+                TesterPrerequisiteTarget {
+                    jobpack_id: "JP-B".into(),
+                    state: PrerequisiteState::Done,
+                    change_set_id: None,
+                    target_revision: Some("rev-b".into()),
+                },
+                TesterPrerequisiteTarget {
+                    jobpack_id: "JP-A".into(),
+                    state: PrerequisiteState::ReviewPass,
+                    change_set_id: Some("change-a".into()),
+                    target_revision: Some("rev-a".into()),
+                },
+            ],
+        };
+        let right = TesterTargetBinding {
+            prerequisites: left.prerequisites.iter().cloned().rev().collect(),
+        };
+        assert_eq!(
+            left.fingerprint(1, "CP1").unwrap(),
+            right.fingerprint(1, "CP1").unwrap()
         );
     }
 
