@@ -1366,7 +1366,7 @@ UNVERIFIED không bao giờ trở thành PASS.
 
 # FINAL JOB PACK GATES
 
-## 39. Job Pack final gate
+## 39. Task / Job Pack terminal gate
 
 Khi tất cả TODO/checklist hoàn thành:
 
@@ -1382,7 +1382,7 @@ CR boundary resolver
 one exact-target Local CR
 ```
 
-CR chỉ chạy khi Task/Job Pack/checkpoint boundary đủ trưởng thành: Coder/Reviewer loop đã ổn và required verification/Tester evidence của boundary đã sẵn sàng. Nếu Task terminal trùng một declared checkpoint trên cùng exact target/change_set, runtime coalesce thành một CR boundary duy nhất.
+CR chỉ chạy khi Task/Job Pack/checkpoint boundary đủ trưởng thành: Coder/Reviewer loop đã ổn và required verification/Tester evidence của boundary đã sẵn sàng. Trong runtime hiện tại, executable Task terminal dùng Job Pack terminal boundary; không tạo thêm persistent Task entity chỉ để dispatch CR. Nếu Task terminal trùng một declared checkpoint trên cùng exact target/change_set, runtime coalesce thành một CR boundary duy nhất.
 
 ---
 
@@ -1426,7 +1426,7 @@ TODO complete?
 Checklist complete?
 Reviewer pass?
 Required verification satisfied?
-If this terminal/checkpoint boundary requires Local CR, is exact-target CR PASS satisfied?
+For every Task/Job Pack terminal, and for every checkpoint explicitly declared as a CR review boundary, is exact-target/boundary-evidence CR PASS satisfied?
 ```
 
 Sau đó:
@@ -2102,11 +2102,13 @@ Coder implementation
 
 Rules:
 - CR is downstream from the normal Coder/Reviewer repair loop, not inside each edit cycle.
-- At Task terminal boundaries, CR runs automatically after the Task is mature.
-- At declared integration/milestone checkpoints, CR runs after the checkpoint's required verification/Tester evidence is available.
-- CR packet binds exact Task/Job Pack/revision/change_set and relevant checkpoint evidence.
+- At every executable Task/Job Pack terminal boundary, CR runs automatically after the work unit is mature.
+- At every checkpoint explicitly declared as a CR review boundary, CR runs after that checkpoint's required verification/Tester evidence is available.
+- A low-level VERIFY/MEASURE/PROBE checkpoint does not itself imply CR unless it is also a declared CR review boundary.
+- CR packet binds exact Task/Job Pack/revision/change_set, boundary identity and relevant checkpoint evidence.
 - CR finding routes owner repair -> self-check -> Reviewer -> affected verification/Tester -> CR.
 - No `Fix -> CR` shortcut.
+- If Task/Job Pack terminal and CR review checkpoint coincide on the same exact target/change_set/evidence set, Orchestrator coalesces them into one CR run. Any relevant mutation invalidates reuse.
 - CR PASS alone never marks DONE; Registry/Orchestrator checks every declared gate before terminalization.
 
 Acceptance: a CR-gated Task/Job Pack/checkpoint cannot terminalize without exact-target CR PASS, but CR is never spammed after each local edit.
