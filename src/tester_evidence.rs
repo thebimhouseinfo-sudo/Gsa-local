@@ -139,6 +139,13 @@ pub enum TesterEvidenceRef {
 }
 
 impl TesterEvidenceRef {
+    fn is_runtime_observation(&self) -> bool {
+        matches!(
+            self,
+            Self::VerificationRun { .. } | Self::AdapterObservation { .. }
+        )
+    }
+
     fn validate(&self) -> Result<()> {
         match self {
             Self::WorkspaceArtifact { artifact } => {
@@ -185,6 +192,13 @@ impl ExperimentObservation {
         }
         for evidence_ref in &self.evidence_refs {
             evidence_ref.validate()?;
+        }
+        if !self
+            .evidence_refs
+            .iter()
+            .any(TesterEvidenceRef::is_runtime_observation)
+        {
+            bail!("experiment observation requires a runtime-backed evidence ref");
         }
         validate_text_items("experiment observation limitation", &self.limitations)
     }
@@ -554,6 +568,13 @@ impl TesterEvidenceOutputRecord {
             EvidenceProvenance::Observed => {
                 if self.value.is_none() || self.evidence_refs.is_empty() {
                     bail!("OBSERVED evidence requires a value and evidence refs");
+                }
+                if !self
+                    .evidence_refs
+                    .iter()
+                    .any(TesterEvidenceRef::is_runtime_observation)
+                {
+                    bail!("OBSERVED evidence requires a runtime-backed evidence ref");
                 }
             }
             EvidenceProvenance::Implication => {
