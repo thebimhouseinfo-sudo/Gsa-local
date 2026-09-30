@@ -193,6 +193,166 @@ impl LocalProcessRunner {
     }
 }
 
+
+#[derive(Debug, Clone)]
+pub struct TesterSandboxRunner {
+    backend: SandboxBackend,
+}
+
+impl TesterSandboxRunner {
+    pub fn production() -> Self {
+        #[cfg(target_os = "macos")]
+        {
+            let path = PathBuf::from("/usr/bin/sandbox-exec");
+            if path.is_file() {
+                return Self {
+                    backend: SandboxBackend::MacOs(path),
+                };
+            }
+            return Self {
+                backend: SandboxBackend::Unavailable(
+                    "macOS sandbox-exec is unavailable; refusing unsandboxed Tester execution"
+                        .into(),
+                ),
+            };
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            Self {
+                backend: SandboxBackend::Unavailable(
+                    "Tester execution sandbox is implemented for macOS only".into(),
+                ),
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn unavailable_for_test(reason: &str) -> Self {
+        Self {
+            backend: SandboxBackend::Unavailable(reason.to_owned()),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn direct_for_test() -> Self {
+        Self {
+            backend: SandboxBackend::DirectTest,
+        }
+    }
+
+    pub fn run(
+        &self,
+        workspace_root: &Path,
+        argv: &[String],
+        timeout: Duration,
+    ) -> Result<ProcessObservation> {
+        let workspace = workspace_root.canonicalize().with_context(|| {
+            format!(
+                "failed to canonicalize Tester workspace {}",
+                workspace_root.display()
+            )
+        })?;
+
+        if let SandboxBackend::Unavailable(reason) = &self.backend {
+            return Ok(ProcessObservation {
+                exit_code: None,
+                duration_ms: 0,
+                timed_out: false,
+                blocked_reason: Some(reason.clone()),
+                stdout: String::new(),
+                stderr: String::new(),
+            });
+        }
+        if argv.is_empty() {
+            return Ok(ProcessObservation {
+                exit_code: None,
+                duration_ms: 0,
+                timed_out: false,
+                blocked_reason: Some("Tester adapter argv is empty".into()),
+                stdout: String::new(),
+                stderr: String::new(),
+            });
+        }
+
+        let runtime_dir = ensure_secure_child_dir(&workspace, &workspace, ".gsa-local")?;
+        let temp_dir = ensure_secure_child_dir(&workspace, &runtime_dir, "tmp")?;
+
+        let mut process = match &self.backend {
+            SandboxBackend::MacOs(sandbox_exec) => {
+                let profile = tester_sandbox_profile(&workspace, &temp_dir)?;
+                let mut process = Command::new(sandbox_exec);
+                process.arg("-p").arg(profile).arg(&argv[0]).args(&argv[1..]);
+                process
+            }
+            SandboxBackend::Unavailable(_) => unreachable!(),
+            #[cfg(test)]
+            SandboxBackend::DirectTest => {
+                let mut process = Command::new(&argv[0]);
+                process.args(&argv[1..]);
+                process
+            }
+        };
+
+        process
+            .current_dir(&workspace)
+            .env("TMPDIR", &temp_dir)
+            .env("CARGO_NET_OFFLINE", "true")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+
+        #[cfg(unix)]
+        process.process_group(0);
+
+        let started = Instant::now();
+        let mut child = match process.spawn() {
+            Ok(child) => child,
+            Err(error) => {
+                return Ok(ProcessObservation {
+                    exit_code: None,
+                    duration_ms: started.elapsed().as_millis() as u64,
+                    timed_out: false,
+                    blocked_reason: Some(format!(
+                        "failed to start sandboxed Tester execution: {error}"
+                    )),
+                    stdout: String::new(),
+                    stderr: String::new(),
+                });
+            }
+        };
+
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+        let stdout_thread = thread::spawn(move || read_bounded(stdout));
+        let stderr_thread = thread::spawn(move || read_bounded(stderr));
+
+        let mut timed_out = false;
+        let status = loop {
+            if let Some(status) = child.try_wait()? {
+                break Some(status);
+            }
+            if started.elapsed() >= timeout {
+                timed_out = true;
+                terminate_process_tree(&mut child);
+                break child.wait().ok();
+            }
+            thread::sleep(POLL_INTERVAL);
+        };
+
+        let stdout = stdout_thread.join().unwrap_or_default();
+        let stderr = stderr_thread.join().unwrap_or_default();
+        Ok(ProcessObservation {
+            exit_code: status.and_then(|status| status.code()),
+            duration_ms: started.elapsed().as_millis() as u64,
+            timed_out,
+            blocked_reason: None,
+            stdout,
+            stderr,
+        })
+    }
+}
+
 fn secure_runtime_dirs(root: &Path) -> Result<(PathBuf, PathBuf, PathBuf)> {
     let gsa_dir = ensure_secure_child_dir(root, root, ".gsa-local")?;
     let runtime_dir = ensure_secure_child_dir(root, &gsa_dir, "ci")?;
@@ -284,6 +444,27 @@ fn sandbox_profile(runtime_dir: &Path, temp_dir: &Path) -> Result<String> {
 
     Ok(format!(
         "(version 1)\n(allow default)\n(deny network*)\n(deny file-write*)\n(allow file-write* (subpath \"{runtime}\") (subpath \"{temp}\"))\n"
+    ))
+}
+
+fn tester_sandbox_profile(workspace: &Path, temp_dir: &Path) -> Result<String> {
+    let workspace = escape_profile_path(
+        workspace
+            .canonicalize()
+            .unwrap_or_else(|_| workspace.to_path_buf())
+            .to_string_lossy()
+            .as_ref(),
+    );
+    let temp = escape_profile_path(
+        temp_dir
+            .canonicalize()
+            .unwrap_or_else(|_| temp_dir.to_path_buf())
+            .to_string_lossy()
+            .as_ref(),
+    );
+
+    Ok(format!(
+        "(version 1)\n(allow default)\n(deny network*)\n(deny file-write*)\n(allow file-write* (subpath \"{workspace}\") (subpath \"{temp}\"))\n"
     ))
 }
 
@@ -458,6 +639,45 @@ mod tests {
         assert!(result.timed_out);
         thread::sleep(Duration::from_millis(500));
         assert!(!marker.exists());
+    }
+
+    #[test]
+    fn unavailable_tester_sandbox_blocks_without_fallback() {
+        let runner = TesterSandboxRunner::unavailable_for_test("tester sandbox missing");
+        let dir = tempfile::tempdir().unwrap();
+        let result = runner
+            .run(
+                dir.path(),
+                &["/bin/true".into()],
+                Duration::from_secs(1),
+            )
+            .unwrap();
+        assert_eq!(result.blocked_reason.as_deref(), Some("tester sandbox missing"));
+        assert_eq!(result.exit_code, None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn tester_direct_test_runs_with_workspace_as_cwd() {
+        let runner = TesterSandboxRunner::direct_for_test();
+        let dir = tempfile::tempdir().unwrap();
+        let result = runner
+            .run(
+                dir.path(),
+                &[
+                    "/bin/sh".into(),
+                    "-c".into(),
+                    "pwd; printf ok > artifacts.txt".into(),
+                ],
+                Duration::from_secs(1),
+            )
+            .unwrap();
+        assert_eq!(result.exit_code, Some(0));
+        assert!(result.stdout.contains(dir.path().to_string_lossy().as_ref()));
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("artifacts.txt")).unwrap(),
+            "ok"
+        );
     }
 
     #[test]
