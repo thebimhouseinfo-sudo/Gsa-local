@@ -129,7 +129,7 @@ Rebased work:
 5. implement exact-target empirical evidence;
 6. implement evidence consumer contract;
 7. implement repair → Reviewer PASS → RETEST;
-8. integrate Local CR as an automatic downstream Task/checkpoint boundary after Reviewer and required verification/Tester evidence; never inside each edit loop.
+8. integrate Local CR as an automatic downstream executable Task/Job Pack terminal and declared CR review-checkpoint boundary after Reviewer and required verification/Tester evidence; coalesce coincident exact-target boundaries; never inside each edit loop.
 
 ## Milestone E — Completion / Resume / Hardening
 Future work must now include:
