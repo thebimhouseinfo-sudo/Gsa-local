@@ -2558,7 +2558,7 @@ Required:
 - PRODUCT_FAILURE / TEST_FAILURE / ENVIRONMENT_FAILURE / INTEGRATION_NOT_READY / SPEC_GAP / PLAN_GAP / NEEDS_HUMAN classification.
 
 Exit:
-- UI Coder can iterate on the real app while Tester can later independently verify the same exact runnable target.
+- required agent-browser operations are proven available for a future UI Coder development session and independent Tester verification session; Phase 18 owns the actual UI Coder workflow.
 
 ## Phase 18 — UI Coder Browser-Driven Workflow
 
