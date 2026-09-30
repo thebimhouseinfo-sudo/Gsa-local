@@ -611,6 +611,41 @@ impl Registry {
         })
     }
 
+    pub fn plan_for_current_execution_graph(&self, graph_version: i64) -> Result<PlanRevision> {
+        let tx = self.conn.unchecked_transaction()?;
+        let Some((current_graph, plan_revision, plan_hash)) = current_graph_binding_tx(&tx)? else {
+            bail!("no CURRENT approved execution graph is bound");
+        };
+        if current_graph != graph_version {
+            bail!(
+                "stale Tester graph: requested {}, current {}",
+                graph_version,
+                current_graph
+            );
+        }
+
+        let row: Option<(String, String)> = tx
+            .query_row(
+                "SELECT plan_hash, content FROM plan_revisions WHERE revision=?1",
+                params![plan_revision],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((stored_hash, content)) = row else {
+            bail!("execution graph plan revision {} is missing", plan_revision);
+        };
+        if stored_hash != plan_hash {
+            bail!("execution graph plan hash does not match persisted plan revision");
+        }
+        let artifact: PlanArtifact = serde_json::from_str(&content)?;
+        tx.commit()?;
+        Ok(PlanRevision {
+            revision: plan_revision,
+            hash: plan_hash,
+            artifact,
+        })
+    }
+
     pub fn current_plan_revision(&self) -> Result<Option<PlanRevision>> {
         self.conn
             .query_row(
