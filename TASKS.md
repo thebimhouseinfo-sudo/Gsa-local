@@ -582,13 +582,15 @@ Dependencies: M2, M3.
 
 ## N. UI Coder browser-driven workflow
 
-### N1 — dedicated UI Coder state machine
+### N1 — UI Coder-owned state machine
 Dependencies: L5, M2.
 
-- [ ] Add UI_GROUND -> UI_IMPLEMENT -> UI_RENDER -> UI_INSPECT -> UI_REFINE loop -> UI_SELF_CHECK -> REVIEW -> UI_TEST_CHECKPOINT -> HUMAN_REVIEW? -> UI_ACCEPTED.
+- [ ] UI Coder owns only UI_GROUND -> UI_IMPLEMENT -> UI_RENDER -> UI_INSPECT -> UI_REFINE loop -> UI_SELF_CHECK -> UI_HANDOFF_READY.
 - [ ] UI_REFINE may loop without Reviewer while UI Coder is still inside the same approved visual/source scope.
+- [ ] UI Coder cannot self-advance REVIEW, TEST, HUMAN_REVIEW, UI_ACCEPTED or SHELL_READY.
 - [ ] Material UX/flow/state/architecture changes leave the refine loop and route back to Planner/Human.
 - [ ] Human-approved shell rebuild remains explicit durable context throughout the Run.
+- [ ] Durable UI cursor records stage_owner and producer/run identity for every transition.
 
 ### N2 — source + browser development loop
 Dependencies: N1.
@@ -598,6 +600,17 @@ Dependencies: N1.
 - [ ] Check layout, responsive behavior, clipping/overflow, visible states, navigation and interaction before UI_SELF_CHECK.
 - [ ] Compile/test success alone never proves UI completion.
 - [ ] UI Coder browser evidence is development/self-check evidence only; it cannot satisfy Tester PASS.
+
+### N2a — post-self-check orchestration gates
+Dependencies: N1, M4.
+
+- [ ] Orchestrator, not UI Coder, transitions UI_HANDOFF_READY -> REVIEW_PENDING.
+- [ ] Reviewer owns REVIEWING/result production; CHANGES_REQUIRED routes a new UI Coder correction/refine Run, PASS returns control to Orchestrator.
+- [ ] When a Tester checkpoint is declared, Orchestrator transitions REVIEW_PASS -> TEST_PENDING; Tester owns TESTING/result production.
+- [ ] PRODUCT_FAILURE routes through UI Coder correction -> UI_SELF_CHECK -> Reviewer before retest.
+- [ ] HUMAN_REVIEW_PENDING is created only when the plan declares subjective/material Human acceptance.
+- [ ] UI_ACCEPTED and SHELL_READY are Orchestrator terminalization decisions from compatible Reviewer/Tester/Human evidence; no child role self-declares them.
+- [ ] Resume dispatches by durable stage_owner/producer rather than by last chat role.
 
 ### N3 — UI Coder workspace
 Dependencies: N1.
@@ -699,7 +712,7 @@ Dependencies: K10, L5, N4, M4, O4, P2.
 - [ ] Exercise a shell rebuild transition only on a genuine Human-approved rebuild case or controlled fixture/sandbox; never manufacture a product rebuild solely for workflow coverage.
 - [ ] Verify UI Coder development session and Tester independent session remain separate.
 - [ ] Verify Designer can supply visual direction without any fixed design application.
-- [ ] Verify UI workspace resume at UI_GROUND / UI_IMPLEMENT / UI_RENDER / UI_INSPECT / UI_REFINE / UI_SELF_CHECK / UI_TEST_CHECKPOINT.
+- [ ] Verify resume across UI Coder-owned UI_GROUND / UI_IMPLEMENT / UI_RENDER / UI_INSPECT / UI_REFINE / UI_SELF_CHECK / UI_HANDOFF_READY and orchestration-owned REVIEW_PENDING / TEST_PENDING / HUMAN_REVIEW_PENDING / terminalization stages.
 - [ ] Verify Rebaseline/Salvage on a genuine or controlled shell-rebuild transition.
 - [ ] Verify the core source + browser UI workflow works with no optional provider configured.
 - [ ] After Q1 exists, verify provider-selection fallback/absence behavior separately without making Q1 a prerequisite for the core pilot.
