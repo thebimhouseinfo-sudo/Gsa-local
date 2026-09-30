@@ -2728,16 +2728,33 @@ fn validate_tester_evidence_refs(
                 }
             }
             TesterEvidenceRef::VerificationRun { run_id } => {
-                let graph_version: Option<i64> = tx
+                let binding: Option<(i64, String, String)> = tx
                     .query_row(
-                        "SELECT graph_version FROM verification_runs WHERE id=?1",
+                        r#"
+                        SELECT graph_version, jobpack_id, change_set_id
+                        FROM verification_runs
+                        WHERE id=?1
+                        "#,
                         params![run_id],
-                        |row| row.get(0),
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
                     )
                     .optional()?;
-                if graph_version != Some(attempt.graph_version) {
+                let Some((graph_version, jobpack_id, change_set_id)) = binding else {
+                    bail!("verification evidence ref {} does not exist", run_id);
+                };
+                if graph_version != attempt.graph_version {
                     bail!(
-                        "verification evidence ref {} is missing or bound to another graph",
+                        "verification evidence ref {} is bound to another graph",
+                        run_id
+                    );
+                }
+                let matches_target = attempt.target.prerequisites.iter().any(|target| {
+                    target.jobpack_id == jobpack_id
+                        && target.change_set_id.as_deref() == Some(change_set_id.as_str())
+                });
+                if !matches_target {
+                    bail!(
+                        "verification evidence ref {} is not bound to the Tester target",
                         run_id
                     );
                 }
