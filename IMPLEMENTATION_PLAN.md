@@ -2496,6 +2496,8 @@ Required:
 - add orthogonal ui_execution_mode = BROWSER_FIRST | DESIGN_FIRST;
 - UX execution contract;
 - decision criteria: existing shell, shell complexity, visual uncertainty, cost of source rework, need for Human pre-approval;
+- visual_authority_source = EXISTING_APPROVED_SHELL | EXISTING_DESIGN_SYSTEM | DESIGNER_SPEC | HUMAN_DIRECTION;
+- BROWSER_FIRST does not remove Designer: unresolved material visual decisions require Designer visual direction/spec even when Penpot is not used;
 - any existing product shell => BROWSER_FIRST by default, regardless of aesthetics; a non-runnable state is a repair/integration issue, not permission to switch modes;
 - existing-shell rebuild/replacement => DESIGN_FIRST only after explicit Human approval;
 - greenfield does not imply Penpot; simple standard UI may remain BROWSER_FIRST;
@@ -2558,6 +2560,8 @@ Goal: converge BROWSER_FIRST and DESIGN_FIRST on reviewed, runnable, independent
 BROWSER_FIRST:
 
     Planner UX/UI contract
+      -> resolve visual authority
+      -> Designer visual direction/spec when unresolved (no Penpot required)
       -> UI Coder source implementation
       -> agent-browser development/refinement loop
       -> Coder self-check
@@ -2605,7 +2609,7 @@ Required:
 - simple greenfield BROWSER_FIRST pilot with no Penpot dependency;
 - DESIGN_FIRST/Penpot pilot only for a genuine Human-approved shell build/rebuild/high visual-risk case, or a controlled integration fixture if no such product case exists; never manufacture a redesign to satisfy the pilot;
 - interruption/resume tests in both modes;
-- intentional Human BROWSER_FIRST -> DESIGN_FIRST rebuild decision with Rebaseline/Salvage;
+- BROWSER_FIRST -> DESIGN_FIRST Rebaseline/Salvage tested only on a genuine Human-approved rebuild case or controlled fixture/sandbox; never manufacture a product rebuild solely for workflow coverage;
 - bounded integration baseline validation.
 
 Exit:
