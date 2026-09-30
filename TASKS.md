@@ -602,7 +602,7 @@ Dependencies: N1.
 - [ ] UI Coder browser evidence is development/self-check evidence only; it cannot satisfy Tester PASS.
 
 ### N2a — post-self-check orchestration gates
-Dependencies: N1, M4.
+Dependencies: N2, M4.
 
 - [ ] Orchestrator, not UI Coder, transitions UI_HANDOFF_READY -> REVIEW_PENDING.
 - [ ] Reviewer owns REVIEWING/result production; CHANGES_REQUIRED routes a new UI Coder correction/refine Run, PASS returns control to Orchestrator.
@@ -624,7 +624,7 @@ Dependencies: N1.
 - [ ] Resume reconstructs the UI Coder stage and relevant workspace refs without relying on chat history.
 
 ### N4 — shell-build/rebuild workflow
-Dependencies: N1, L4, K7.
+Dependencies: N2, L4, K7.
 
 - [ ] For greenfield shell creation, use real source as the prototype surface.
 - [ ] For an existing-shell rebuild, require Human approval plus completed Rebaseline/Salvage classification before destructive shell replacement begins.
