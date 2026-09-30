@@ -14,17 +14,41 @@ use crate::{
     },
     tester_workspace::TesterWorkspaceRuntime,
     tools::ProjectToolRuntime,
-    verification::{VerificationController, VerificationResult},
+    verification::{discover_profile, VerificationController, VerificationResult},
 };
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{path::Path, time::Duration};
+use std::{collections::BTreeSet, path::Path, time::Duration};
 
 const MAX_TESTER_TOOL_ROUNDS: usize = 16;
 const MAX_TESTER_EXECUTIONS: usize = 8;
 const DEFAULT_TESTER_TIMEOUT: Duration = Duration::from_secs(120);
+
+pub fn available_tester_capabilities(
+    project_root: &Path,
+    project_tools: &ProjectToolRuntime,
+) -> Result<Vec<String>> {
+    let mut capabilities = BTreeSet::from([
+        "VERIFY".to_owned(),
+        "MEASURE".to_owned(),
+        "PROBE".to_owned(),
+        "RUNTIME_PROBE".to_owned(),
+        "TESTER_WORKSPACE".to_owned(),
+        "WORKSPACE_PYTHON".to_owned(),
+        "WORKSPACE_NODE".to_owned(),
+        "PROJECT_VERIFICATION".to_owned(),
+    ]);
+
+    for capability in discover_profile(project_root)?.capabilities {
+        capabilities.insert(capability.as_str().to_owned());
+    }
+    for definition in project_tools.tool_definitions(AgentId::Tester) {
+        capabilities.insert(definition.function.name.to_ascii_uppercase());
+    }
+    Ok(capabilities.into_iter().collect())
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "adapter", rename_all = "SCREAMING_SNAKE_CASE")]
@@ -555,6 +579,15 @@ impl<'a> TesterWorkflow<'a> {
         attempt_id: &str,
         project_tools: &mut ProjectToolRuntime,
     ) -> Result<TesterAttemptEvidence> {
+        self.registry.assert_tester_checkpoint_attempt(
+            self.project_root,
+            self.lease_owner,
+            graph_version,
+            &checkpoint.id,
+            attempt_id,
+            &target,
+        )?;
+
         let plan = self
             .registry
             .plan_for_current_execution_graph(graph_version)?;
