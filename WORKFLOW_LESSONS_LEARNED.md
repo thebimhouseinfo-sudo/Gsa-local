@@ -1881,3 +1881,192 @@ preserve source value
 ```
 
 This is the safe middle ground between blindly resuming old work and throwing away all previous implementation.
+
+---
+
+# 42. Integration should happen at bounded reviewed checkpoints, not after unbounded commit accumulation
+
+Long-running implementation should not wait until a branch or work lineage contains hundreds of commits before integration.
+
+Large unintegrated histories make resume, architecture rebaseline, source reconciliation, review, conflict handling, salvage classification, and rollback much harder.
+
+GSA should therefore define bounded integration checkpoints.
+
+## 42.1 Preferred integration boundary
+
+A good integration point is usually reached when:
+
+1. the current Task / JobPack / bounded feature slice is complete;
+2. Coder self-check has passed;
+3. required Reviewer gate has passed;
+4. required Tester / deterministic verification for that boundary has passed or is explicitly not applicable;
+5. no unresolved blocking finding remains;
+6. the exact SourceTargetSet is known;
+7. the next work unit can start from this accepted baseline.
+
+This creates an `AcceptedIntegrationBaseline`.
+
+```text
+AcceptedIntegrationBaseline
+  baseline_id
+  project_id
+  plan_revision
+  execution_graph_version
+  completed_task_refs[]
+  source_target_set
+  review_refs[]
+  verification_refs[]
+  created_from_runs[]
+  integration_policy
+  created_at
+```
+
+## 42.2 Do not define merge cadence by commit count alone
+
+The rule is not `merge every N commits`. Commit count is only a warning signal.
+
+The real boundary is semantic:
+
+```text
+reviewable + verified + internally coherent
+```
+
+A small task may integrate after two commits. A difficult task may need twenty. But if one work lineage grows so large that Reviewer can no longer evaluate it as one bounded unit, the workflow has already missed an appropriate integration checkpoint.
+
+## 42.3 Merge/promotion policy depends on repository authority
+
+GSA must distinguish:
+
+```text
+READY_FOR_INTEGRATION
+```
+
+from:
+
+```text
+AUTHORIZED_TO_MERGE
+```
+
+If repository governance requires Human approval, protected-branch review, or external merge authority, GSA stops at `READY_FOR_INTEGRATION`.
+
+If the approved repository policy explicitly permits automatic integration at that boundary, GSA may perform it.
+
+Agent-authored approval never substitutes for Human merge authority.
+
+## 42.4 Direct-main repositories still need accepted baselines
+
+Some projects may intentionally work directly on `main` instead of feature branches.
+
+In that mode there is no literal branch merge, but the same contract is still required.
+
+The equivalent is:
+
+```text
+accepted stable revision
++ durable integration baseline record
+```
+
+The WorkCursor should advance from that accepted revision rather than treating every intermediate commit as equally authoritative.
+
+Thus the architectural concept is integration/promotion, not Git merge alone.
+
+## 42.5 New work should start from the latest accepted baseline
+
+After a bounded work slice is accepted:
+
+```text
+previous AcceptedIntegrationBaseline
++ approved new Task/JobPack
+-> next work lineage
+```
+
+This limits how much unreviewed state must be reconstructed after interruption.
+
+It also makes architecture rebaseline easier: accepted baselines are presumed reusable unless the new architecture invalidates them, while only work after the last accepted baseline requires detailed salvage classification first.
+
+Previously integrated work may still require impact review, but it does not need to be rediscovered from hundreds of raw commits.
+
+## 42.6 Architecture interruption uses the latest accepted baseline as an anchor
+
+When the Human changes architecture mid-work:
+
+```text
+last accepted integration baseline
+  -> stable anchor
+
+commits/change sets after baseline
+  -> classify through Rebaseline + Salvage
+```
+
+This does not mean all work before the baseline is automatically valid under the new architecture.
+
+It means previous acceptance and evidence are already structured, making revalidation cheaper and bounding the delta that must be salvaged.
+
+## 42.7 Integration checkpoints should align with workflow checkpoints when practical
+
+Where practical:
+
+```text
+Task/JobPack acceptance
+Reviewer PASS
+Tester/deterministic gate
+integration baseline
+```
+
+should occur near the same logical boundary.
+
+Avoid integration churn after every tiny edit, but also avoid carrying several independently complete JobPacks in one unintegrated lineage without a reason.
+
+## 42.8 Integration failure is its own workflow state
+
+If a completed work unit is verified but cannot integrate because of merge conflict, protected branch rules, external source changes, CI policy, cross-repo coordination, or missing Human approval, represent:
+
+```text
+READY_FOR_INTEGRATION
+INTEGRATION_BLOCKED
+INTEGRATING
+INTEGRATED
+```
+
+Do not send the work back to Coder as if implementation failed unless integration actually requires source adaptation.
+
+## 42.9 Multi-repo integration may be partial but must remain explicit
+
+For MULTI-repo work, repositories may not integrate atomically.
+
+Persist per-repository integration status:
+
+```text
+repo A = INTEGRATED
+repo B = READY_FOR_INTEGRATION
+repo C = BLOCKED
+```
+
+The aggregate WorkCursor shows `PARTIAL_INTEGRATION`.
+
+Downstream work may proceed only when the approved topology says the required repository set is ready.
+
+## 42.10 Key invariant
+
+Do not accumulate unbounded unintegrated work.
+
+Prefer:
+
+```text
+small coherent implementation slice
+-> self-check
+-> review
+-> required verification
+-> accepted integration baseline
+-> next slice
+```
+
+over:
+
+```text
+hundreds of commits
+-> one giant review
+-> one giant merge
+```
+
+This improves resume, rebaseline, review quality, source attribution, and recovery.
