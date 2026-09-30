@@ -388,7 +388,7 @@ Dependencies: K1, K2.
 
 - [ ] Introduce transition_id/idempotency_key for Run/Verification/Handoff/finalization writes.
 - [ ] Make interrupted partial persistence recoverable without duplicate durable records.
-- [ ] Add durable ExternalOperation identity for CI, Penpot and browser operations.
+- [ ] Add durable ExternalOperation identity for CI, browser and external UI-provider operations.
 - [ ] Repeated finalization converges to one terminal state.
 
 ### K3a — parent/child Run reconciliation
@@ -406,7 +406,7 @@ Dependencies: K1, K3.
 ### K3c — workflow replay policy + verification readiness
 Dependencies: K1, K3.
 - [ ] Classify workflow operations: IDEMPOTENT / IDEMPOTENT_BY_KEY / CHANGESET_BOUND / CAS_SERIALIZED / NON_IDEMPOTENT.
-- [ ] Run creation, Verification/Handoff creation, source mutation, Job transitions, CI/deploy/browser/Penpot operations each declare replay policy.
+- [ ] Run creation, Verification/Handoff creation, source mutation, Job transitions, CI/deploy/browser/external-UI-provider operations each declare replay policy.
 - [ ] Discover deterministic verification readiness early: command, execution surface, provider, OS/network constraints and AVAILABLE / NOT_CONFIGURED / ENVIRONMENT_BLOCKED / NOT_APPLICABLE.
 - [ ] Verifier is read-only to product source by default; verification failure routes to Coder rather than auto-format/commit/push.
 ### K4 — source mutation write-ahead
