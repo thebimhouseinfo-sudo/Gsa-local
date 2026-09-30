@@ -188,7 +188,7 @@ Rules:
 
 Environment premise under review:
 - Local has a stronger Vercel agent-browser development/inspection surface than GSA Online;
-- therefore Local may prefer BROWSER_FIRST more often;
+- therefore Local can use source-render-browser refinement more directly;
 - Online may rationally prefer a heavier pre-code visual-design workflow while browser capability is weaker;
 - this difference is valid only if shared role authority, Tester independence, evidence semantics and Human visual acceptance remain common;
 - Planner must route from observed runtime capability plus design risk, not from deployment label alone.
@@ -202,7 +202,9 @@ Deliverables:
 - existing-shell preservation by default;
 - explicit Human approval plus Rebaseline/Salvage before shell discard/rebuild/replacement;
 - greenfield/rebuild source-first intent;
-- UI Coder state-machine contract and dedicated UI workspace contract;
+- UI Coder-owned state-machine contract ending at UI_HANDOFF_READY plus orchestration-owned REVIEW_PENDING / TEST_PENDING / HUMAN_REVIEW_PENDING / terminalization stages;
+- durable stage_owner/producer identity across UI workflow transitions;
+- dedicated UI workspace contract;
 - UI workspace is non-runtime; promoted production assets use canonical product paths with provenance/approval.
 
 Gate:
