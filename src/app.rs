@@ -194,10 +194,8 @@ impl App {
         Ok(())
     }
 
-
     async fn run_due_tester(&mut self, requirement: &str) -> Result<bool> {
-        let capabilities =
-            available_tester_capabilities(&self.project_root, &self.tool_runtime)?;
+        let capabilities = available_tester_capabilities(&self.project_root, &self.tool_runtime)?;
         let runtime = {
             let controller =
                 MilestoneController::new(&self.registry, &self.project_root, &self.lease_owner);
@@ -215,10 +213,8 @@ impl App {
                         &self.project_root,
                         &self.lease_owner,
                     );
-                    controller.begin_due_tester_attempt(
-                        runtime.graph_version,
-                        &runtime.checkpoint.id,
-                    )?
+                    controller
+                        .begin_due_tester_attempt(runtime.graph_version, &runtime.checkpoint.id)?
                 };
                 let target = running
                     .target
