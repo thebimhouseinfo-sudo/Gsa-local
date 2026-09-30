@@ -5,10 +5,11 @@ use crate::{
     },
     plan::{PlanArtifact, PlanRevision},
     tester_evidence::{
-        TesterAttemptEvidence, TesterEvidenceOutputRecord, TesterEvidenceRef,
+        ObservedValue, TesterAttemptEvidence, TesterEvidenceOutputRecord, TesterEvidenceRef,
+        VerificationObservationField,
     },
     tester_workspace::TesterWorkspaceRuntime,
-    verification::{VerificationEvidence, VerificationResult},
+    verification::{CommandEvidence, VerificationEvidence, VerificationResult},
 };
 use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
@@ -2694,6 +2695,34 @@ fn validate_tester_target_tx(
                         status
                     );
                 }
+                let latest: Option<(String, String)> = tx
+                    .query_row(
+                        r#"
+                        SELECT change_set_id, verdict
+                        FROM code_reviews
+                        WHERE graph_version=?1 AND jobpack_id=?2
+                        ORDER BY id DESC LIMIT 1
+                        "#,
+                        params![attempt.graph_version, target.jobpack_id],
+                        |row| Ok((row.get(0)?, row.get(1)?)),
+                    )
+                    .optional()?;
+                let Some((change_set_id, verdict)) = latest else {
+                    bail!(
+                        "Tester DONE prerequisite {} has no code review",
+                        target.jobpack_id
+                    );
+                };
+                if verdict != "PASS"
+                    || target.change_set_id.as_deref() != Some(change_set_id.as_str())
+                {
+                    bail!(
+                        "Tester DONE prerequisite {} is stale: latest review={} change_set={}",
+                        target.jobpack_id,
+                        verdict,
+                        change_set_id
+                    );
+                }
             }
         }
     }
@@ -2748,34 +2777,48 @@ fn validate_tester_evidence_refs(
                 }
             }
             TesterEvidenceRef::VerificationRun { run_id } => {
-                let binding: Option<(i64, String, String)> = tx
-                    .query_row(
-                        r#"
-                        SELECT graph_version, jobpack_id, change_set_id
-                        FROM verification_runs
-                        WHERE id=?1
-                        "#,
-                        params![run_id],
-                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-                    )
-                    .optional()?;
-                let Some((graph_version, jobpack_id, change_set_id)) = binding else {
-                    bail!("verification evidence ref {} does not exist", run_id);
+                validate_verification_ref_target_tx(tx, attempt, *run_id)?;
+            }
+            TesterEvidenceRef::VerificationObservation {
+                run_id,
+                command_id,
+                field,
+                observed,
+            } => {
+                let commands = validate_verification_ref_target_tx(tx, attempt, *run_id)?;
+                let command = commands
+                    .iter()
+                    .find(|command| command.command_id == *command_id)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "verification observation command {} is missing from run {}",
+                            command_id,
+                            run_id
+                        )
+                    })?;
+                let actual = match field {
+                    VerificationObservationField::Stdout => {
+                        ObservedValue::Text(command.stdout.clone())
+                    }
+                    VerificationObservationField::Stderr => {
+                        ObservedValue::Text(command.stderr.clone())
+                    }
+                    VerificationObservationField::ExitCode => {
+                        let code = command.exit_code.ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "verification observation run {} command {} has no exit code",
+                                run_id,
+                                command_id
+                            )
+                        })?;
+                        ObservedValue::Integer(i64::from(code))
+                    }
                 };
-                if graph_version != attempt.graph_version {
+                if &actual != observed {
                     bail!(
-                        "verification evidence ref {} is bound to another graph",
-                        run_id
-                    );
-                }
-                let matches_target = attempt.target.prerequisites.iter().any(|target| {
-                    target.jobpack_id == jobpack_id
-                        && target.change_set_id.as_deref() == Some(change_set_id.as_str())
-                });
-                if !matches_target {
-                    bail!(
-                        "verification evidence ref {} is not bound to the Tester target",
-                        run_id
+                        "verification observation {}.{} does not match persisted command evidence",
+                        run_id,
+                        command_id
                     );
                 }
             }
@@ -2787,6 +2830,44 @@ fn validate_tester_evidence_refs(
         }
     }
     Ok(())
+}
+
+fn validate_verification_ref_target_tx(
+    tx: &Transaction<'_>,
+    attempt: &TesterAttemptEvidence,
+    run_id: i64,
+) -> Result<Vec<CommandEvidence>> {
+    let binding: Option<(i64, String, String, String)> = tx
+        .query_row(
+            r#"
+            SELECT graph_version, jobpack_id, change_set_id, commands_json
+            FROM verification_runs
+            WHERE id=?1
+            "#,
+            params![run_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .optional()?;
+    let Some((graph_version, jobpack_id, change_set_id, commands_json)) = binding else {
+        bail!("verification evidence ref {} does not exist", run_id);
+    };
+    if graph_version != attempt.graph_version {
+        bail!(
+            "verification evidence ref {} is bound to another graph",
+            run_id
+        );
+    }
+    let matches_target = attempt.target.prerequisites.iter().any(|target| {
+        target.jobpack_id == jobpack_id
+            && target.change_set_id.as_deref() == Some(change_set_id.as_str())
+    });
+    if !matches_target {
+        bail!(
+            "verification evidence ref {} is not bound to the Tester target",
+            run_id
+        );
+    }
+    Ok(serde_json::from_str::<Vec<CommandEvidence>>(&commands_json)?)
 }
 
 fn retire_active_jobpacks_for_current_graphs_tx(tx: &Transaction<'_>) -> Result<()> {
