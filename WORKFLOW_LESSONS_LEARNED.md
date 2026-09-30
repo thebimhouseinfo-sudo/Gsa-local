@@ -378,13 +378,13 @@ Long-running work often produces several commits after the originally reviewed r
 The correct rule is:
 
 ```text
-Reviewer PASS(target_revision = X)
+Reviewer PASS(output_source_target_set = X)
 ```
 
 not:
 
 ```text
-Reviewer PASS(latest main)
+Reviewer PASS(latest source state)
 ```
 
 If source changes after review, PASS does not automatically move forward.
