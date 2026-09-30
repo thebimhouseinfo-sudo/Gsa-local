@@ -123,6 +123,16 @@ pub enum TesterExecutionStatus {
     Blocked,
 }
 
+impl TesterExecutionStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Completed => "COMPLETED",
+            Self::Failed => "FAILED",
+            Self::Blocked => "BLOCKED",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TesterExecutionObservation {
     pub execution_id: String,
