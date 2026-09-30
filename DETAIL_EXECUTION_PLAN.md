@@ -173,12 +173,35 @@ Deliverables:
 Gate:
 - crash or intentional Human architecture change can be reconciled without conversation history, blanket revert, duplicate non-idempotent action or stale authority.
 
+## UI execution policy review gate — UNDER REVIEW / CR REQUIRED
+
+Status for Milestones G–I: **UNDER REVIEW**.
+
+This UI execution-mode architecture is intentionally provisional. It may be implemented as accepted Local architecture only after a **Human-invoked CR** independently reviews the exact plan revision, makes any required corrections, and explicitly clears the mark.
+
+Rules:
+- normal Reviewer PASS cannot remove this mark;
+- no automatic workflow may invoke CR to clear it;
+- CR remains stateless/fresh and uses durable source/plan evidence;
+- removing the mark requires explicit CR disposition on the Local-specific environment-aware policy;
+- until then, Milestones G–I must not become irreversible mandatory UI workflow authority.
+
+Environment premise under review:
+- Local has a stronger Vercel agent-browser development/inspection surface than GSA Online;
+- therefore Local may prefer BROWSER_FIRST more often;
+- Online may rationally prefer DESIGN_FIRST/Penpot more often while browser capability is weaker;
+- this difference is valid only if shared role authority, Tester independence, evidence semantics and Human visual acceptance remain common;
+- Planner must route from observed runtime capability plus design risk, not from deployment label alone.
+
 ## Milestone G — UI execution-mode architecture
 
 Deliverables:
 - Designer / UX Coder / UI Coder role contracts;
 - UI_FIRST / UX_FIRST product workflow classification;
 - ui_execution_mode = BROWSER_FIRST | DESIGN_FIRST;
+- environment-aware routing input describing the actually available browser/design capability;
+- explicit allowance for Online and Local to choose different execution modes without being classified as drift when their runtime capabilities differ;
+- shared role authority/evidence/Human-review invariants across environments;
 - UX execution contract;
 - visual_authority_source = existing approved shell/design system, Designer spec, or Human direction;
 - BROWSER_FIRST may still invoke Designer for unresolved material visual decisions without invoking Penpot;

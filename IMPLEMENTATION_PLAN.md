@@ -2486,6 +2486,46 @@ Exit:
 | Bounded integration | Phase 15 AcceptedIntegrationBaseline |
 
 Coverage is complete only when each family has runtime acceptance tests or an explicit Human governance gate; prose reference alone is insufficient.
+## UI execution policy status — UNDER REVIEW / CR REQUIRED
+
+> **Status: UNDER REVIEW**
+>
+> This Local UI execution policy is provisional architecture. It remains marked **UNDER REVIEW** until a **Human-invoked Critic Reviewer (CR)** independently reviews this exact plan revision, adjusts the policy where needed, and explicitly clears the mark.
+>
+> Normal Reviewer PASS does **not** remove this mark. Planner, Reviewer, Coder, Tester, Job Builder, or runtime may not silently convert it to accepted architecture. Only a Human-invoked CR review may authorize removing **UNDER REVIEW**.
+>
+> Until CR clears it, Phases 16–20 are planning guidance for the Local UI architecture but must not be treated as an irreversible mandatory workflow contract.
+
+### Environment-aware UI execution premise
+
+Shared UI principles remain common across GSA variants:
+
+```text
+Planner owns functional/UX intent
+Designer owns visual interpretation when design work is needed
+UI Coder owns implementation
+Tester verifies independently
+Human owns subjective visual acceptance
+```
+
+Execution strategy is allowed to differ by runtime capability.
+
+```text
+GSA Local
+  stronger Vercel agent-browser development/inspection loop
+  -> BROWSER_FIRST can be the default more often
+
+GSA Online
+  more limited browser feedback/runtime interaction
+  -> DESIGN_FIRST / Penpot may be justified more often
+```
+
+This difference is **not workflow drift** when both variants preserve the same authority, evidence and Human-review contracts. Planner must treat available runtime/browser capability as a first-class routing input.
+
+The same product/UI request may therefore legitimately choose different execution modes in Online and Local when the observable tool capability differs.
+
+If Online browser capability improves later, its Penpot reliance may decrease without requiring a change to the shared UI governance model. Likewise, Local may escalate to Penpot whenever pre-code visual architecture materially reduces risk.
+
 ## Phase 16 — UI Planning + UI Execution Mode
 
 Goal: make Local choose the lightest safe UI workflow instead of routing all UI work through Penpot.
@@ -2494,6 +2534,9 @@ Required:
 - Designer role plus UX Coder/UI Coder specialization;
 - preserve UI_FIRST / UX_FIRST as product workflow classification;
 - add orthogonal ui_execution_mode = BROWSER_FIRST | DESIGN_FIRST;
+- treat runtime/browser capability as a first-class mode-selection input;
+- do not require GSA Online and GSA Local to select the same execution mode when their observable browser/design capabilities differ;
+- preserve common authority/evidence/Human-review contracts even when execution strategy differs by environment;
 - UX execution contract;
 - decision criteria: existing shell, shell complexity, visual uncertainty, cost of source rework, need for Human pre-approval;
 - visual_authority_source = EXISTING_APPROVED_SHELL | EXISTING_DESIGN_SYSTEM | DESIGNER_SPEC | HUMAN_DIRECTION;
