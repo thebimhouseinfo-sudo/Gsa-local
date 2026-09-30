@@ -144,15 +144,26 @@ Future work must now include:
 Only the current approved Job is implemented at a time. Runtime state, not Markdown checkboxes, remains authority.
 
 
-## Milestone F — Recovery / Rebaseline architecture (post-J-177F)
+## Milestone F — Immediate Rebaseline Bridge + Recovery architecture
 
-This milestone is future architecture work, not part of the currently executing Tester task chain.
+Immediate gate before any more coding:
+- freeze J-177F before T-ORCHESTRATION;
+- classify/adopt work completed through T-EXECUTION;
+- preserve valid source/evidence subject to applicability review;
+- create a replacement remaining-work Job/graph under migrated governance;
+- do not manually rewrite the IN_PROGRESS J-177F record.
+
+After that operational bridge, implement the future runtime automation below.
 
 Deliverables:
+- project-first resolver;
 - WorkCursor + ResumeDescriptor;
 - SourceTargetSet + plan/hash/graph binding;
 - START/RESUME/RECOVER resolvers for Planning/Coding/Tester;
 - crash-consistent durable transition identity;
+- parent/child Run reconciliation;
+- machine-readable GateDiagnostic;
+- workflow replay policy + deterministic verification readiness;
 - MutationIntent write-ahead;
 - lease fencing token;
 - state-schema migration;
@@ -185,10 +196,12 @@ Penpot premise:
 
 Deliverables:
 - Local Penpot identity/binding;
+- upstream capability provenance: UPSTREAM_OBSERVED_REF or HUMAN_ACCEPTED_EXTERNAL planning premise; neither substitutes for Local integration OBSERVED evidence;
 - UI DESIGN PHASE;
 - Vercel agent-browser MCP Tester executor;
 - standalone agent-browser PROBE;
 - Tester browser workspace;
+- immutable PenpotEvidenceBundle/read-only inspection path for non-browser design checkpoints;
 - direct Human screenshot paths;
 - ExternalOperation identity for Penpot/browser work.
 
@@ -212,3 +225,15 @@ Gate:
 - shell is not scaled out until runtime evidence validates the approved design;
 - Human material architecture feedback routes through Rebaseline/Salvage;
 - coherent accepted boundaries become integration baselines rather than allowing unbounded commit accumulation.
+
+
+## Milestone dependency chain
+
+```text
+F immediate rebaseline + recovery foundations
+  -> G UI architecture foundation
+  -> H Penpot binding + agent-browser PROBE
+  -> I Human-approved design -> source -> SHELL_READY
+```
+
+No later milestone may infer readiness from numbering alone; its predecessor gate must be satisfied explicitly.
