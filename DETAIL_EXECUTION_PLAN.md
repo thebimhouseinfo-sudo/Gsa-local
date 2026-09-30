@@ -180,8 +180,8 @@ Deliverables:
 - UI_FIRST / UX_FIRST product workflow classification;
 - ui_execution_mode = BROWSER_FIRST | DESIGN_FIRST;
 - UX execution contract;
-- BROWSER_FIRST default for an existing usable shell;
-- explicit Human approval before rebuilding/replacing an existing shell through DESIGN_FIRST;
+- BROWSER_FIRST default for any existing product shell;
+- explicit Human approval before discarding/rebuilding/replacing any existing shell through DESIGN_FIRST; aesthetic dissatisfaction alone is not a mode-switch authority;
 - greenfield risk-based mode selection rather than automatic Penpot;
 - asset routing as a signal only;
 - mode-specific design readiness rules.
@@ -202,11 +202,11 @@ agent-browser deliverables:
 - direct Human screenshot paths;
 - exact target/viewport applicability.
 
-Optional DESIGN_FIRST/Penpot deliverables:
+Optional DESIGN_FIRST/Penpot deliverables (activated only by a genuine approved need, never to manufacture a redesign for testing):
 - Penpot is activated only when the selected mode requires pre-code visual architecture;
 - generic UI Coder + Penpot capability PASS may be reused through UPSTREAM_OBSERVED_REF or HUMAN_ACCEPTED_EXTERNAL planning premise;
 - Local Penpot invocation/readback/resume/artifact integration remains OBSERVED locally when used;
-- immutable PenpotEvidenceBundle/read-only inspection path for non-browser design checkpoints;
+- immutable PenpotEvidenceBundle/read-only inspection path for non-browser design checkpoints, independent of agent-browser readiness when the Penpot target is not browser-inspectable;
 - UI DESIGN APPROVED baseline when required.
 
 Gate:
