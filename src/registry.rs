@@ -2286,6 +2286,25 @@ impl Registry {
         .transpose()
     }
 
+    pub fn has_unresolved_tester_execution_steps(
+        &self,
+        graph_version: i64,
+        checkpoint_id: &str,
+        attempt_id: &str,
+    ) -> Result<bool> {
+        let count: i64 = self.conn.query_row(
+            r#"
+            SELECT COUNT(*)
+            FROM tester_execution_steps
+            WHERE graph_version=?1 AND checkpoint_id=?2
+              AND attempt_id=?3 AND status='PREPARED'
+            "#,
+            params![graph_version, checkpoint_id, attempt_id],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
+    }
+
     pub fn record_verification_evidence(
         &self,
         project_root: &Path,
