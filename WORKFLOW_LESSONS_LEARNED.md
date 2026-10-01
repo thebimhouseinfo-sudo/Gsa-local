@@ -2816,3 +2816,173 @@ same authorization
 ```
 
 Human approval authorizes one explicitly bounded progression. It never silently propagates to later task boundaries.
+
+---
+
+# 51. Temporary progression is a workaround for an incomplete workflow contract, not a target-state feature
+
+Human-approved temporary progression exists only because the current GSA workflow can reach a contradictory state:
+
+```text
+implementation evidence = PASS
+independent Reviewer = PASS
+GOAL_RECHECK = PASS
+ready_for_success_handoff = true
+
+but
+
+normal Run terminalization = BLOCKED
+```
+
+When this happens because the workflow/control-plane contract cannot represent or correlate the valid evidence correctly, the defect belongs to the workflow architecture.
+
+Temporary Human approval is only a bounded operational escape hatch that prevents the active Job from deadlocking while the workflow defect remains unresolved.
+
+It must not be treated as:
+
+- the normal completion path;
+- a permanent governance feature;
+- a substitute for a correct Task/Run/Verification contract;
+- evidence that the blocked terminal gate is behaving correctly;
+- permission to keep requiring Human approval at every healthy task boundary.
+
+## 51.1 Current root defect: Task identity contract is inconsistent across workflow artifacts
+
+The current Job uses stable task references such as:
+
+```text
+T2-ORCHESTRATION
+T2-RESUME
+T2-RETEST
+```
+
+but the GOAL_RECHECK/control-plane schema expects a UUID-compatible `task_id`.
+
+The result is a persisted GOAL_RECHECK with:
+
+```text
+task_id = null
+run_id = exact Coder Run
+target_revision = exact source target
+result = PASS
+all criteria = MET
+ready_for_success_handoff = true
+```
+
+The terminal Run gate then requires an "exact GOAL_RECHECK record" but cannot match the valid record through the incompatible task identity contract.
+
+Observed effect:
+
+```text
+valid implementation
++ valid CI
++ valid Reviewer PASS
++ valid GOAL_RECHECK
+-> terminalization blocked by identity mismatch
+```
+
+This is a workflow defect, not a product/code failure.
+
+## 51.2 Required future improvement: one canonical Task identity contract
+
+GSA should define one canonical task identity that survives the full lifecycle:
+
+```text
+PlanArtifact / Job Task
+-> Run
+-> Verification
+-> GOAL_RECHECK
+-> Handoff
+-> terminal Run completion
+-> resume/recovery
+```
+
+Acceptable architectural directions include:
+
+```text
+A. UUID task_id everywhere
+
+or
+
+B. stable task_ref everywhere
+
+or
+
+C. stable task_ref + optional immutable UUID,
+   with explicit mapping persisted first-class
+```
+
+What must not continue is implicit conversion between unrelated identity types or silently dropping a task reference to `null`.
+
+## 51.3 Terminal gate should validate semantic identity, not an accidental schema shape
+
+A successful Coder terminalization should be able to prove:
+
+```text
+same project
+same Job
+same affected Task
+same Coder Run
+same exact target revision
+GOAL_RECHECK result = PASS
+required criteria = MET
+verification artifact persisted
+```
+
+If all of those are true, the terminal gate should not fail merely because one artifact stores the Task as a string ref while another field was typed as UUID.
+
+Conversely, the gate must still fail closed when any semantic binding is ambiguous or stale.
+
+## 51.4 Temporary approval must remain visibly exceptional
+
+While this workflow defect is unresolved:
+
+```text
+normal terminalization
+-> attempt first
+
+if blocked by known contract defect
+-> verify exact evidence
+-> classify CONTROL_PLANE_DEFECT
+-> request bounded Human temporary approval
+-> persist approval
+-> progress without rewriting the gate as PASS
+```
+
+The existence of this workaround must create repair debt, not normalize the bypass.
+
+A future workflow-improvement task should remove the need for this path for healthy Tasks.
+
+## 51.5 Improvement acceptance criteria
+
+The workflow defect is resolved only when an integration test can demonstrate:
+
+```text
+Job task uses canonical identity
+-> Coder Run binds same task
+-> GOAL_RECHECK persists same task identity
+-> Reviewer evidence binds exact target
+-> run_complete finds exact verification automatically
+-> Run closes normally as COMPLETED/PASS
+-> no Human temporary approval required
+```
+
+The regression suite should also cover:
+
+- stale GOAL_RECHECK from another target is rejected;
+- GOAL_RECHECK from another task is rejected;
+- missing verification is rejected;
+- superseded task identity cannot complete a newer Run;
+- resume/recovery preserves the same canonical task identity.
+
+## 51.6 Key invariant
+
+```text
+temporary Human approval
+= workaround for workflow contract debt
+
+temporary Human approval
+!= target-state workflow design
+```
+
+The long-term fix is to make valid evidence composable and machine-verifiable across the full GSA control plane.
