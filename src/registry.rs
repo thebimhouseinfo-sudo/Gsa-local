@@ -13,6 +13,7 @@ use crate::{
     },
     tester_execution::{TesterExecutionObservation, TesterExecutionStepRequest},
     tester_workspace::TesterWorkspaceRuntime,
+    tools::MutationRecord,
     verification::{CommandEvidence, VerificationEvidence, VerificationResult},
 };
 use anyhow::{bail, Context, Result};
@@ -1719,6 +1720,108 @@ impl Registry {
             )
             .optional()
             .map_err(Into::into)
+    }
+
+    pub fn persisted_code_checkpoint(
+        &self,
+        graph_version: i64,
+        jobpack_id: &str,
+        change_set_id: &str,
+    ) -> Result<Option<PersistedCodeCheckpoint>> {
+        let row: Option<(String, String, String)> = self
+            .conn
+            .query_row(
+                r#"
+                SELECT summary, checklist_claims, goal_recheck, mutation_journal
+                FROM code_checkpoints
+                WHERE graph_version=?1 AND jobpack_id=?2 AND change_set_id=?3
+                ORDER BY id DESC LIMIT 1
+                "#,
+                params![graph_version, jobpack_id, change_set_id],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .optional()?
+            .map(|(summary, checklist, goal_recheck, journal)| {
+                Ok::<PersistedCodeCheckpoint, anyhow::Error>(PersistedCodeCheckpoint {
+                    change_set_id: change_set_id.to_owned(),
+                    summary,
+                    completed_checklist: serde_json::from_str(&checklist)?,
+                    goal_recheck: serde_json::from_str(&goal_recheck)?,
+                    mutation_journal: serde_json::from_str(&journal)?,
+                })
+            })
+            .transpose()?;
+        Ok(row)
+    }
+
+    pub fn latest_code_review_findings(
+        &self,
+        graph_version: i64,
+        jobpack_id: &str,
+        change_set_id: &str,
+    ) -> Result<Vec<String>> {
+        let findings: Option<String> = self
+            .conn
+            .query_row(
+                r#"
+                SELECT findings
+                FROM code_reviews
+                WHERE graph_version=?1 AND jobpack_id=?2 AND change_set_id=?3
+                ORDER BY id DESC LIMIT 1
+                "#,
+                params![graph_version, jobpack_id, change_set_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        findings
+            .map(|value| serde_json::from_str(&value).map_err(Into::into))
+            .transpose()
+            .map(|value| value.unwrap_or_default())
+    }
+
+    pub fn enter_code_internal_fix(
+        &self,
+        project_root: &Path,
+        owner: &str,
+        graph_version: i64,
+        jobpack_id: &str,
+        change_set_id: &str,
+        reason: &str,
+    ) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        assert_lease_owner_tx(&tx, project_root, owner)?;
+        assert_active_jobpack_binding_tx(&tx, graph_version, jobpack_id)?;
+        let updated = tx.execute(
+            r#"
+            UPDATE code_workflow_state
+            SET status='INTERNAL_FIX'
+            WHERE id=1 AND graph_version=?1 AND jobpack_id=?2
+              AND change_set_id=?3 AND status='REVIEW_PASS'
+            "#,
+            params![graph_version, jobpack_id, change_set_id],
+        )?;
+        if updated != 1 {
+            bail!("Local CR repair requires exact REVIEW_PASS code workflow state");
+        }
+        append_event_tx(
+            &tx,
+            "CODE_INTERNAL_FIX_REQUIRED",
+            &serde_json::json!({
+                "graph_version": graph_version,
+                "jobpack": jobpack_id,
+                "change_set_id": change_set_id,
+                "reason": reason
+            }),
+        )?;
+        tx.commit()?;
+        Ok(())
     }
 
     pub fn current_active_work(&self) -> Result<Option<ActiveWorkRecord>> {
