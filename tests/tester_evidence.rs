@@ -944,6 +944,10 @@ fn safe_prepared_execution_replays_same_fence_after_restart() {
         )
         .unwrap();
         assert!(restarted.resume_prepared().unwrap().is_empty());
+        let persisted = restarted.persisted_steps();
+        assert_eq!(persisted.len(), 1);
+        assert_eq!(persisted[0].execution_id, fence);
+        assert!(persisted[0].observation.is_some());
         assert_eq!(
             registry
                 .tester_execution_steps(version, "CP1", &attempt_id)
