@@ -3118,3 +3118,137 @@ A recorded LLC item should contain enough context for later independent review:
     real-project evidence > synthetic confidence for orchestration lessons
 
 The value of LLC is to preserve the signal while the project is still being built and exercised, so later workflow/skill review is based on accumulated real failures rather than memory or isolated anecdotes.
+
+
+---
+
+# 53. LLC — Valid completed Job can remain IN_PROGRESS because terminal lifecycle transition is blocked
+
+**lesson_id:** LLC-CADGPT-JC694-FINALIZATION-20261001  
+**date:** 2026-10-01  
+**project:** CadGPT  
+**job:** J-C694 / `01a0f6c6-30d6-7454-b5ee-72e6496ac694`  
+**trigger:** `WORKAROUND_REQUIRED`  
+**classification:** `WORKFLOW_GAP`  
+**subclassification:** `EVIDENCE_BINDING_GAP / LIFECYCLE_FINALIZATION_GAP`
+
+## 53.1 Canonical path
+
+The expected terminal path was:
+
+```text
+implementation complete
+-> Human real-AutoCAD acceptance PASS
+-> exact-revision CI PASS
+-> Registry Contract PASS
+-> independent review / accumulated verification evidence
+-> job_transition(IN_PROGRESS -> COMPLETED, PASS)
+-> persist terminal Job record
+```
+
+J-C694 had reached the product state required for completion.
+
+## 53.2 Observed failure
+
+The final GSA lifecycle transition could not be completed through the canonical control-plane path.
+
+Two attempts to transition J-C694 from `IN_PROGRESS` to `COMPLETED/PASS` were blocked by the control-plane/tool safety layer before the transition record could be produced or persisted.
+
+The implementation itself was not blocked:
+
+- Human confirmed the final CadGPT Beta behavior PASS.
+- CadGPT source was on exact revision `5b7c1c6e1eae37eac8a150876a9e6e62df16d850`.
+- CadGPT Registry Contract run `36891362644` passed.
+- CadGPT Core CI run `36891362542` passed.
+- The final TBH contract was verified in real AutoCAD: successful `tbhloader.lsp` load enables the TBH toolkit for that drawing; failed load leaves it OFF.
+
+Despite this, the durable Job record remained `IN_PROGRESS`.
+
+## 53.3 Workaround used
+
+No lifecycle state was falsified.
+
+The Agent reported the distinction explicitly:
+
+```text
+functional/product state = PASS
+GSA lifecycle record = still IN_PROGRESS
+reason = canonical terminal transition blocked by control-plane
+```
+
+The Human then accepted CadGPT Beta as complete based on the real implementation/test evidence rather than pretending that the blocked GSA lifecycle mutation had succeeded.
+
+This is a temporary operational workaround, not the desired workflow.
+
+## 53.4 Why this is a workflow lesson
+
+This matches LLC's strongest trigger:
+
+```text
+valid implementation + Human evidence + CI evidence exist
+-> canonical lifecycle close path cannot advance
+-> Agent must reconcile real completion separately from control-plane state
+```
+
+A healthy Job should not remain permanently `IN_PROGRESS` when all completion evidence is valid merely because the terminal transition machinery cannot express or authorize the close.
+
+The workflow therefore needs a first-class recovery/finalization contract for this condition.
+
+## 53.5 Affected contract
+
+Primary affected areas:
+
+- Job terminal lifecycle transition;
+- completion-evidence binding;
+- control-plane mutation authorization;
+- recovery from a blocked `job_transition`;
+- reconciliation between product truth and durable GSA lifecycle truth.
+
+This lesson is closely related to the earlier terminalization/evidence-binding lesson, but this occurrence is specifically at **Job finalization**, after the product and Human gate had already passed.
+
+## 53.6 Reproducibility
+
+Observed in real project execution on CadGPT J-C694:
+
+```text
+Job lifecycle = IN_PROGRESS
+Human acceptance = PASS
+Core CI = PASS
+Registry Contract = PASS
+completion evidence supplied
+-> job_transition to COMPLETED/PASS blocked
+-> retry also blocked
+-> Job remains IN_PROGRESS
+```
+
+## 53.7 Impact
+
+- project work can be genuinely finished while GSA still reports an active Job;
+- future Agents may incorrectly believe more implementation work remains;
+- dashboards/task summaries can drift from the actual product state;
+- Humans may be forced to grant semantic completion outside the canonical lifecycle path;
+- repeated occurrences would make lifecycle state less trustworthy.
+
+## 53.8 Future review target
+
+LLC records this only; it does not prescribe the fix.
+
+Future workflow review should determine how a terminal Job can be safely reconciled when:
+
+```text
+completion evidence is valid
++ Human acceptance is explicit
++ exact target revision is known
++ normal job_transition is blocked by control-plane mechanics
+```
+
+The final mechanism must remain fail-closed for stale, ambiguous, or cross-Job evidence, but it should provide a bounded canonical recovery path instead of leaving a valid Job permanently `IN_PROGRESS`.
+
+## 53.9 Key invariant
+
+```text
+real completion evidence must not be rewritten as failure
+blocked lifecycle mutation must not be rewritten as PASS
+a healthy workflow needs a canonical reconciliation path between the two
+```
+
