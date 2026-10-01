@@ -1,10 +1,15 @@
 use gsa_local::{
     checkpoint::Checkpoint,
-    controller::MilestoneController,
+    controller::{ActiveWork, MilestoneController},
     execution_graph::{ExecutionGraph, JobPackSpec, MilestoneSpec, TodoSpec},
     plan::PlanArtifact,
-    registry::{Registry, ReviewActor, ReviewVerdict},
+    registry::{ChecklistClaim, Registry, ReviewActor, ReviewVerdict},
+    verification::{
+        CommandEvidence, DiscoveryStatus, VerificationCapability, VerificationCommand,
+        VerificationCommandKind, VerificationEvidence, VerificationProfile,
+    },
 };
+use serde_json::json;
 use std::time::Duration;
 use tempfile::tempdir;
 
@@ -140,6 +145,102 @@ fn approve_and_register(registry: &Registry) -> (i64, String, i64) {
     (revision.revision, revision.hash, version)
 }
 
+fn phase11_verification() -> VerificationEvidence {
+    VerificationEvidence {
+        profile: VerificationProfile {
+            status: DiscoveryStatus::Applicable,
+            capabilities: vec![VerificationCapability::Unit],
+            commands: vec![VerificationCommand {
+                id: "controller-test".into(),
+                kind: VerificationCommandKind::Test,
+                capability: VerificationCapability::Unit,
+                argv: vec!["controller-test".into()],
+                source_paths: vec!["tests/controller.rs".into()],
+                config_hash: "controller-config".into(),
+            }],
+            reason: None,
+        },
+        commands: vec![CommandEvidence {
+            command_id: "controller-test".into(),
+            config_hash: "controller-config".into(),
+            argv: vec!["controller-test".into()],
+            exit_code: Some(0),
+            duration_ms: 1,
+            timed_out: false,
+            blocked_reason: None,
+            stdout: "ok".into(),
+            stderr: String::new(),
+        }],
+        test_surface_changed: false,
+    }
+}
+
+fn phase11_complete_active(
+    dir: &tempfile::TempDir,
+    registry: &Registry,
+    version: i64,
+    jobpack_id: &str,
+    todo_id: &str,
+    change_set: &str,
+) -> Option<ActiveWork> {
+    registry
+        .begin_code_workflow(dir.path(), "owner-a", version, jobpack_id)
+        .unwrap();
+    registry
+        .record_code_checkpoint(
+            dir.path(),
+            "owner-a",
+            version,
+            jobpack_id,
+            change_set,
+            "done",
+            &[ChecklistClaim {
+                todo_id: todo_id.into(),
+                position: 1,
+            }],
+            &["done".into()],
+            &json!([{
+                "path":"src/controller.rs",
+                "before_sha256":"before",
+                "after_sha256":change_set
+            }]),
+            1,
+            0,
+        )
+        .unwrap();
+    registry
+        .record_code_review(
+            dir.path(),
+            "owner-a",
+            version,
+            jobpack_id,
+            change_set,
+            ReviewVerdict::Pass,
+            &[],
+            1,
+            1,
+        )
+        .unwrap();
+    registry
+        .record_verification_evidence(
+            dir.path(),
+            "owner-a",
+            version,
+            jobpack_id,
+            change_set,
+            &phase11_verification(),
+        )
+        .unwrap();
+    let cr = registry.resolve_code_cr_boundary().unwrap().unwrap();
+    assert!(cr.terminal);
+    registry
+        .record_code_cr_review(dir.path(), "owner-a", &cr.key, ReviewVerdict::Pass, &[])
+        .unwrap();
+    MilestoneController::new(registry, dir.path(), "owner-a")
+        .mark_active_jobpack_done()
+        .unwrap()
+}
+
 #[test]
 fn controller_activates_deterministically_and_never_jumps_milestones() {
     let dir = tempdir().unwrap();
@@ -174,17 +275,19 @@ fn controller_activates_deterministically_and_never_jumps_milestones() {
     assert_eq!(again.jobpack_id, "JP-B");
     assert_eq!(registry.active_jobpack_count(version).unwrap(), 1);
 
-    let second = controller.mark_active_jobpack_done().unwrap().unwrap();
+    let second =
+        phase11_complete_active(&dir, &registry, version, "JP-B", "T-B", "change-b").unwrap();
     assert_eq!(second.jobpack_id, "JP-C");
     assert_eq!(
         registry.jobpack_status(version, "JP-B").unwrap().as_deref(),
         Some("DONE")
     );
 
-    let third = controller.mark_active_jobpack_done().unwrap().unwrap();
+    let third =
+        phase11_complete_active(&dir, &registry, version, "JP-C", "T-C", "change-c").unwrap();
     assert_eq!(third.jobpack_id, "JP-A");
 
-    let none = controller.mark_active_jobpack_done().unwrap();
+    let none = phase11_complete_active(&dir, &registry, version, "JP-A", "T-A", "change-a");
     assert!(none.is_none());
     assert_eq!(
         registry.milestone_status(version, "M1").unwrap().as_deref(),
@@ -211,7 +314,15 @@ fn controller_activates_deterministically_and_never_jumps_milestones() {
         Some("ACTIVE")
     );
 
-    assert!(controller.mark_active_jobpack_done().unwrap().is_none());
+    assert!(phase11_complete_active(
+        &dir,
+        &registry,
+        version,
+        "JP-D",
+        "T-D",
+        "change-d"
+    )
+    .is_none());
     assert_eq!(
         registry.milestone_status(version, "M2").unwrap().as_deref(),
         Some("VERIFY")
