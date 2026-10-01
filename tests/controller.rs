@@ -608,7 +608,6 @@ fn milestone_completion_requires_satisfied_milestone_gate_checkpoint() {
     );
 }
 
-
 #[test]
 fn satisfied_milestone_gate_allows_completion_but_not_implicit_next_activation() {
     let dir = tempdir().unwrap();
@@ -649,7 +648,14 @@ fn satisfied_milestone_gate_allows_completion_but_not_implicit_next_activation()
         .unwrap();
 
     let controller = MilestoneController::new(&registry, dir.path(), "owner-a");
-    assert_eq!(controller.resolve_or_activate().unwrap().unwrap().jobpack_id, "JP-B");
+    assert_eq!(
+        controller
+            .resolve_or_activate()
+            .unwrap()
+            .unwrap()
+            .jobpack_id,
+        "JP-B"
+    );
     assert_eq!(
         phase11_complete_active(&dir, &registry, version, "JP-B", "T-B", "change-b")
             .unwrap()
@@ -711,7 +717,6 @@ fn satisfied_milestone_gate_allows_completion_but_not_implicit_next_activation()
     assert_eq!(next.milestone_id, "M2");
     assert_eq!(next.jobpack_id, "JP-D");
 }
-
 
 #[test]
 fn resume_decision_tracks_code_stages_without_reinitializing() {
