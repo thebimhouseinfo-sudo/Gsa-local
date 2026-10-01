@@ -25,6 +25,46 @@ impl Checkpoint {
     }
 }
 
+
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum RecoveryClassification {
+    DurableExact,
+    SourceDiverged,
+    Blocked,
+    NeedsHuman,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum ResumeAction {
+    ResumeCoder,
+    ResumeReviewer,
+    ResumeInternalFix,
+    ResumeTesterAttempt,
+    ResumeLocalCr,
+    RunRequiredVerification,
+    CompleteMilestone,
+    ActivateInitialMilestone,
+    WaitExplicitNextMilestoneStart,
+    BlockedNeedsHuman,
+    ExecutionComplete,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResumeDecision {
+    pub classification: RecoveryClassification,
+    pub action: ResumeAction,
+    pub graph_version: Option<i64>,
+    pub milestone_id: Option<String>,
+    pub jobpack_id: Option<String>,
+    pub change_set_id: Option<String>,
+    pub checkpoint_id: Option<String>,
+    pub attempt_id: Option<String>,
+    pub reason: String,
+}
+
 pub struct CheckpointResolver<'a> {
     registry: &'a Registry,
 }
