@@ -1315,8 +1315,14 @@ fn nonterminal_local_cr_continuation_preserves_reviewed_checklist_progress() {
         .begin_code_workflow(dir.path(), "owner-a", version, "JP1")
         .unwrap();
 
-    assert_eq!(registry.checklist_checked(version, "T1", 1).unwrap(), Some(true));
-    assert_eq!(registry.checklist_checked(version, "T1", 2).unwrap(), Some(false));
+    assert_eq!(
+        registry.checklist_checked(version, "T1", 1).unwrap(),
+        Some(true)
+    );
+    assert_eq!(
+        registry.checklist_checked(version, "T1", 2).unwrap(),
+        Some(false)
+    );
     assert_eq!(
         registry.todo_status(version, "T1").unwrap().as_deref(),
         Some("PENDING")
