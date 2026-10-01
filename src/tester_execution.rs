@@ -5,7 +5,7 @@ use crate::{
     ollama::{ChatMessage, OllamaClient, ToolCall, ToolDefinition},
     plan::EvidenceNeed,
     process_runner::{ProcessObservation, TesterSandboxRunner},
-    registry::Registry,
+    registry::{Registry, TesterExecutionStepRecord},
     session::Session,
     tester_evidence::{
         AdapterObservationField, ExperimentContext, ReplaySafety, TesterAttemptEvidence,
@@ -20,7 +20,7 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeSet, path::Path, time::Duration};
+use std::{collections::{BTreeMap, BTreeSet}, path::Path, time::Duration};
 
 const MAX_TESTER_TOOL_ROUNDS: usize = 16;
 const MAX_TESTER_EXECUTIONS: usize = 8;
@@ -258,6 +258,7 @@ pub struct TesterExecutionRuntime<'a> {
     runner: TesterSandboxRunner,
     execution_count: usize,
     observations: Vec<TesterExecutionObservation>,
+    steps: BTreeMap<String, TesterExecutionStepRecord>,
 }
 
 impl<'a> TesterExecutionRuntime<'a> {
@@ -294,6 +295,20 @@ impl<'a> TesterExecutionRuntime<'a> {
     ) -> Result<Self> {
         let workspace =
             TesterWorkspaceRuntime::new(project_root, graph_version, checkpoint_id, attempt_id)?;
+        let target_fingerprint = target.fingerprint(graph_version, checkpoint_id)?;
+        let persisted = registry.tester_execution_steps(graph_version, checkpoint_id, attempt_id)?;
+        let mut observations = Vec::new();
+        let mut steps = BTreeMap::new();
+        for record in persisted {
+            if record.target_fingerprint != target_fingerprint {
+                bail!("persisted Tester execution target does not match current exact target");
+            }
+            if let Some(observation) = &record.observation {
+                observations.push(observation.clone());
+            }
+            steps.insert(record.execution_id.clone(), record);
+        }
+        let execution_count = steps.len();
         Ok(Self {
             registry,
             project_root,
@@ -304,8 +319,9 @@ impl<'a> TesterExecutionRuntime<'a> {
             target,
             workspace,
             runner,
-            execution_count: 0,
-            observations: Vec::new(),
+            execution_count,
+            observations,
+            steps,
         })
     }
 
@@ -313,10 +329,21 @@ impl<'a> TesterExecutionRuntime<'a> {
         &self.workspace
     }
 
-    pub fn execute(&mut self, arguments: &Value) -> Result<Value> {
-        if self.execution_count >= MAX_TESTER_EXECUTIONS {
-            bail!("Tester exceeded bounded execution-step limit");
+    pub fn resume_prepared(&mut self) -> Result<Vec<TesterExecutionObservation>> {
+        let pending = self
+            .steps
+            .values()
+            .filter(|record| record.status == "PREPARED")
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut resumed = Vec::new();
+        for record in pending {
+            resumed.push(self.resume_existing_step(record)?);
         }
+        Ok(resumed)
+    }
+
+    pub fn execute(&mut self, arguments: &Value) -> Result<Value> {
         let request: TesterExecutionStepRequest = serde_json::from_value(arguments.clone())
             .context("invalid tester_execute arguments")?;
         request.validate()?;
@@ -331,6 +358,24 @@ impl<'a> TesterExecutionRuntime<'a> {
             &target_fingerprint,
         )?;
         let execution_id = fence_key.clone();
+
+        if let Some(existing) = self.steps.get(&execution_id).cloned() {
+            if existing.target_fingerprint != target_fingerprint || existing.request != request {
+                bail!("persisted Tester execution fence conflicts with the requested step");
+            }
+            if let Some(observation) = existing.observation {
+                return Ok(serde_json::to_value(observation)?);
+            }
+            if existing.status == "PREPARED" {
+                let observation = self.resume_existing_step(existing)?;
+                return Ok(serde_json::to_value(observation)?);
+            }
+            bail!("persisted Tester execution has unresolved status {}", existing.status);
+        }
+
+        if self.execution_count >= MAX_TESTER_EXECUTIONS {
+            bail!("Tester exceeded bounded execution-step limit");
+        }
 
         self.registry.prepare_tester_execution_step(
             self.project_root,
@@ -348,27 +393,7 @@ impl<'a> TesterExecutionRuntime<'a> {
         )?;
         self.execution_count += 1;
 
-        let observation_result = match &request.adapter {
-            TesterAdapterRequest::WorkspacePython { script_path, args } => {
-                self.run_workspace_script(&request, "python3", script_path, args)
-            }
-            TesterAdapterRequest::WorkspaceNode { script_path, args } => {
-                self.run_workspace_script(&request, "node", script_path, args)
-            }
-            TesterAdapterRequest::ProjectVerification {
-                jobpack_id,
-                change_set_id,
-            } => self.run_project_verification(&request, jobpack_id, change_set_id),
-        };
-        let observation = match observation_result {
-            Ok(observation) => observation,
-            Err(error) => TesterExecutionObservation::blocked(
-                execution_id,
-                &request,
-                format!("Tester adapter execution blocked: {error:#}"),
-            ),
-        };
-
+        let observation = self.observe_request(execution_id.clone(), &request);
         self.registry.complete_tester_execution_step(
             self.project_root,
             self.lease_owner,
@@ -378,7 +403,91 @@ impl<'a> TesterExecutionRuntime<'a> {
             &observation,
         )?;
         self.observations.push(observation.clone());
+        self.steps.insert(
+            execution_id.clone(),
+            TesterExecutionStepRecord {
+                execution_id,
+                target_fingerprint,
+                request,
+                status: observation.status.as_str().to_owned(),
+                observation: Some(observation.clone()),
+            },
+        );
         Ok(serde_json::to_value(observation)?)
+    }
+
+    fn resume_existing_step(
+        &mut self,
+        record: TesterExecutionStepRecord,
+    ) -> Result<TesterExecutionObservation> {
+        if record.status != "PREPARED" || record.observation.is_some() {
+            bail!("Tester resume requires an unresolved PREPARED execution step");
+        }
+
+        if record.request.replay_safety == ReplaySafety::NonIdempotent {
+            let reason = format!(
+                "uncertain NON_IDEMPOTENT Tester execution {} cannot be auto-replayed",
+                record.execution_id
+            );
+            self.registry.mark_tester_recovery_required(
+                self.project_root,
+                self.lease_owner,
+                self.graph_version,
+                &self.checkpoint_id,
+                &self.attempt_id,
+                &record.execution_id,
+                &reason,
+            )?;
+            bail!("NEEDS_HUMAN: {reason}");
+        }
+
+        let observation =
+            self.observe_request(record.execution_id.clone(), &record.request);
+        self.registry.complete_tester_execution_step(
+            self.project_root,
+            self.lease_owner,
+            self.graph_version,
+            &self.checkpoint_id,
+            &self.attempt_id,
+            &observation,
+        )?;
+        self.observations.push(observation.clone());
+        self.steps.insert(
+            record.execution_id.clone(),
+            TesterExecutionStepRecord {
+                status: observation.status.as_str().to_owned(),
+                observation: Some(observation.clone()),
+                ..record
+            },
+        );
+        Ok(observation)
+    }
+
+    fn observe_request(
+        &self,
+        execution_id: String,
+        request: &TesterExecutionStepRequest,
+    ) -> TesterExecutionObservation {
+        let observation_result = match &request.adapter {
+            TesterAdapterRequest::WorkspacePython { script_path, args } => {
+                self.run_workspace_script(request, "python3", script_path, args)
+            }
+            TesterAdapterRequest::WorkspaceNode { script_path, args } => {
+                self.run_workspace_script(request, "node", script_path, args)
+            }
+            TesterAdapterRequest::ProjectVerification {
+                jobpack_id,
+                change_set_id,
+            } => self.run_project_verification(request, jobpack_id, change_set_id),
+        };
+        match observation_result {
+            Ok(observation) => observation,
+            Err(error) => TesterExecutionObservation::blocked(
+                execution_id,
+                request,
+                format!("Tester adapter execution blocked: {error:#}"),
+            ),
+        }
     }
 
     fn has_completed_execution(&self) -> bool {
@@ -594,6 +703,8 @@ impl<'a> TesterWorkflow<'a> {
             attempt_id,
             target.clone(),
         )?;
+        let resumed_observations = execution.resume_prepared()?;
+        let resume_state = self.registry.latest_tester_resume_state()?;
 
         let model = self.model_for(AgentId::Tester).await?;
         let mut system = self.harnesses.compose(AgentId::Tester)?;
@@ -608,7 +719,9 @@ impl<'a> TesterWorkflow<'a> {
             "checkpoint": checkpoint,
             "target": target,
             "evidence_needs": evidence_needs,
-            "instruction": "Independently ground on the checkpoint contract, plan tests/experiments, author Tester-owned artifacts if needed, execute through fixed adapters, analyze/adapt within checkpoint scope, then submit a structured report. Do not invent runtime facts or thresholds."
+            "resume_state": resume_state,
+            "resumed_execution_observations": resumed_observations,
+            "instruction": "Independently ground on the checkpoint contract and persisted resume state. Reuse completed execution evidence, do not duplicate completed steps, plan any remaining tests/experiments, author Tester-owned artifacts if needed, execute through fixed adapters, analyze/adapt within checkpoint scope, then submit a structured report. Do not invent runtime facts or thresholds."
         });
         let mut messages = vec![
             ChatMessage::system(system),
