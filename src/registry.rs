@@ -4723,7 +4723,18 @@ fn resolve_required_tester_evidence_tx(
 
         let attempt = tester_attempt_evidence_tx(tx, graph_version, &checkpoint_id, &attempt_id)?
             .context("Tester evidence output references a missing attempt")?;
-        validate_tester_target_tx(tx, graph_version, &attempt.target)?;
+        if let Err(error) = validate_tester_target_tx(tx, graph_version, &attempt.target) {
+            if required {
+                bail!(
+                    "PLAN_GAP: required Tester evidence {}:{} for consumer {} has a stale target: {:#}",
+                    checkpoint_id,
+                    output_id,
+                    jobpack_id,
+                    error
+                );
+            }
+            continue;
+        }
 
         let context = applicability_context_for_attempt(&attempt);
         match record.applicability.evaluate(&context)? {
