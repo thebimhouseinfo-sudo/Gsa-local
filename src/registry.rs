@@ -3540,6 +3540,72 @@ impl Registry {
             bail!("cannot complete milestone while Job Packs are unfinished");
         }
 
+        let milestone_checkpoints = {
+            let mut statement = tx.prepare(
+                r#"
+                SELECT definition_json
+                FROM execution_test_checkpoints
+                WHERE graph_version=?1 AND milestone_id=?2
+                ORDER BY checkpoint_id
+                "#,
+            )?;
+            statement
+                .query_map(params![graph_version, milestone_id], |row| row.get::<_, String>(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?
+        };
+        for checkpoint_json in milestone_checkpoints {
+            let checkpoint: TestCheckpointSpec = serde_json::from_str(&checkpoint_json)?;
+            if checkpoint.boundary != CheckpointBoundaryKind::MilestoneGate {
+                continue;
+            }
+
+            let target = build_tester_target_tx(&tx, graph_version, &checkpoint)?
+                .with_context(|| {
+                    format!(
+                        "milestone checkpoint {} prerequisites are not ready",
+                        checkpoint.id
+                    )
+                })?;
+            match tester_boundary_state_tx(&tx, graph_version, &checkpoint, true)? {
+                TesterBoundaryState::Reached => {}
+                TesterBoundaryState::NotReached => {
+                    bail!(
+                        "milestone checkpoint {} boundary is not reached",
+                        checkpoint.id
+                    );
+                }
+                TesterBoundaryState::Crossed(reason) => {
+                    bail!(
+                        "milestone checkpoint {} is not satisfiable: {}",
+                        checkpoint.id,
+                        reason
+                    );
+                }
+            }
+
+            let target_fingerprint = target.fingerprint(graph_version, &checkpoint.id)?;
+            let attempt = latest_tester_attempt_for_target_tx(
+                &tx,
+                graph_version,
+                &checkpoint.id,
+                &target_fingerprint,
+            )?
+            .with_context(|| {
+                format!(
+                    "milestone checkpoint {} requires a satisfied Tester attempt",
+                    checkpoint.id
+                )
+            })?;
+            attempt.validate_against_checkpoint(&checkpoint)?;
+            validate_tester_target_tx(&tx, graph_version, &attempt.target)?;
+            if !tester_attempt_satisfied(&attempt) {
+                bail!(
+                    "milestone checkpoint {} latest exact-target attempt is not satisfied",
+                    checkpoint.id
+                );
+            }
+        }
+
         tx.execute(
             r#"
             UPDATE execution_milestones
