@@ -2148,10 +2148,7 @@ impl Registry {
         Ok(())
     }
 
-    pub fn code_cr_review(
-        &self,
-        key: &CodeCrBoundaryKey,
-    ) -> Result<Option<CodeCrReviewRecord>> {
+    pub fn code_cr_review(&self, key: &CodeCrBoundaryKey) -> Result<Option<CodeCrReviewRecord>> {
         let row: Option<(String, String)> = self
             .conn
             .query_row(
