@@ -639,7 +639,13 @@ fn satisfied_milestone_gate_allows_completion_but_not_implicit_next_activation()
         criteria: vec!["All M1 work integrates".into()],
         required_capabilities: vec![],
         experiment_dimensions: vec![],
-        evidence_outputs: vec![],
+        evidence_outputs: vec![EvidenceOutputSpec {
+            id: "m1-pass-observation".into(),
+            mode: EvidenceMode::Verify,
+            description: "Optional milestone integration observation".into(),
+            required: false,
+            evidence_need_id: None,
+        }],
     });
 
     let (_revision, _hash, version) = approve_and_register_graph(&registry, execution_graph);
