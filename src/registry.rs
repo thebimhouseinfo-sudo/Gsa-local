@@ -160,7 +160,7 @@ pub struct TesterResumeState {
     pub stage: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TesterExecutionStepRecord {
     pub execution_id: String,
     pub target_fingerprint: String,
