@@ -2101,6 +2101,13 @@ impl Registry {
                 state_change_set
             );
         }
+        assert_code_change_set_current_tx(
+            &tx,
+            project_root,
+            key.graph_version,
+            &key.jobpack_id,
+            &key.change_set_id,
+        )?;
 
         let existing: Option<(String, String)> = tx
             .query_row(
@@ -3324,6 +3331,31 @@ impl Registry {
         };
         let work = active_work_tx(&tx, graph_version)?
             .context("there is no ACTIVE Job Pack to complete")?;
+        let workflow_state = tx
+            .query_row(
+                r#"
+                SELECT change_set_id, status
+                FROM code_workflow_state
+                WHERE id=1 AND graph_version=?1 AND jobpack_id=?2
+                "#,
+                params![graph_version, work.jobpack_id],
+                |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?
+            .context("Job Pack terminal requires code workflow state")?;
+        let change_set_id = workflow_state
+            .0
+            .context("Job Pack terminal requires exact change set")?;
+        if workflow_state.1 != "REVIEW_PASS" {
+            bail!("Job Pack terminal requires exact REVIEW_PASS");
+        }
+        assert_code_change_set_current_tx(
+            &tx,
+            project_root,
+            graph_version,
+            &work.jobpack_id,
+            &change_set_id,
+        )?;
 
         let cr_work = code_cr_boundary_work_tx(&tx, graph_version)?
             .context("Job Pack is not mature for terminal Local CR")?;
@@ -4150,6 +4182,65 @@ fn build_tester_target_tx(
     let target = TesterTargetBinding { prerequisites };
     target.validate_against_checkpoint(checkpoint)?;
     Ok(Some(target))
+}
+
+fn assert_code_change_set_current_tx(
+    tx: &Transaction<'_>,
+    project_root: &Path,
+    graph_version: i64,
+    jobpack_id: &str,
+    change_set_id: &str,
+) -> Result<()> {
+    let journal_json: Option<String> = tx
+        .query_row(
+            r#"
+            SELECT mutation_journal
+            FROM code_checkpoints
+            WHERE graph_version=?1 AND jobpack_id=?2 AND change_set_id=?3
+            ORDER BY id DESC LIMIT 1
+            "#,
+            params![graph_version, jobpack_id, change_set_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    let journal_json = journal_json.context("code change set has no persisted mutation journal")?;
+    let journal: serde_json::Value = serde_json::from_str(&journal_json)?;
+    let entries = journal
+        .as_array()
+        .context("persisted mutation journal must be an array")?;
+    let canonical_root = project_root.canonicalize()?;
+    for entry in entries {
+        let path = entry
+            .get("path")
+            .and_then(serde_json::Value::as_str)
+            .context("mutation journal entry is missing path")?;
+        let expected = entry
+            .get("after_sha256")
+            .and_then(serde_json::Value::as_str)
+            .context("mutation journal entry is missing after_sha256")?;
+        let candidate = canonical_root.join(path);
+        let canonical = candidate
+            .canonicalize()
+            .with_context(|| format!("reviewed source path no longer exists: {path}"))?;
+        if !canonical.starts_with(&canonical_root) {
+            bail!("reviewed source path escaped project root: {path}");
+        }
+        let bytes = fs::read(&canonical)?;
+        let digest = Sha256::digest(bytes);
+        let observed = digest
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        if observed != expected {
+            bail!(
+                "stale reviewed change set: {} expected {}, current {}",
+                path,
+                expected,
+                observed
+            );
+        }
+    }
+    Ok(())
 }
 
 fn code_cr_boundary_work_tx(
