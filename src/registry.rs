@@ -3306,6 +3306,18 @@ impl Registry {
                     params![project_root, owner, now],
                 )?;
             }
+            Some((existing_owner, _))
+                if existing_owner.starts_with("pid:") && !owner_process_alive(&existing_owner) =>
+            {
+                tx.execute(
+                    "DELETE FROM execution_lease WHERE project_root = ?1",
+                    params![project_root],
+                )?;
+                tx.execute(
+                    "INSERT INTO execution_lease (project_root, owner, acquired_at) VALUES (?1, ?2, ?3)",
+                    params![project_root, owner, now],
+                )?;
+            }
             Some((existing_owner, acquired_at))
                 if now.saturating_sub(acquired_at) > stale_after.as_secs() as i64 =>
             {
@@ -4689,6 +4701,30 @@ mod tests {
         registry
             .acquire_lease(dir.path(), "owner-b", Duration::from_secs(3600))
             .unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dead_pid_lease_is_reclaimed_immediately_for_crash_resume() {
+        let (dir, registry) = registry();
+        registry
+            .acquire_lease(dir.path(), "pid:999999999", Duration::from_secs(6 * 60 * 60))
+            .unwrap();
+
+        let owner = format!("pid:{}", std::process::id());
+        registry
+            .acquire_lease(dir.path(), &owner, Duration::from_secs(6 * 60 * 60))
+            .unwrap();
+
+        let stored: String = registry
+            .conn
+            .query_row(
+                "SELECT owner FROM execution_lease WHERE project_root=?1",
+                params![canonical_or_original(dir.path()).to_string_lossy().into_owned()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored, owner);
     }
 
     #[cfg(unix)]
