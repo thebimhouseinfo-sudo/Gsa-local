@@ -138,6 +138,15 @@ pub struct CodeWorkflowState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PersistedCodeCheckpoint {
+    pub change_set_id: String,
+    pub summary: String,
+    pub completed_checklist: Vec<ChecklistClaim>,
+    pub goal_recheck: Vec<String>,
+    pub mutation_journal: Vec<MutationRecord>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ResolvedTesterEvidence {
     pub checkpoint_id: String,
     pub output_id: String,
