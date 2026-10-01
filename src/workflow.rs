@@ -266,27 +266,55 @@ impl<'a> PlanningWorkflow<'a> {
             route.cr_result(cr_verdict);
 
             if cr_verdict == ReviewVerdict::Pass {
-                let binding = self
-                    .registry
-                    .approve_current_plan(current.revision, &current.hash)?;
                 self.registry.set_workflow_state(
                     Some(current.revision),
                     route.reviewer_attempts,
                     route.cr_attempts,
                     "JOB_BUILDER",
                 )?;
-                let graph = self
+                match self
                     .invoke_job_builder(requirement, &current, &project_context)
-                    .await?;
-                let graph_version = self.registry.register_execution_graph(
-                    binding.revision,
-                    &binding.hash,
-                    &graph,
-                )?;
-                return Ok(PlanningOutcome::Registered {
-                    plan: binding,
-                    graph_version,
-                });
+                    .await?
+                {
+                    JobBuilderOutcome::Ready(graph) => {
+                        let binding = self
+                            .registry
+                            .approve_current_plan(current.revision, &current.hash)?;
+                        let graph_version = self.registry.register_execution_graph(
+                            binding.revision,
+                            &binding.hash,
+                            &graph,
+                        )?;
+                        return Ok(PlanningOutcome::Registered {
+                            plan: binding,
+                            graph_version,
+                        });
+                    }
+                    JobBuilderOutcome::PlanGap(findings) => {
+                        self.registry.set_workflow_state(
+                            Some(current.revision),
+                            route.reviewer_attempts,
+                            route.cr_attempts,
+                            "PLAN_GAP",
+                        )?;
+                        let revised = self
+                            .invoke_plan_agent(
+                                AgentId::Planner,
+                                requirement,
+                                Some(&current),
+                                &findings,
+                                &project_context,
+                                "Job Builder found a PLAN_GAP in the approved plan. Revise the plan to resolve only these decomposition gaps without inventing missing evidence. Produce a new complete plan revision.",
+                            )
+                            .await?;
+                        if revised.hash()? == current.hash {
+                            return self.pause(&route, Some(current.revision));
+                        }
+                        current = self.registry.persist_plan_revision(&revised)?;
+                        route = PlanningRoute::new(self.max_attempts);
+                        continue;
+                    }
+                }
             }
 
             if route.cr_attempts >= route.max_attempts {
@@ -422,7 +450,7 @@ impl<'a> PlanningWorkflow<'a> {
         requirement: &str,
         current: &PlanRevision,
         project_context: &ProjectContext,
-    ) -> Result<ExecutionGraph> {
+    ) -> Result<JobBuilderOutcome> {
         let packet = json!({
             "original_requirement": requirement,
             "project_context": project_context,
@@ -452,16 +480,13 @@ impl<'a> PlanningWorkflow<'a> {
                     .graph
                     .context("Job Builder READY submission is missing graph")?;
                 graph.validate_against_plan(&current.artifact)?;
-                Ok(graph)
+                Ok(JobBuilderOutcome::Ready(graph))
             }
             "PLAN_GAP" => {
                 if submission.gap_findings.is_empty() {
                     bail!("Job Builder PLAN_GAP must include at least one finding");
                 }
-                bail!(
-                    "Job Builder PLAN_GAP: {}",
-                    submission.gap_findings.join("; ")
-                )
+                Ok(JobBuilderOutcome::PlanGap(submission.gap_findings))
             }
             other => bail!("Job Builder returned unsupported status {other}"),
         }
@@ -1096,6 +1121,11 @@ fn should_skip(relative: &Path) -> bool {
         || name == "credentials.json"
         || name == "id_rsa"
         || name == "id_ed25519"
+}
+
+enum JobBuilderOutcome {
+    Ready(ExecutionGraph),
+    PlanGap(Vec<String>),
 }
 
 #[derive(Debug, Deserialize)]
