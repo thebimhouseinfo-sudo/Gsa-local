@@ -2503,7 +2503,12 @@ impl Registry {
             WHERE graph_version=?1 AND checkpoint_id=?2
               AND attempt_id=?3 AND execution_id=?4
             "#,
-            params![graph_version, checkpoint_id, attempt_id, observation.execution_id],
+            params![
+                graph_version,
+                checkpoint_id,
+                attempt_id,
+                observation.execution_id
+            ],
             |row| row.get(0),
         )?;
         let (plan_revision, milestone_id) =
@@ -2569,9 +2574,8 @@ impl Registry {
             ORDER BY created_at ASC, step_id ASC
             "#,
         )?;
-        let rows = statement.query_map(
-            params![graph_version, checkpoint_id, attempt_id],
-            |row| {
+        let rows =
+            statement.query_map(params![graph_version, checkpoint_id, attempt_id], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
@@ -2583,8 +2587,7 @@ impl Registry {
                     row.get::<_, String>(7)?,
                     row.get::<_, Option<String>>(8)?,
                 ))
-            },
-        )?;
+            })?;
 
         let mut records = Vec::new();
         for row in rows {
@@ -3520,7 +3523,9 @@ fn ensure_tester_resume_checkpoint_tx(
         )
         .optional()?;
     let max_sequence: i64 =
-        tx.query_row("SELECT COALESCE(MAX(sequence),0) FROM events", [], |row| row.get(0))?;
+        tx.query_row("SELECT COALESCE(MAX(sequence),0) FROM events", [], |row| {
+            row.get(0)
+        })?;
 
     if let Some((sequence, stage)) = current {
         if sequence == max_sequence {
