@@ -5,7 +5,10 @@ use crate::{
     harness::{AgentId, HarnessRegistry},
     ollama::{ChatMessage, OllamaClient, ToolCall, ToolDefinition},
     plan::{PlanArtifact, PlanRevision},
-    registry::{ChecklistClaim, CodeTodoState, PlanBinding, Registry, ReviewActor, ReviewVerdict},
+    registry::{
+        ChecklistClaim, CodeCrBoundaryWork, CodeTodoState, PlanBinding, Registry, ReviewActor,
+        ReviewVerdict,
+    },
     session::Session,
     tools::ProjectToolRuntime,
 };
@@ -42,6 +45,18 @@ struct CodeCheckpointSubmission {
 struct CodeReviewDecision {
     verdict: String,
     findings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct CodeCrDecision {
+    verdict: String,
+    findings: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CodeCrOutcome {
+    Pass,
+    Revise { findings: Vec<String> },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -590,6 +605,45 @@ impl<'a> CodingWorkflow<'a> {
         repair_context: Option<&serde_json::Value>,
         tool_runtime: &mut ProjectToolRuntime,
     ) -> Result<CodingOutcome> {
+        self.run_with_entry(
+            AgentId::Coder,
+            requirement,
+            active_work,
+            &[],
+            repair_context,
+            tool_runtime,
+        )
+        .await
+    }
+
+    pub async fn run_repair(
+        &self,
+        requirement: &str,
+        active_work: &ActiveWork,
+        findings: &[String],
+        repair_context: Option<&serde_json::Value>,
+        tool_runtime: &mut ProjectToolRuntime,
+    ) -> Result<CodingOutcome> {
+        self.run_with_entry(
+            AgentId::InternalFix,
+            requirement,
+            active_work,
+            findings,
+            repair_context,
+            tool_runtime,
+        )
+        .await
+    }
+
+    async fn run_with_entry(
+        &self,
+        entry_agent: AgentId,
+        requirement: &str,
+        active_work: &ActiveWork,
+        initial_findings: &[String],
+        repair_context: Option<&serde_json::Value>,
+        tool_runtime: &mut ProjectToolRuntime,
+    ) -> Result<CodingOutcome> {
         self.registry.begin_code_workflow(
             self.project_root,
             self.lease_owner,
@@ -605,11 +659,11 @@ impl<'a> CodingWorkflow<'a> {
             .jobpack_code_tasks(active_work.graph_version, &active_work.jobpack_id)?;
         let mut checkpoint = self
             .invoke_code_agent(
-                AgentId::Coder,
+                entry_agent,
                 requirement,
                 active_work,
                 &tasks,
-                &[],
+                initial_findings,
                 None,
                 repair_context,
                 tool_runtime,
@@ -1175,6 +1229,153 @@ where
         .with_context(|| format!("invalid arguments for tool {name}"))
 }
 
+pub struct CodeCrWorkflow<'a> {
+    ollama: &'a OllamaClient,
+    harnesses: &'a HarnessRegistry,
+    registry: &'a Registry,
+    config: &'a AppConfig,
+    session: &'a Session,
+    project_root: &'a Path,
+    lease_owner: &'a str,
+}
+
+impl<'a> CodeCrWorkflow<'a> {
+    pub fn new(
+        ollama: &'a OllamaClient,
+        harnesses: &'a HarnessRegistry,
+        registry: &'a Registry,
+        config: &'a AppConfig,
+        session: &'a Session,
+        project_root: &'a Path,
+        lease_owner: &'a str,
+    ) -> Self {
+        Self {
+            ollama,
+            harnesses,
+            registry,
+            config,
+            session,
+            project_root,
+            lease_owner,
+        }
+    }
+
+    pub async fn run(
+        &self,
+        requirement: &str,
+        active_work: &ActiveWork,
+        cr_work: &CodeCrBoundaryWork,
+        tool_runtime: &mut ProjectToolRuntime,
+    ) -> Result<CodeCrOutcome> {
+        if let Some(existing) = &cr_work.existing_review {
+            return match existing.verdict.as_str() {
+                "PASS" => Ok(CodeCrOutcome::Pass),
+                "REVISE" => Ok(CodeCrOutcome::Revise {
+                    findings: existing.findings.clone(),
+                }),
+                other => bail!("unsupported persisted code CR verdict {other}"),
+            };
+        }
+
+        let verification = self
+            .registry
+            .verification_run_evidence(cr_work.verification_run_id)?
+            .context("code CR boundary references missing verification evidence")?;
+        let mut tester_attempts = Vec::new();
+        for evidence in &cr_work.tester_evidence {
+            let attempt = self
+                .registry
+                .tester_attempt_evidence(
+                    cr_work.key.graph_version,
+                    &evidence.checkpoint_id,
+                    &evidence.attempt_id,
+                )?
+                .context("code CR boundary references missing Tester attempt")?;
+            tester_attempts.push(attempt);
+        }
+
+        let model = if let Some(model) = self.session.resolved_model(self.config, AgentId::LocalCr) {
+            model.to_owned()
+        } else {
+            self.ollama
+                .list_models()
+                .await?
+                .into_iter()
+                .next()
+                .context("no Ollama model is configured or installed")?
+        };
+        let mut system = self.harnesses.compose(AgentId::LocalCr)?;
+        system.push_str(&format!(
+            "\n\nPROJECT ROOT: {}\nThis is a fresh read-only code boundary review. Inspect live source with read tools as needed. Do not repair source. Submit exactly one code CR verdict bound to the supplied boundary key.",
+            self.project_root.display()
+        ));
+        let packet = json!({
+            "original_instruction": requirement,
+            "active_work": active_work_packet(active_work),
+            "boundary": cr_work,
+            "verification_evidence": verification,
+            "tester_attempts": tester_attempts,
+            "instruction": "Independently review whether this exact mature boundary is acceptable. Return PASS or REVISE with actionable findings. Do not inherit the normal Reviewer conclusion as your own judgment."
+        });
+        let mut messages = vec![
+            ChatMessage::system(system),
+            ChatMessage::user(packet.to_string()),
+        ];
+        let mut definitions = tool_runtime.tool_definitions(AgentId::LocalCr);
+        definitions.push(code_cr_review_tool());
+
+        for round in 0..8usize {
+            let response = self
+                .ollama
+                .chat_stream_with_tools(&model, &messages, &definitions, |_| {})
+                .await?;
+            let calls = response.tool_calls.clone();
+            messages.push(response);
+            if calls.is_empty() {
+                bail!("Local CR stopped without submit_code_cr_review");
+            }
+            if calls.iter().any(|call| call.function.name == "submit_code_cr_review") {
+                if calls.len() != 1 || calls[0].function.name != "submit_code_cr_review" {
+                    bail!("submit_code_cr_review must be the only tool call in its response");
+                }
+                let decision: CodeCrDecision =
+                    serde_json::from_value(calls[0].function.arguments.clone())
+                        .context("invalid submit_code_cr_review arguments")?;
+                let verdict = match decision.verdict.as_str() {
+                    "PASS" => ReviewVerdict::Pass,
+                    "REVISE" => ReviewVerdict::Revise,
+                    other => bail!("Local CR returned unsupported code verdict {other}"),
+                };
+                self.registry.record_code_cr_review(
+                    self.project_root,
+                    self.lease_owner,
+                    &cr_work.key,
+                    verdict,
+                    &decision.findings,
+                )?;
+                return if verdict == ReviewVerdict::Pass {
+                    Ok(CodeCrOutcome::Pass)
+                } else {
+                    Ok(CodeCrOutcome::Revise {
+                        findings: decision.findings,
+                    })
+                };
+            }
+            if round + 1 >= 8 {
+                bail!("Local CR exceeded code review tool rounds");
+            }
+            for call in calls {
+                messages.push(execute_project_tool_message(
+                    AgentId::LocalCr,
+                    tool_runtime,
+                    &call,
+                ));
+            }
+        }
+        unreachable!("bounded code CR tool loop must return or fail")
+    }
+}
+
 fn plan_tool() -> ToolDefinition {
     ToolDefinition::function(
         "submit_plan",
@@ -1286,6 +1487,21 @@ fn code_checkpoint_tool() -> ToolDefinition {
                     "type": "array",
                     "items": {"type": "string"}
                 }
+            }
+        }),
+    )
+}
+
+fn code_cr_review_tool() -> ToolDefinition {
+    ToolDefinition::function(
+        "submit_code_cr_review",
+        "Submit the read-only Local CR verdict for one exact mature code boundary.",
+        json!({
+            "type": "object",
+            "required": ["verdict", "findings"],
+            "properties": {
+                "verdict": {"type": "string", "enum": ["PASS", "REVISE"]},
+                "findings": {"type": "array", "items": {"type": "string"}}
             }
         }),
     )
