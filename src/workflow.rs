@@ -131,6 +131,7 @@ impl PlanningRoute {
 struct ProjectContext {
     paths: Vec<String>,
     text_files: Vec<ProjectContextFile>,
+    tester_evidence: Vec<crate::registry::ResolvedTesterEvidence>,
     truncated: bool,
 }
 
@@ -180,7 +181,8 @@ impl<'a> PlanningWorkflow<'a> {
     pub async fn run(&self, requirement: &str) -> Result<PlanningOutcome> {
         self.registry.begin_plan_workflow()?;
         let mut route = PlanningRoute::new(self.max_attempts);
-        let project_context = build_project_context(self.project_root)?;
+        let mut project_context = build_project_context(self.project_root)?;
+        project_context.tester_evidence = self.registry.current_tester_evidence_catalog()?;
 
         let artifact = self
             .invoke_plan_agent(
@@ -1090,6 +1092,7 @@ fn build_project_context(root: &Path) -> Result<ProjectContext> {
     Ok(ProjectContext {
         paths,
         text_files,
+        tester_evidence: vec![],
         truncated,
     })
 }
