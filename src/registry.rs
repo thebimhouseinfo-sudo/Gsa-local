@@ -4624,6 +4624,20 @@ fn resolve_required_tester_evidence_tx(
             context.change_set_id = target.change_set_id.clone();
             context.product_revision = target.target_revision.clone();
         }
+        if let Some(sample) = attempt
+            .experiment
+            .as_ref()
+            .and_then(|experiment| experiment.samples.last())
+        {
+            if context.product_revision.is_none() {
+                context.product_revision = sample.target_revision.clone();
+            }
+            if context.change_set_id.is_none() {
+                context.change_set_id = sample.change_set_id.clone();
+            }
+            context.runtime_identity = sample.runtime_identity.clone();
+            context.capability_fingerprint = sample.capability_fingerprint.clone();
+        }
         match record.applicability.evaluate(&context)? {
             ApplicabilityDecision::Compatible => {}
             ApplicabilityDecision::Invalidated | ApplicabilityDecision::RevalidationRequired => {
