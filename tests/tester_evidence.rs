@@ -7,7 +7,7 @@ use gsa_local::{
     },
     harness::AgentId,
     plan::{EvidenceMode, EvidenceNeed, PlanArtifact},
-    registry::{Registry, ReviewActor, ReviewVerdict},
+    registry::{ChecklistClaim, Registry, ReviewActor, ReviewVerdict},
     tester_evidence::{
         AdapterObservationField, ApplicabilityContext, ApplicabilityDecision, ApplicabilityMatcher,
         EvidenceApplicability, EvidenceProvenance, ExperimentContext, ExperimentObservation,
@@ -174,7 +174,10 @@ fn setup() -> (tempfile::TempDir, Registry, i64, i64) {
             "JP1",
             "change-1",
             "reviewed evidence target",
-            &[],
+            &[ChecklistClaim {
+                todo_id: "T1".into(),
+                position: 1,
+            }],
             &["target ready".into()],
             &json!([{
                 "path":"src/session.rs",
@@ -1194,6 +1197,11 @@ fn downstream_active_work_receives_only_resolved_observed_tester_evidence() {
     assert_eq!(catalog[0].value, ObservedValue::Text("runtime-1".into()));
 
     let controller = MilestoneController::new(&registry, dir.path(), "owner-a");
+    let cr = registry.resolve_code_cr_boundary().unwrap().unwrap();
+    assert!(cr.terminal);
+    registry
+        .record_code_cr_review(dir.path(), "owner-a", &cr.key, ReviewVerdict::Pass, &[])
+        .unwrap();
     let next = controller.mark_active_jobpack_done().unwrap().unwrap();
     assert_eq!(next.jobpack_id, "JP2");
     assert_eq!(next.tester_evidence.len(), 1);
@@ -1210,8 +1218,7 @@ fn required_tester_evidence_fails_closed_when_missing() {
     let (dir, registry, _version, _verification_run_id) = setup();
     let controller = MilestoneController::new(&registry, dir.path(), "owner-a");
     let error = controller.mark_active_jobpack_done().unwrap_err();
-    assert!(format!("{error:#}").contains("PLAN_GAP"));
-    assert!(format!("{error:#}").contains("runtime-id-observation"));
+    assert!(format!("{error:#}").contains("not mature for terminal Local CR"));
 }
 
 #[test]
@@ -1245,6 +1252,5 @@ fn observed_output_from_unsuccessful_mode_cannot_satisfy_required_consumer_evide
     let controller = MilestoneController::new(&registry, dir.path(), "owner-a");
     let error = controller.mark_active_jobpack_done().unwrap_err();
     let message = format!("{error:#}");
-    assert!(message.contains("PLAN_GAP"));
-    assert!(message.contains("unsuccessful"));
+    assert!(message.contains("not mature for terminal Local CR"));
 }
