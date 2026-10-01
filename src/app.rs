@@ -250,9 +250,7 @@ Do not edit Tester-owned artifacts as the product fix. Keep the repair within th
                         CodingOutcome::ReviewPass { change_set_id } => {
                             println!(
                                 "TEST_REPAIR_REVIEW_PASS checkpoint={} jobpack={} change_set={}",
-                                repair.checkpoint.id,
-                                repair.active_work.jobpack_id,
-                                change_set_id
+                                repair.checkpoint.id, repair.active_work.jobpack_id, change_set_id
                             );
                             let changed_paths = self
                                 .tool_runtime
@@ -317,9 +315,7 @@ Do not edit Tester-owned artifacts as the product fix. Keep the repair within th
                     let requirement = if let Some(retest) = &checkpoint_work.retest_context {
                         println!(
                             "TEST_CHECKPOINT_RETEST_DUE checkpoint={} attempt={} prior_attempt={}",
-                            checkpoint_work.checkpoint.id,
-                            attempt_id,
-                            retest.failed_attempt_id
+                            checkpoint_work.checkpoint.id, attempt_id, retest.failed_attempt_id
                         );
                         format!(
                             "{} RETEST_CONTEXT: rerun the relevant failing and regression cases from prior attempt {} on failed target {}. Prior observed failure: {}",
