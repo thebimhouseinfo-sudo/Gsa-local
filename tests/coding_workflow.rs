@@ -2,7 +2,7 @@ use gsa_local::{
     controller::MilestoneController,
     execution_graph::{ExecutionGraph, JobPackSpec, MilestoneSpec, TodoSpec},
     plan::PlanArtifact,
-    registry::{CodeCrBoundaryKey, ChecklistClaim, Registry, ReviewActor, ReviewVerdict},
+    registry::{ChecklistClaim, CodeCrBoundaryKey, Registry, ReviewActor, ReviewVerdict},
 };
 use serde_json::json;
 use std::time::Duration;
@@ -601,7 +601,6 @@ fn new_code_workflow_invalidates_prior_checklist_completion() {
         Some("ACTIVE")
     );
 }
-
 
 #[test]
 fn exact_code_cr_boundary_result_is_idempotent_and_conflict_safe() {
