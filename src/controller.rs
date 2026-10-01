@@ -1,8 +1,8 @@
 use crate::{
     execution_graph::{PrerequisiteState, TestCheckpointSpec},
     registry::{
-        ActiveWorkRecord, Registry, ResolvedTesterEvidence, TesterCheckpointDisposition,
-        TesterCheckpointWorkRecord, TesterRetestContext,
+        ActiveWorkRecord, CodeCrBoundaryWork, Registry, ResolvedTesterEvidence,
+        TesterCheckpointDisposition, TesterCheckpointWorkRecord, TesterRetestContext,
     },
     tester_evidence::TesterTargetBinding,
 };
@@ -33,6 +33,7 @@ pub enum NextWork {
     Coder(ActiveWork),
     Tester(TesterCheckpointWorkRecord),
     Repair(TesterRepairWork),
+    Cr(CodeCrBoundaryWork),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,6 +137,17 @@ impl<'a> MilestoneController<'a> {
             }
             return Ok(Some(NextWork::Tester(checkpoint)));
         }
+
+        if let Some(cr_work) = self.registry.resolve_code_cr_boundary()? {
+            let already_passed = cr_work
+                .existing_review
+                .as_ref()
+                .is_some_and(|review| review.verdict == "PASS");
+            if !already_passed || cr_work.terminal {
+                return Ok(Some(NextWork::Cr(cr_work)));
+            }
+        }
+
         self.resolve_or_activate()
             .map(|work| work.map(NextWork::Coder))
     }
