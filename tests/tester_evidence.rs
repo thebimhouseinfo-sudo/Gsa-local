@@ -108,6 +108,7 @@ fn graph() -> ExecutionGraph {
                 state: PrerequisiteState::ReviewPass,
             }],
             before_jobpack_id: None,
+            cr_review_boundary: false,
             evidence_need_ids: vec!["runtime-id".into()],
             modes: vec![EvidenceMode::Probe],
             goal: "Observe runtime identity".into(),
