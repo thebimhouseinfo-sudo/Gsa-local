@@ -1592,26 +1592,71 @@ impl Registry {
         let (_plan_revision, _milestone_id) =
             assert_active_jobpack_binding_tx(&tx, graph_version, jobpack_id)?;
 
-        tx.execute(
-            r#"
-            UPDATE execution_checklist_items
-            SET checked=0
-            WHERE graph_version=?1
-              AND todo_id IN (
-                  SELECT todo_id FROM execution_todos
-                  WHERE graph_version=?1 AND jobpack_id=?2
-              )
-            "#,
-            params![graph_version, jobpack_id],
-        )?;
-        tx.execute(
-            r#"
-            UPDATE execution_todos
-            SET status='PENDING'
-            WHERE graph_version=?1 AND jobpack_id=?2
-            "#,
-            params![graph_version, jobpack_id],
-        )?;
+        let preserve_reviewed_progress = {
+            let state: Option<(Option<String>, String)> = tx
+                .query_row(
+                    r#"
+                    SELECT change_set_id, status
+                    FROM code_workflow_state
+                    WHERE id=1 AND graph_version=?1 AND jobpack_id=?2
+                    "#,
+                    params![graph_version, jobpack_id],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )
+                .optional()?;
+            if let Some((Some(change_set_id), status)) = state {
+                if status == "REVIEW_PASS" {
+                    if let Some(cr_work) = code_cr_boundary_work_tx(&tx, graph_version)? {
+                        let exact_pass = !cr_work.terminal
+                            && cr_work.key.jobpack_id == jobpack_id
+                            && cr_work.key.change_set_id == change_set_id
+                            && cr_work
+                                .existing_review
+                                .as_ref()
+                                .is_some_and(|review| review.verdict == "PASS");
+                        if exact_pass {
+                            assert_code_change_set_current_tx(
+                                &tx,
+                                project_root,
+                                graph_version,
+                                jobpack_id,
+                                &change_set_id,
+                            )?;
+                        }
+                        exact_pass
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        };
+
+        if !preserve_reviewed_progress {
+            tx.execute(
+                r#"
+                UPDATE execution_checklist_items
+                SET checked=0
+                WHERE graph_version=?1
+                  AND todo_id IN (
+                      SELECT todo_id FROM execution_todos
+                      WHERE graph_version=?1 AND jobpack_id=?2
+                  )
+                "#,
+                params![graph_version, jobpack_id],
+            )?;
+            tx.execute(
+                r#"
+                UPDATE execution_todos
+                SET status='PENDING'
+                WHERE graph_version=?1 AND jobpack_id=?2
+                "#,
+                params![graph_version, jobpack_id],
+            )?;
+        }
 
         tx.execute(
             r#"
@@ -1631,7 +1676,11 @@ impl Registry {
         )?;
         append_event_tx(
             &tx,
-            "CODE_WORKFLOW_STARTED",
+            if preserve_reviewed_progress {
+                "CODE_WORKFLOW_CONTINUED_AFTER_CR"
+            } else {
+                "CODE_WORKFLOW_STARTED"
+            },
             &serde_json::json!({
                 "graph_version": graph_version,
                 "jobpack": jobpack_id
