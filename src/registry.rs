@@ -4530,7 +4530,7 @@ fn active_work_tx(tx: &Transaction<'_>, graph_version: i64) -> Result<Option<Act
         milestone_id: row.3,
         milestone_title: row.4,
         milestone_status: row.5,
-        jobpack_id: row.6,
+        jobpack_id: row.6.clone(),
         jobpack_title: row.7,
         jobpack_status: row.8,
         goal: row.9,
@@ -4556,7 +4556,7 @@ fn resolve_required_tester_evidence_tx(
             ORDER BY checkpoint_id, output_id
             "#,
         )?;
-        statement
+        let rows = statement
             .query_map(params![graph_version, jobpack_id], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
@@ -4564,7 +4564,8 @@ fn resolve_required_tester_evidence_tx(
                     row.get::<_, i64>(2)? != 0,
                 ))
             })?
-            .collect::<std::result::Result<Vec<_>, _>>()?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        rows
     };
 
     let mut resolved = Vec::new();
