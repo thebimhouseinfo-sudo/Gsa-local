@@ -1840,10 +1840,9 @@ impl Registry {
                     .and_then(|target| target.change_set_id.clone()),
                 checkpoint_id: Some(checkpoint.checkpoint.id.clone()),
                 attempt_id: checkpoint.next_attempt_id.clone(),
-                reason: checkpoint
-                    .reason
-                    .clone()
-                    .unwrap_or_else(|| format!("Tester checkpoint {} is due", checkpoint.checkpoint.id)),
+                reason: checkpoint.reason.clone().unwrap_or_else(|| {
+                    format!("Tester checkpoint {} is due", checkpoint.checkpoint.id)
+                }),
             });
         }
 
@@ -1872,7 +1871,9 @@ impl Registry {
                                 change_set_id: Some(change_set_id.to_owned()),
                                 checkpoint_id: None,
                                 attempt_id: None,
-                                reason: format!("source diverged from durable change set: {error:#}"),
+                                reason: format!(
+                                    "source diverged from durable change set: {error:#}"
+                                ),
                             });
                         }
                     }
