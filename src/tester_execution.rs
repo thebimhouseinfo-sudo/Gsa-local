@@ -717,6 +717,22 @@ impl<'a> TesterWorkflow<'a> {
         )?;
         let resumed_observations = execution.resume_prepared()?;
         let persisted_execution_steps = execution.persisted_steps();
+        let prior_failed_execution_steps = if let Some(retest) = retest_context {
+            let steps = self.registry.tester_execution_steps(
+                graph_version,
+                &checkpoint.id,
+                &retest.failed_attempt_id,
+            )?;
+            if steps
+                .iter()
+                .any(|step| step.target_fingerprint != retest.failed_target_fingerprint)
+            {
+                bail!("retest context does not match prior failed execution target");
+            }
+            steps
+        } else {
+            Vec::new()
+        };
         let resume_state = self.registry.latest_tester_resume_state()?;
 
         let model = self.model_for(AgentId::Tester).await?;
@@ -733,10 +749,11 @@ impl<'a> TesterWorkflow<'a> {
             "target": target,
             "evidence_needs": evidence_needs,
             "retest_context": retest_context,
+            "prior_failed_execution_steps": prior_failed_execution_steps,
             "resume_state": resume_state,
             "persisted_execution_steps": persisted_execution_steps,
             "resumed_execution_observations": resumed_observations,
-            "instruction": "Independently ground on the checkpoint contract and persisted resume state. If retest_context is present, explicitly rerun the relevant previously failing case(s) plus the checkpoint regression surface against the new exact target; do not treat the prior quality verdict as applicable to the new target. Reuse completed persisted execution evidence only when it belongs to the current exact attempt/target, do not duplicate completed steps, plan only remaining tests/experiments, author Tester-owned artifacts if needed, execute through fixed adapters, analyze/adapt within checkpoint scope, then submit a structured report. Do not invent runtime facts or thresholds."
+            "instruction": "Independently ground on the checkpoint contract and persisted resume state. If retest_context is present, use prior_failed_execution_steps only as context for the observed prior failure, explicitly reconstruct/rerun the relevant failing case(s) plus the checkpoint regression surface against the new exact target, and do not treat any prior verdict/observation as quality evidence for the new target. Reuse completed persisted execution evidence only when it belongs to the current exact attempt/target, do not duplicate completed steps, plan only remaining tests/experiments, author Tester-owned artifacts if needed, execute through fixed adapters, analyze/adapt within checkpoint scope, then submit a structured report. Do not invent runtime facts or thresholds."
         });
         let mut messages = vec![
             ChatMessage::system(system),
