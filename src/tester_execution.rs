@@ -334,6 +334,10 @@ impl<'a> TesterExecutionRuntime<'a> {
         &self.workspace
     }
 
+    pub fn persisted_steps(&self) -> Vec<TesterExecutionStepRecord> {
+        self.steps.values().cloned().collect()
+    }
+
     pub fn resume_prepared(&mut self) -> Result<Vec<TesterExecutionObservation>> {
         let pending = self
             .steps
@@ -711,6 +715,7 @@ impl<'a> TesterWorkflow<'a> {
             target.clone(),
         )?;
         let resumed_observations = execution.resume_prepared()?;
+        let persisted_execution_steps = execution.persisted_steps();
         let resume_state = self.registry.latest_tester_resume_state()?;
 
         let model = self.model_for(AgentId::Tester).await?;
@@ -727,8 +732,9 @@ impl<'a> TesterWorkflow<'a> {
             "target": target,
             "evidence_needs": evidence_needs,
             "resume_state": resume_state,
+            "persisted_execution_steps": persisted_execution_steps,
             "resumed_execution_observations": resumed_observations,
-            "instruction": "Independently ground on the checkpoint contract and persisted resume state. Reuse completed execution evidence, do not duplicate completed steps, plan any remaining tests/experiments, author Tester-owned artifacts if needed, execute through fixed adapters, analyze/adapt within checkpoint scope, then submit a structured report. Do not invent runtime facts or thresholds."
+            "instruction": "Independently ground on the checkpoint contract and persisted resume state. Reuse completed persisted execution evidence, do not duplicate completed steps, plan only remaining tests/experiments, author Tester-owned artifacts if needed, execute through fixed adapters, analyze/adapt within checkpoint scope, then submit a structured report. Do not invent runtime facts or thresholds."
         });
         let mut messages = vec![
             ChatMessage::system(system),
