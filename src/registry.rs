@@ -1378,6 +1378,72 @@ impl Registry {
         Ok(requirements)
     }
 
+    pub fn current_tester_evidence_catalog(&self) -> Result<Vec<ResolvedTesterEvidence>> {
+        let tx = self.conn.unchecked_transaction()?;
+        let Some((graph_version, _, _)) = current_graph_binding_tx(&tx)? else {
+            tx.commit()?;
+            return Ok(vec![]);
+        };
+        let rows = {
+            let mut statement = tx.prepare(
+                r#"
+                SELECT r.checkpoint_id, r.output_id, r.attempt_id, r.record_json
+                FROM tester_evidence_records r
+                JOIN (
+                    SELECT checkpoint_id, output_id, MAX(id) AS latest_id
+                    FROM tester_evidence_records
+                    WHERE graph_version=?1
+                    GROUP BY checkpoint_id, output_id
+                ) latest ON latest.latest_id=r.id
+                ORDER BY r.checkpoint_id, r.output_id
+                "#,
+            )?;
+            let values = statement
+                .query_map(params![graph_version], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            values
+        };
+
+        let mut catalog = Vec::new();
+        for (checkpoint_id, output_id, attempt_id, record_json) in rows {
+            let record: TesterEvidenceOutputRecord = serde_json::from_str(&record_json)?;
+            if record.provenance != EvidenceProvenance::Observed {
+                continue;
+            }
+            let Some(attempt) =
+                tester_attempt_evidence_tx(&tx, graph_version, &checkpoint_id, &attempt_id)?
+            else {
+                continue;
+            };
+            if validate_tester_target_tx(&tx, graph_version, &attempt.target).is_err() {
+                continue;
+            }
+            let context = applicability_context_for_attempt(&attempt);
+            if record.applicability.evaluate(&context)? != ApplicabilityDecision::Compatible {
+                continue;
+            }
+            let Some(value) = record.value.clone() else {
+                continue;
+            };
+            catalog.push(ResolvedTesterEvidence {
+                checkpoint_id,
+                output_id,
+                attempt_id,
+                value,
+                evidence_refs: record.evidence_refs.clone(),
+            });
+        }
+        tx.commit()?;
+        Ok(catalog)
+    }
+
     pub fn execution_jobpack_contract(
         &self,
         version: i64,
@@ -4558,6 +4624,30 @@ fn active_work_tx(tx: &Transaction<'_>, graph_version: i64) -> Result<Option<Act
     }))
 }
 
+fn applicability_context_for_attempt(attempt: &TesterAttemptEvidence) -> ApplicabilityContext {
+    let mut context = ApplicabilityContext::default();
+    if attempt.target.prerequisites.len() == 1 {
+        let target = &attempt.target.prerequisites[0];
+        context.change_set_id = target.change_set_id.clone();
+        context.product_revision = target.target_revision.clone();
+    }
+    if let Some(sample) = attempt
+        .experiment
+        .as_ref()
+        .and_then(|experiment| experiment.samples.last())
+    {
+        if context.product_revision.is_none() {
+            context.product_revision = sample.target_revision.clone();
+        }
+        if context.change_set_id.is_none() {
+            context.change_set_id = sample.change_set_id.clone();
+        }
+        context.runtime_identity = sample.runtime_identity.clone();
+        context.capability_fingerprint = sample.capability_fingerprint.clone();
+    }
+    context
+}
+
 fn resolve_required_tester_evidence_tx(
     tx: &Transaction<'_>,
     graph_version: i64,
@@ -4635,26 +4725,7 @@ fn resolve_required_tester_evidence_tx(
             .context("Tester evidence output references a missing attempt")?;
         validate_tester_target_tx(tx, graph_version, &attempt.target)?;
 
-        let mut context = ApplicabilityContext::default();
-        if attempt.target.prerequisites.len() == 1 {
-            let target = &attempt.target.prerequisites[0];
-            context.change_set_id = target.change_set_id.clone();
-            context.product_revision = target.target_revision.clone();
-        }
-        if let Some(sample) = attempt
-            .experiment
-            .as_ref()
-            .and_then(|experiment| experiment.samples.last())
-        {
-            if context.product_revision.is_none() {
-                context.product_revision = sample.target_revision.clone();
-            }
-            if context.change_set_id.is_none() {
-                context.change_set_id = sample.change_set_id.clone();
-            }
-            context.runtime_identity = sample.runtime_identity.clone();
-            context.capability_fingerprint = sample.capability_fingerprint.clone();
-        }
+        let context = applicability_context_for_attempt(&attempt);
         match record.applicability.evaluate(&context)? {
             ApplicabilityDecision::Compatible => {}
             ApplicabilityDecision::Invalidated | ApplicabilityDecision::RevalidationRequired => {
