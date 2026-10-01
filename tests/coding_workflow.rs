@@ -3,6 +3,10 @@ use gsa_local::{
     execution_graph::{ExecutionGraph, JobPackSpec, MilestoneSpec, TodoSpec},
     plan::PlanArtifact,
     registry::{ChecklistClaim, CodeCrBoundaryKey, Registry, ReviewActor, ReviewVerdict},
+    verification::{
+        CommandEvidence, DiscoveryStatus, VerificationCapability, VerificationCommand,
+        VerificationCommandKind, VerificationEvidence, VerificationProfile,
+    },
 };
 use serde_json::json;
 use std::time::Duration;
@@ -712,4 +716,118 @@ fn code_cr_rejects_stale_change_set_without_exact_reviewer_pass() {
         .record_code_cr_review(dir.path(), "owner-a", &stale, ReviewVerdict::Pass, &[])
         .unwrap_err();
     assert!(format!("{error:#}").contains("exact REVIEW_PASS"));
+}
+
+
+fn phase11_passing_verification() -> VerificationEvidence {
+    VerificationEvidence {
+        profile: VerificationProfile {
+            status: DiscoveryStatus::Applicable,
+            capabilities: vec![VerificationCapability::Unit],
+            commands: vec![VerificationCommand {
+                id: "cargo-test".into(),
+                kind: VerificationCommandKind::Test,
+                capability: VerificationCapability::Unit,
+                argv: vec!["cargo".into(), "test".into()],
+                source_paths: vec!["Cargo.toml".into()],
+                config_hash: "phase11-config".into(),
+            }],
+            reason: None,
+        },
+        commands: vec![CommandEvidence {
+            command_id: "cargo-test".into(),
+            config_hash: "phase11-config".into(),
+            argv: vec!["cargo".into(), "test".into()],
+            exit_code: Some(0),
+            duration_ms: 1,
+            timed_out: false,
+            blocked_reason: None,
+            stdout: "ok".into(),
+            stderr: String::new(),
+        }],
+        test_surface_changed: false,
+    }
+}
+
+#[test]
+fn phase11_terminal_gate_requires_exact_verification_and_local_cr_pass() {
+    let (dir, registry, version) = setup();
+    registry
+        .begin_code_workflow(dir.path(), "owner-a", version, "JP1")
+        .unwrap();
+    registry
+        .record_code_checkpoint(
+            dir.path(),
+            "owner-a",
+            version,
+            "JP1",
+            "change-terminal",
+            "terminal implementation",
+            &[
+                ChecklistClaim {
+                    todo_id: "T1".into(),
+                    position: 1,
+                },
+                ChecklistClaim {
+                    todo_id: "T1".into(),
+                    position: 2,
+                },
+            ],
+            &["terminal goal checked".into()],
+            &journal(),
+            1,
+            0,
+        )
+        .unwrap();
+    registry
+        .record_code_review(
+            dir.path(),
+            "owner-a",
+            version,
+            "JP1",
+            "change-terminal",
+            ReviewVerdict::Pass,
+            &[],
+            1,
+            1,
+        )
+        .unwrap();
+
+    assert!(registry.resolve_code_cr_boundary().unwrap().is_none());
+    let controller = MilestoneController::new(&registry, dir.path(), "owner-a");
+    assert!(controller.mark_active_jobpack_done().is_err());
+
+    registry
+        .record_verification_evidence(
+            dir.path(),
+            "owner-a",
+            version,
+            "JP1",
+            "change-terminal",
+            &phase11_passing_verification(),
+        )
+        .unwrap();
+
+    let cr_work = registry.resolve_code_cr_boundary().unwrap().unwrap();
+    assert!(cr_work.terminal);
+    assert_eq!(cr_work.boundary_ids, vec!["JOBPACK_TERMINAL"]);
+    assert!(cr_work.existing_review.is_none());
+    assert!(controller.mark_active_jobpack_done().is_err());
+
+    registry
+        .record_code_cr_review(
+            dir.path(),
+            "owner-a",
+            &cr_work.key,
+            ReviewVerdict::Pass,
+            &[],
+        )
+        .unwrap();
+
+    let next = controller.mark_active_jobpack_done().unwrap().unwrap();
+    assert_eq!(next.jobpack_id, "JP2");
+    assert_eq!(
+        registry.jobpack_status(version, "JP1").unwrap().as_deref(),
+        Some("DONE")
+    );
 }
