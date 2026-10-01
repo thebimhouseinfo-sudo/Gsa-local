@@ -349,12 +349,7 @@ Do not edit Tester-owned artifacts as the product fix. Use the structured repair
                         cr_work.key.change_set_id
                     );
                     match workflow
-                        .run(
-                            &requirement,
-                            &active_work,
-                            &cr_work,
-                            &mut self.tool_runtime,
-                        )
+                        .run(&requirement, &active_work, &cr_work, &mut self.tool_runtime)
                         .await?
                     {
                         CodeCrOutcome::Pass => {
@@ -365,13 +360,12 @@ Do not edit Tester-owned artifacts as the product fix. Use the structured repair
                                 cr_work.key.change_set_id
                             );
                             if cr_work.terminal {
-                                self.active_work =
-                                    MilestoneController::new(
-                                        &self.registry,
-                                        &self.project_root,
-                                        &self.lease_owner,
-                                    )
-                                    .mark_active_jobpack_done()?;
+                                self.active_work = MilestoneController::new(
+                                    &self.registry,
+                                    &self.project_root,
+                                    &self.lease_owner,
+                                )
+                                .mark_active_jobpack_done()?;
                                 println!(
                                     "JOBPACK_DONE jobpack={} change_set={}",
                                     cr_work.key.jobpack_id, cr_work.key.change_set_id
@@ -389,9 +383,7 @@ Do not edit Tester-owned artifacts as the product fix. Use the structured repair
                             cr_repairs += 1;
                             println!(
                                 "CODE_CR_REVISE jobpack={} boundary={} repair_round={}",
-                                cr_work.key.jobpack_id,
-                                cr_work.key.boundary_id,
-                                cr_repairs
+                                cr_work.key.jobpack_id, cr_work.key.boundary_id, cr_repairs
                             );
                             let repair_context = serde_json::json!({
                                 "cr_boundary": &cr_work,
