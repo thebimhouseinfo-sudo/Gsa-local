@@ -1,4 +1,11 @@
-use crate::registry::{ActiveWorkRecord, Registry, TesterCheckpointWorkRecord};
+use crate::{
+    execution_graph::{PrerequisiteState, TestCheckpointSpec},
+    registry::{
+        ActiveWorkRecord, Registry, TesterCheckpointDisposition, TesterCheckpointWorkRecord,
+        TesterRetestContext,
+    },
+    tester_evidence::TesterTargetBinding,
+};
 use anyhow::Result;
 use std::path::Path;
 
@@ -24,6 +31,15 @@ pub struct ActiveWork {
 pub enum NextWork {
     Coder(ActiveWork),
     Tester(TesterCheckpointWorkRecord),
+    Repair(TesterRepairWork),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TesterRepairWork {
+    pub active_work: ActiveWork,
+    pub checkpoint: TestCheckpointSpec,
+    pub failed_target: TesterTargetBinding,
+    pub retest_context: TesterRetestContext,
 }
 
 impl From<ActiveWorkRecord> for ActiveWork {
@@ -63,10 +79,59 @@ impl<'a> MilestoneController<'a> {
     }
 
     pub fn resolve_next(&self, available_capabilities: &[String]) -> Result<Option<NextWork>> {
-        if let Some(checkpoint) = self
+        if let Some(mut checkpoint) = self
             .registry
             .resolve_tester_checkpoint(available_capabilities)?
         {
+            if checkpoint.disposition == TesterCheckpointDisposition::ProductFailure {
+                let Some(target) = checkpoint.target.clone() else {
+                    checkpoint.disposition = TesterCheckpointDisposition::Blocked;
+                    checkpoint.reason =
+                        Some("PRODUCT_FAILURE checkpoint is missing exact target binding".into());
+                    return Ok(Some(NextWork::Tester(checkpoint)));
+                };
+                let Some(retest_context) = checkpoint.retest_context.clone() else {
+                    checkpoint.disposition = TesterCheckpointDisposition::Blocked;
+                    checkpoint.reason =
+                        Some("PRODUCT_FAILURE checkpoint is missing failed-attempt context".into());
+                    return Ok(Some(NextWork::Tester(checkpoint)));
+                };
+                let repair_targets = target
+                    .prerequisites
+                    .iter()
+                    .filter(|item| item.state == PrerequisiteState::ReviewPass)
+                    .collect::<Vec<_>>();
+                if repair_targets.len() != 1 {
+                    checkpoint.disposition = TesterCheckpointDisposition::Blocked;
+                    checkpoint.reason = Some(format!(
+                        "PRODUCT_FAILURE repair requires exactly one REVIEW_PASS prerequisite; found {}",
+                        repair_targets.len()
+                    ));
+                    return Ok(Some(NextWork::Tester(checkpoint)));
+                }
+
+                let Some(active_work) = self.registry.current_active_work()? else {
+                    checkpoint.disposition = TesterCheckpointDisposition::Blocked;
+                    checkpoint.reason =
+                        Some("PRODUCT_FAILURE repair requires an ACTIVE Job Pack".into());
+                    return Ok(Some(NextWork::Tester(checkpoint)));
+                };
+                if active_work.jobpack_id != repair_targets[0].jobpack_id {
+                    checkpoint.disposition = TesterCheckpointDisposition::Blocked;
+                    checkpoint.reason = Some(format!(
+                        "PRODUCT_FAILURE repair target {} is not the ACTIVE Job Pack {}",
+                        repair_targets[0].jobpack_id, active_work.jobpack_id
+                    ));
+                    return Ok(Some(NextWork::Tester(checkpoint)));
+                }
+
+                return Ok(Some(NextWork::Repair(TesterRepairWork {
+                    active_work: active_work.into(),
+                    checkpoint: checkpoint.checkpoint,
+                    failed_target: target,
+                    retest_context,
+                })));
+            }
             return Ok(Some(NextWork::Tester(checkpoint)));
         }
         self.resolve_or_activate()
