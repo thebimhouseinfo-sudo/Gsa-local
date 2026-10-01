@@ -325,9 +325,7 @@ Do not edit Tester-owned artifacts as the product fix. Use the structured repair
                             .plan_for_current_execution_graph(checkpoint_work.graph_version)?;
                         println!(
                             "TEST_SPEC_GAP checkpoint={} plan_revision={} reason={}",
-                            checkpoint_work.checkpoint.id,
-                            prior_plan.revision,
-                            reason
+                            checkpoint_work.checkpoint.id, prior_plan.revision, reason
                         );
                         let requirement = format!(
                             "Replan the current approved work because Tester found a material SPEC_GAP at declared checkpoint {}. Prior approved goal: {}. Checkpoint goal: {}. Criteria: {}. Observed gap: {}. Preserve valid observed evidence and do not invent missing runtime facts. Produce a new complete plan revision that resolves the gap or routes to Human when the requirement cannot be decided safely.",
