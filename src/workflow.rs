@@ -967,7 +967,8 @@ fn active_work_packet(active_work: &ActiveWork) -> serde_json::Value {
         "required_inputs": &active_work.required_inputs,
         "expected_outputs": &active_work.expected_outputs,
         "acceptance": &active_work.acceptance,
-        "verification_hints": &active_work.verification_hints
+        "verification_hints": &active_work.verification_hints,
+        "tester_evidence": &active_work.tester_evidence
     })
 }
 
