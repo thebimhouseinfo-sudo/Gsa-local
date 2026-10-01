@@ -347,6 +347,7 @@ Do not edit Tester-owned artifacts as the product fix. Keep the repair within th
                             &checkpoint_work.checkpoint,
                             target,
                             attempt_id,
+                            checkpoint_work.retest_context.as_ref(),
                             &mut self.tool_runtime,
                         )
                         .await?;
