@@ -12,7 +12,8 @@ use gsa_local::{
         AdapterObservationField, ApplicabilityContext, ApplicabilityDecision, ApplicabilityMatcher,
         EvidenceApplicability, EvidenceProvenance, ExperimentContext, ExperimentObservation,
         ExperimentSample, ObservedValue, ReplaySafety, RevalidationPolicy, TesterAttemptEvidence,
-        TesterEvidenceOutputRecord, TesterEvidenceRef, TesterModeOutcome, TesterModeResult,
+        TesterClassification, TesterEvidenceOutputRecord, TesterEvidenceRef, TesterModeOutcome,
+        TesterModeResult,
         TesterPrerequisiteTarget, TesterTargetBinding, VerificationObservationField,
     },
     tester_execution::{
@@ -1210,4 +1211,36 @@ fn required_tester_evidence_fails_closed_when_missing() {
     let error = controller.mark_active_jobpack_done().unwrap_err();
     assert!(format!("{error:#}").contains("PLAN_GAP"));
     assert!(format!("{error:#}").contains("runtime-id-observation"));
+}
+
+#[test]
+fn observed_output_from_unsuccessful_mode_cannot_satisfy_required_consumer_evidence() {
+    let (dir, registry, version, verification_run_id) = setup();
+    let due = registry
+        .resolve_tester_checkpoint(&["RUNTIME_PROBE".into()])
+        .unwrap()
+        .unwrap();
+    let artifact = workspace_artifact(&dir, version, due.next_attempt_id.as_deref().unwrap());
+    let mut attempt = attempt(
+        version,
+        due.next_attempt_id.as_deref().unwrap(),
+        "change-1",
+        artifact,
+        verification_run_id,
+    );
+    attempt.mode_results[0].outcome = TesterModeOutcome::Blocked;
+    attempt.mode_results[0].reason = Some("probe did not complete".into());
+    attempt.classifications = vec![TesterClassification::TestFailure];
+
+    registry
+        .record_tester_attempt_evidence(dir.path(), "owner-a", &attempt)
+        .unwrap();
+
+    assert!(registry.current_tester_evidence_catalog().unwrap().is_empty());
+
+    let controller = MilestoneController::new(&registry, dir.path(), "owner-a");
+    let error = controller.mark_active_jobpack_done().unwrap_err();
+    let message = format!("{error:#}");
+    assert!(message.contains("PLAN_GAP"));
+    assert!(message.contains("unsuccessful"));
 }
