@@ -868,36 +868,124 @@ fn latest_checkpoint_tracks_exact_tester_execution_stage() {
 
 #[test]
 fn safe_prepared_execution_replays_same_fence_after_restart() {
-    let (dir, registry, version, verification_run_id) = setup();
-    let artifact = workspace_artifact(&dir, version, "ATT-SAFE-REPLAY");
-    let evidence = attempt(
-        version,
-        "ATT-SAFE-REPLAY",
-        "change-1",
-        artifact,
-        verification_run_id,
-    );
-    let target = evidence.target;
+    for replay_safety in [ReplaySafety::ObserveOnly, ReplaySafety::Idempotent] {
+        let (dir, registry, version, verification_run_id) = setup();
+        let attempt_id = format!("ATT-SAFE-{:?}", replay_safety);
+        let artifact = workspace_artifact(&dir, version, &attempt_id);
+        let evidence = attempt(
+            version,
+            &attempt_id,
+            "change-1",
+            artifact,
+            verification_run_id,
+        );
+        let target = evidence.target;
+        let request = TesterExecutionStepRequest {
+            step_id: "resume-safe".into(),
+            replay_safety,
+            adapter: TesterAdapterRequest::WorkspacePython {
+                script_path: "tests/resume_safe.py".into(),
+                args: vec![],
+            },
+        };
+        let target_fingerprint = target.fingerprint(version, "CP1").unwrap();
+        let fence = request
+            .fence_key(version, "CP1", &attempt_id, &target_fingerprint)
+            .unwrap();
+
+        registry
+            .prepare_tester_execution_step(
+                dir.path(),
+                "owner-a",
+                version,
+                "CP1",
+                &attempt_id,
+                &target,
+                &fence,
+                &request.step_id,
+                request.adapter.adapter_id(),
+                request.replay_safety,
+                &fence,
+                &serde_json::to_value(&request).unwrap(),
+            )
+            .unwrap();
+
+        let mut resumed = TesterExecutionRuntime::new(
+            &registry,
+            dir.path(),
+            "owner-a",
+            version,
+            "CP1",
+            &attempt_id,
+            target.clone(),
+        )
+        .unwrap();
+        let observations = resumed.resume_prepared().unwrap();
+        assert_eq!(observations.len(), 1);
+        assert_eq!(observations[0].execution_id, fence);
+        assert!(!registry
+            .has_unresolved_tester_execution_steps(version, "CP1", &attempt_id)
+            .unwrap());
+
+        let rows = registry
+            .tester_execution_steps(version, "CP1", &attempt_id)
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_ne!(rows[0].status, "PREPARED");
+
+        let mut restarted = TesterExecutionRuntime::new(
+            &registry,
+            dir.path(),
+            "owner-a",
+            version,
+            "CP1",
+            &attempt_id,
+            target,
+        )
+        .unwrap();
+        assert!(restarted.resume_prepared().unwrap().is_empty());
+        assert_eq!(
+            registry
+                .tester_execution_steps(version, "CP1", &attempt_id)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+}
+
+#[test]
+fn rereresolve_preserves_prepared_resume_stage_and_attempt_identity() {
+    let (dir, registry, version, _verification_run_id) = setup();
+    let due = registry
+        .resolve_tester_checkpoint(&["RUNTIME_PROBE".into()])
+        .unwrap()
+        .unwrap();
+    assert_eq!(due.next_attempt_id.as_deref(), Some("attempt-0001"));
+    let due_state = registry.latest_tester_resume_state().unwrap().unwrap();
+    assert_eq!(due_state.stage, "CHECKPOINT_DUE");
+    assert_eq!(due_state.attempt_id, "attempt-0001");
+
+    let target = due.target.unwrap();
     let request = TesterExecutionStepRequest {
-        step_id: "resume-safe".into(),
+        step_id: "resume-boundary".into(),
         replay_safety: ReplaySafety::ObserveOnly,
         adapter: TesterAdapterRequest::WorkspacePython {
-            script_path: "tests/resume_safe.py".into(),
+            script_path: "tests/resume_boundary.py".into(),
             args: vec![],
         },
     };
     let target_fingerprint = target.fingerprint(version, "CP1").unwrap();
     let fence = request
-        .fence_key(version, "CP1", "ATT-SAFE-REPLAY", &target_fingerprint)
+        .fence_key(version, "CP1", "attempt-0001", &target_fingerprint)
         .unwrap();
-
     registry
         .prepare_tester_execution_step(
             dir.path(),
             "owner-a",
             version,
             "CP1",
-            "ATT-SAFE-REPLAY",
+            "attempt-0001",
             &target,
             &fence,
             &request.step_id,
@@ -908,47 +996,20 @@ fn safe_prepared_execution_replays_same_fence_after_restart() {
         )
         .unwrap();
 
-    let mut resumed = TesterExecutionRuntime::new(
-        &registry,
-        dir.path(),
-        "owner-a",
-        version,
-        "CP1",
-        "ATT-SAFE-REPLAY",
-        target.clone(),
-    )
-    .unwrap();
-    let observations = resumed.resume_prepared().unwrap();
-    assert_eq!(observations.len(), 1);
-    assert_eq!(observations[0].execution_id, fence);
-    assert!(!registry
-        .has_unresolved_tester_execution_steps(version, "CP1", "ATT-SAFE-REPLAY")
-        .unwrap());
+    let before = registry.latest_tester_resume_state().unwrap().unwrap();
+    assert_eq!(before.stage, "EXECUTION_PREPARED");
+    assert_eq!(before.execution_id.as_deref(), Some(fence.as_str()));
 
-    let rows = registry
-        .tester_execution_steps(version, "CP1", "ATT-SAFE-REPLAY")
+    let resolved_again = registry
+        .resolve_tester_checkpoint(&["RUNTIME_PROBE".into()])
+        .unwrap()
         .unwrap();
-    assert_eq!(rows.len(), 1);
-    assert_ne!(rows[0].status, "PREPARED");
-
-    let mut restarted = TesterExecutionRuntime::new(
-        &registry,
-        dir.path(),
-        "owner-a",
-        version,
-        "CP1",
-        "ATT-SAFE-REPLAY",
-        target,
-    )
-    .unwrap();
-    assert!(restarted.resume_prepared().unwrap().is_empty());
     assert_eq!(
-        registry
-            .tester_execution_steps(version, "CP1", "ATT-SAFE-REPLAY")
-            .unwrap()
-            .len(),
-        1
+        resolved_again.next_attempt_id.as_deref(),
+        Some("attempt-0001")
     );
+    let after = registry.latest_tester_resume_state().unwrap().unwrap();
+    assert_eq!(after, before);
 }
 
 #[test]
