@@ -2576,3 +2576,118 @@ comparison of data the runtime cannot prove
 ```
 
 Fail closed on authoritative mismatches; do not create false blockers from metadata that currently lacks a reconstruction authority.
+
+---
+
+# 47. Crash-safe Tester resume requires durable execution context, not chat reconstruction
+
+Tester checkpoint recovery must survive process/session loss without depending on the model remembering what happened.
+
+The durable recovery identity must include enough information to reconstruct the exact work boundary:
+
+```text
+graph_version
+checkpoint_id
+attempt_id
+target_fingerprint
+execution_id
+stage
+persisted request
+replay_safety
+deterministic fence
+terminal observation when available
+```
+
+The current implementation keeps the compact checkpoint/attempt/execution envelope in `latest_checkpoint.stage` and reconstructs execution details from `tester_execution_steps`.
+
+Important stages include:
+
+```text
+CHECKPOINT_DUE
+EXECUTION_PREPARED
+EXECUTION_COMPLETED
+ATTEMPT_RECORDED
+RECOVERY_REQUIRED
+```
+
+The stage transition and its corresponding event/execution mutation must share one database transaction. Otherwise a crash can leave an event claiming progress that `latest_checkpoint` cannot resume, or a checkpoint claiming progress that has no durable evidence behind it.
+
+A restart packet sent to Tester must include persisted completed execution context as well as newly replayed observations. Chat history is not a recovery store.
+
+Key invariant:
+
+```text
+restart
+-> reconstruct exact durable state
+-> reuse completed evidence
+-> resume only unfinished eligible work
+```
+
+not:
+
+```text
+restart
+-> ask model what it remembers
+-> repeat tests
+```
+
+# 48. Replay safety is a runtime contract, not a retry preference
+
+A PREPARED execution means the process may have crashed after durable intent was recorded but before durable completion was recorded.
+
+That uncertainty must be interpreted using explicit replay safety:
+
+```text
+OBSERVE_ONLY
+  -> exact-fence replay allowed
+
+IDEMPOTENT
+  -> exact-fence replay allowed
+
+NON_IDEMPOTENT
+  -> never auto-replay when completion is uncertain
+  -> RECOVERY_REQUIRED / NEEDS_HUMAN or an explicit recovery adapter
+```
+
+The deterministic fence must bind the exact graph, checkpoint, attempt, target fingerprint and request. A restart must not create a new logical execution merely because in-memory state was lost.
+
+Completed persisted steps are reused rather than re-executed. Re-resolving the checkpoint must also preserve a later durable stage such as `EXECUTION_PREPARED`; it must not downgrade the same attempt back to `CHECKPOINT_DUE`.
+
+Key invariant:
+
+```text
+same exact work after restart
+-> same durable execution identity
+```
+
+# 49. Process liveness unknown is not process death
+
+Execution leases prevent duplicate concurrent attempts, but crash recovery also needs to avoid waiting for a long TTL after a process is known to be dead.
+
+For owners encoded as `pid:<n>`, immediate reclamation is safe only when the runtime can positively establish that the process no longer exists.
+
+Therefore:
+
+```text
+PID positively alive
+  -> keep lease
+
+PID positively dead
+  -> reclaim immediately for crash resume
+
+PID liveness unknown / unsupported platform
+  -> do not treat as dead
+  -> preserve normal stale/TTL policy
+```
+
+An implementation where an unsupported platform returns `false` from an `is_alive` helper and the caller interprets `false` as proven death is unsafe: it can let a second process steal a live execution lease.
+
+Use a semantic predicate such as `pid_owner_known_dead` rather than deriving death from the negation of an incomplete liveness probe.
+
+Key invariant:
+
+```text
+unknown != dead
+```
+
+Fail closed when runtime authority is insufficient.
