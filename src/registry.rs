@@ -4708,7 +4708,11 @@ mod tests {
     fn dead_pid_lease_is_reclaimed_immediately_for_crash_resume() {
         let (dir, registry) = registry();
         registry
-            .acquire_lease(dir.path(), "pid:999999999", Duration::from_secs(6 * 60 * 60))
+            .acquire_lease(
+                dir.path(),
+                "pid:999999999",
+                Duration::from_secs(6 * 60 * 60),
+            )
             .unwrap();
 
         let owner = format!("pid:{}", std::process::id());
@@ -4720,7 +4724,9 @@ mod tests {
             .conn
             .query_row(
                 "SELECT owner FROM execution_lease WHERE project_root=?1",
-                params![canonical_or_original(dir.path()).to_string_lossy().into_owned()],
+                params![canonical_or_original(dir.path())
+                    .to_string_lossy()
+                    .into_owned()],
                 |row| row.get(0),
             )
             .unwrap();
