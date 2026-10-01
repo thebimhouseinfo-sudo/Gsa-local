@@ -21,6 +21,8 @@ use std::{
     time::Duration,
 };
 
+const MAX_TESTER_PRODUCT_REPAIRS: usize = 3;
+
 pub struct App {
     project_root: PathBuf,
     config: AppConfig,
@@ -195,6 +197,7 @@ impl App {
 
     async fn resolve_coder_work_after_testers(&mut self) -> Result<Option<ActiveWork>> {
         self.active_work = None;
+        let mut product_repairs = 0usize;
         loop {
             let profile = discover_profile(&self.project_root)?;
             let available_capabilities = tester_capability_catalog(&profile);
@@ -205,6 +208,90 @@ impl App {
             match next {
                 None => return Ok(None),
                 Some(NextWork::Coder(work)) => return Ok(Some(work)),
+                Some(NextWork::Repair(repair)) => {
+                    if product_repairs >= MAX_TESTER_PRODUCT_REPAIRS {
+                        bail!(
+                            "Tester PRODUCT_FAILURE repair limit exhausted for checkpoint {}",
+                            repair.checkpoint.id
+                        );
+                    }
+                    product_repairs += 1;
+                    println!(
+                        "TEST_PRODUCT_FAILURE checkpoint={} failed_attempt={} repair_round={}",
+                        repair.checkpoint.id,
+                        repair.retest_context.failed_attempt_id,
+                        product_repairs
+                    );
+                    let requirement = format!(
+                        "Repair the product source for a declared Tester PRODUCT_FAILURE. \
+Checkpoint: {}. Goal: {}. Criteria: {}. Failed attempt: {}. \
+Failed target fingerprint: {}. Observed failure: {}. \
+Do not edit Tester-owned artifacts as the product fix. Keep the repair within the active Job Pack, perform the normal Coder self-check, and return through independent Reviewer before any retest.",
+                        repair.checkpoint.id,
+                        repair.checkpoint.goal,
+                        repair.checkpoint.criteria.join("; "),
+                        repair.retest_context.failed_attempt_id,
+                        repair.retest_context.failed_target_fingerprint,
+                        repair.retest_context.failure_summary
+                    );
+                    let workflow = CodingWorkflow::new(
+                        &self.ollama,
+                        &self.harnesses,
+                        &self.registry,
+                        &self.config,
+                        &self.session,
+                        &self.project_root,
+                        &self.lease_owner,
+                    );
+                    match workflow
+                        .run(&requirement, &repair.active_work, &mut self.tool_runtime)
+                        .await?
+                    {
+                        CodingOutcome::ReviewPass { change_set_id } => {
+                            println!(
+                                "TEST_REPAIR_REVIEW_PASS checkpoint={} jobpack={} change_set={}",
+                                repair.checkpoint.id,
+                                repair.active_work.jobpack_id,
+                                change_set_id
+                            );
+                            let changed_paths = self
+                                .tool_runtime
+                                .review_evidence()
+                                .into_iter()
+                                .map(|item| item.path)
+                                .collect::<Vec<_>>();
+                            let verification = VerificationController::new(
+                                &self.registry,
+                                &self.project_root,
+                                &self.lease_owner,
+                            )
+                            .verify(
+                                repair.active_work.graph_version,
+                                &repair.active_work.jobpack_id,
+                                &change_set_id,
+                                &changed_paths,
+                            )?;
+                            println!(
+                                "VERIFICATION_RESULT jobpack={} change_set={} result={}",
+                                repair.active_work.jobpack_id,
+                                change_set_id,
+                                verification.as_str()
+                            );
+                            continue;
+                        }
+                        CodingOutcome::Paused {
+                            change_set_id,
+                            reason,
+                        } => {
+                            bail!(
+                                "Tester PRODUCT_FAILURE repair paused checkpoint={} change_set={:?}: {}",
+                                repair.checkpoint.id,
+                                change_set_id,
+                                reason
+                            );
+                        }
+                    }
+                }
                 Some(NextWork::Tester(checkpoint_work)) => {
                     if checkpoint_work.disposition != TesterCheckpointDisposition::Due {
                         let reason = checkpoint_work
@@ -227,10 +314,27 @@ impl App {
                         .next_attempt_id
                         .as_deref()
                         .context("DUE Tester checkpoint is missing next attempt id")?;
-                    println!(
-                        "TEST_CHECKPOINT_DUE checkpoint={} attempt={}",
-                        checkpoint_work.checkpoint.id, attempt_id
-                    );
+                    let requirement = if let Some(retest) = &checkpoint_work.retest_context {
+                        println!(
+                            "TEST_CHECKPOINT_RETEST_DUE checkpoint={} attempt={} prior_attempt={}",
+                            checkpoint_work.checkpoint.id,
+                            attempt_id,
+                            retest.failed_attempt_id
+                        );
+                        format!(
+                            "{} RETEST_CONTEXT: rerun the relevant failing and regression cases from prior attempt {} on failed target {}. Prior observed failure: {}",
+                            checkpoint_work.checkpoint.goal,
+                            retest.failed_attempt_id,
+                            retest.failed_target_fingerprint,
+                            retest.failure_summary
+                        )
+                    } else {
+                        println!(
+                            "TEST_CHECKPOINT_DUE checkpoint={} attempt={}",
+                            checkpoint_work.checkpoint.id, attempt_id
+                        );
+                        checkpoint_work.checkpoint.goal.clone()
+                    };
                     let workflow = TesterWorkflow::new(
                         &self.ollama,
                         &self.harnesses,
@@ -242,7 +346,7 @@ impl App {
                     );
                     let attempt = workflow
                         .run(
-                            &checkpoint_work.checkpoint.goal,
+                            &requirement,
                             checkpoint_work.graph_version,
                             &checkpoint_work.checkpoint,
                             target,
