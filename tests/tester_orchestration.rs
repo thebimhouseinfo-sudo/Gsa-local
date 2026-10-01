@@ -290,6 +290,7 @@ fn exact_target_pass_satisfies_checkpoint_without_completion() {
     match controller.resolve_next(&[]).unwrap().unwrap() {
         NextWork::Coder(work) => assert_eq!(work.jobpack_id, "JP1"),
         NextWork::Tester(work) => panic!("checkpoint remained {}", work.disposition.as_str()),
+        NextWork::Repair(work) => panic!("checkpoint requested repair {}", work.checkpoint.id),
     }
     assert_eq!(
         registry.jobpack_status(version, "JP1").unwrap().as_deref(),
