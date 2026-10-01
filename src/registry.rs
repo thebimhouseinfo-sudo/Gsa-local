@@ -137,6 +137,7 @@ pub enum TesterCheckpointDisposition {
     Blocked,
     NeedsHuman,
     IntegrationNotReady,
+    SpecGap,
 }
 
 impl TesterCheckpointDisposition {
@@ -147,6 +148,7 @@ impl TesterCheckpointDisposition {
             Self::Blocked => "BLOCKED",
             Self::NeedsHuman => "NEEDS_HUMAN",
             Self::IntegrationNotReady => "INTEGRATION_NOT_READY",
+            Self::SpecGap => "SPEC_GAP",
         }
     }
 }
@@ -3917,6 +3919,20 @@ fn tester_attempt_blocking_state(
             format!(
                 "Tester attempt {} classified PRODUCT_FAILURE: {}",
                 attempt.attempt_id, detail
+            ),
+        );
+    }
+    if attempt
+        .classifications
+        .iter()
+        .any(|item| *item == TesterClassification::SpecGap)
+    {
+        return (
+            TesterCheckpointDisposition::SpecGap,
+            format!(
+                "Tester attempt {} classified SPEC_GAP: {}",
+                attempt.attempt_id,
+                tester_failure_summary(attempt)
             ),
         );
     }
