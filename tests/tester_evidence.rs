@@ -13,8 +13,8 @@ use gsa_local::{
         EvidenceApplicability, EvidenceProvenance, ExperimentContext, ExperimentObservation,
         ExperimentSample, ObservedValue, ReplaySafety, RevalidationPolicy, TesterAttemptEvidence,
         TesterClassification, TesterEvidenceOutputRecord, TesterEvidenceRef, TesterModeOutcome,
-        TesterModeResult,
-        TesterPrerequisiteTarget, TesterTargetBinding, VerificationObservationField,
+        TesterModeResult, TesterPrerequisiteTarget, TesterTargetBinding,
+        VerificationObservationField,
     },
     tester_execution::{
         TesterAdapterRequest, TesterExecutionObservation, TesterExecutionRuntime,
@@ -1236,7 +1236,10 @@ fn observed_output_from_unsuccessful_mode_cannot_satisfy_required_consumer_evide
         .record_tester_attempt_evidence(dir.path(), "owner-a", &attempt)
         .unwrap();
 
-    assert!(registry.current_tester_evidence_catalog().unwrap().is_empty());
+    assert!(registry
+        .current_tester_evidence_catalog()
+        .unwrap()
+        .is_empty());
 
     let controller = MilestoneController::new(&registry, dir.path(), "owner-a");
     let error = controller.mark_active_jobpack_done().unwrap_err();
