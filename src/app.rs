@@ -7,7 +7,7 @@ use crate::{
     ollama::{ChatMessage, OllamaClient},
     registry::{Registry, TesterCheckpointDisposition},
     session::Session,
-    tester_execution::TesterWorkflow,
+    tester_execution::{tester_capability_catalog, TesterWorkflow},
     tools::ProjectToolRuntime,
     verification::{discover_profile, VerificationController},
     workflow::{CodingOutcome, CodingWorkflow, PlanningOutcome, PlanningWorkflow},
@@ -197,11 +197,7 @@ impl App {
         self.active_work = None;
         loop {
             let profile = discover_profile(&self.project_root)?;
-            let available_capabilities = profile
-                .capabilities
-                .iter()
-                .map(|capability| capability.as_str().to_owned())
-                .collect::<Vec<_>>();
+            let available_capabilities = tester_capability_catalog(&profile);
             let next =
                 MilestoneController::new(&self.registry, &self.project_root, &self.lease_owner)
                     .resolve_next(&available_capabilities)?;
