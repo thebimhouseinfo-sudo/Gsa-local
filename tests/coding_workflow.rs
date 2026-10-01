@@ -9,6 +9,7 @@ use gsa_local::{
     },
 };
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::time::Duration;
 use tempfile::tempdir;
 
@@ -80,6 +81,8 @@ fn graph() -> ExecutionGraph {
 
 fn setup() -> (tempfile::TempDir, Registry, i64) {
     let dir = tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::write(dir.path().join("src/example.rs"), "after").unwrap();
     let registry = Registry::open_at(&dir.path().join("state.db")).unwrap();
     registry.begin_plan_workflow().unwrap();
     let revision = registry.persist_plan_revision(&plan()).unwrap();
@@ -110,10 +113,14 @@ fn setup() -> (tempfile::TempDir, Registry, i64) {
 }
 
 fn journal() -> serde_json::Value {
+    let digest = Sha256::digest(b"after")
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
     json!([{
         "path": "src/example.rs",
         "before_sha256": "before",
-        "after_sha256": "after"
+        "after_sha256": digest
     }])
 }
 #[test]
