@@ -10,6 +10,7 @@ use gsa_local::{
     },
 };
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::time::Duration;
 use tempfile::tempdir;
 
@@ -186,6 +187,12 @@ fn phase11_complete_active(
     registry
         .begin_code_workflow(dir.path(), "owner-a", version, jobpack_id)
         .unwrap();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::write(dir.path().join("src/controller.rs"), change_set).unwrap();
+    let after_sha256 = Sha256::digest(change_set.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
     registry
         .record_code_checkpoint(
             dir.path(),
@@ -202,7 +209,7 @@ fn phase11_complete_active(
             &json!([{
                 "path":"src/controller.rs",
                 "before_sha256":"before",
-                "after_sha256":change_set
+                "after_sha256":after_sha256
             }]),
             1,
             0,
