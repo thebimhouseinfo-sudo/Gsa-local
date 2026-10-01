@@ -552,6 +552,17 @@ impl<'a> CodingWorkflow<'a> {
         active_work: &ActiveWork,
         tool_runtime: &mut ProjectToolRuntime,
     ) -> Result<CodingOutcome> {
+        self.run_with_context(requirement, active_work, None, tool_runtime)
+            .await
+    }
+
+    pub async fn run_with_context(
+        &self,
+        requirement: &str,
+        active_work: &ActiveWork,
+        repair_context: Option<&serde_json::Value>,
+        tool_runtime: &mut ProjectToolRuntime,
+    ) -> Result<CodingOutcome> {
         self.registry.begin_code_workflow(
             self.project_root,
             self.lease_owner,
@@ -573,6 +584,7 @@ impl<'a> CodingWorkflow<'a> {
                 &tasks,
                 &[],
                 None,
+                repair_context,
                 tool_runtime,
             )
             .await?;
@@ -615,6 +627,7 @@ impl<'a> CodingWorkflow<'a> {
                     &tasks,
                     &checkpoint,
                     &change_set_id,
+                    repair_context,
                     tool_runtime,
                 )
                 .await?;
@@ -674,6 +687,7 @@ impl<'a> CodingWorkflow<'a> {
                     &tasks,
                     &review.findings,
                     Some(&checkpoint),
+                    repair_context,
                     tool_runtime,
                 )
                 .await?;
@@ -760,6 +774,7 @@ impl<'a> CodingWorkflow<'a> {
         tasks: &[CodeTodoState],
         findings: &[String],
         previous: Option<&CodeCheckpointSubmission>,
+        repair_context: Option<&serde_json::Value>,
         tool_runtime: &mut ProjectToolRuntime,
     ) -> Result<CodeCheckpointSubmission> {
         let model = self.model_for(agent).await?;
@@ -773,6 +788,7 @@ impl<'a> CodingWorkflow<'a> {
             "active_work": active_work_packet(active_work),
             "tasks": tasks,
             "review_findings": findings,
+            "repair_context": repair_context,
             "previous_checkpoint": previous.map(|item| json!({
                 "summary": &item.summary,
                 "completed_checklist": &item.completed_checklist,
@@ -833,6 +849,7 @@ impl<'a> CodingWorkflow<'a> {
         tasks: &[CodeTodoState],
         checkpoint: &CodeCheckpointSubmission,
         change_set_id: &str,
+        repair_context: Option<&serde_json::Value>,
         tool_runtime: &mut ProjectToolRuntime,
     ) -> Result<CodeReviewDecision> {
         let model = self.model_for(AgentId::Reviewer).await?;
@@ -845,6 +862,7 @@ impl<'a> CodingWorkflow<'a> {
             "original_instruction": requirement,
             "active_work": active_work_packet(active_work),
             "tasks": tasks,
+            "repair_context": repair_context,
             "target": {
                 "graph_version": active_work.graph_version,
                 "jobpack_id": &active_work.jobpack_id,
