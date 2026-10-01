@@ -1,8 +1,8 @@
 use crate::{
     execution_graph::{PrerequisiteState, TestCheckpointSpec},
     registry::{
-        ActiveWorkRecord, Registry, TesterCheckpointDisposition, TesterCheckpointWorkRecord,
-        TesterRetestContext,
+        ActiveWorkRecord, Registry, ResolvedTesterEvidence, TesterCheckpointDisposition,
+        TesterCheckpointWorkRecord, TesterRetestContext,
     },
     tester_evidence::TesterTargetBinding,
 };
@@ -25,6 +25,7 @@ pub struct ActiveWork {
     pub expected_outputs: Vec<String>,
     pub acceptance: Vec<String>,
     pub verification_hints: Vec<String>,
+    pub tester_evidence: Vec<ResolvedTesterEvidence>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +60,7 @@ impl From<ActiveWorkRecord> for ActiveWork {
             expected_outputs: value.expected_outputs,
             acceptance: value.acceptance,
             verification_hints: value.verification_hints,
+            tester_evidence: value.tester_evidence,
         }
     }
 }
