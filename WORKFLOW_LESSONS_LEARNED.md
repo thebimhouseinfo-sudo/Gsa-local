@@ -2453,3 +2453,67 @@ workflow progression authority
 ```
 
 A failure in one dimension must not silently rewrite the other two.
+
+---
+
+# 45. Sequential gates can hide downstream blocker classes
+
+Repository verification is ordered. An early red gate may prevent later checks from running, so the first observed blocker must not be treated as a complete diagnosis.
+
+Current T2-ORCHESTRATION sequence demonstrated:
+
+```text
+run 36745396167
+  -> cargo fmt --check FAIL
+  -> tests/check did not fully execute
+  -> classification: POLICY_FORMATTING_FAILURE
+
+after test formatting repair
+
+run 36808045800
+  -> cargo fmt --check still FAIL in src/registry.rs
+  -> classification remains POLICY_FORMATTING_FAILURE
+
+after registry formatting repair
+
+run 36808135785
+  -> formatter passes far enough for cargo check
+  -> rustc E0597 in src/registry.rs
+  -> classification changes to CODE_QUALITY_FAILURE
+```
+
+The E0597 defect is a real compile-time implementation defect: a rusqlite Statement was dropped while the mapped-row temporary could still hold a borrow. This blocker is not eligible for Human-approved temporary progression and must be repaired before claiming implementation correctness.
+
+## 45.1 Diagnose incrementally
+
+After each repaired gate:
+
+1. rerun the exact canonical verification pipeline;
+2. classify the next observed blocker independently;
+3. update eligibility for Human-approved temporary progression;
+4. never carry the prior blocker classification forward without new evidence.
+
+## 45.2 Human temporary approval requires evidence past the relevant correctness gates
+
+A non-product gate failure can be temporarily bypassable only when applicable correctness evidence already exists independently.
+
+If the failing early gate prevented compile/tests from running, the workflow cannot infer their result.
+
+Therefore:
+
+```text
+early policy gate FAIL
++ downstream checks not executed
+-> downstream correctness = UNKNOWN
+-> no correctness-based temporary progression yet
+```
+
+Once downstream correctness checks are independently PASS, a separate non-product blocker may become eligible for bounded Human-approved progression.
+
+## 45.3 Key invariant
+
+```text
+first failing gate != only failing gate
+```
+
+Progression decisions must use the deepest actually executed evidence, not the superficial first red status.
