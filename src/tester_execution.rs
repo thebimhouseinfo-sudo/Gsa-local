@@ -20,7 +20,11 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{collections::{BTreeMap, BTreeSet}, path::Path, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+    time::Duration,
+};
 
 const MAX_TESTER_TOOL_ROUNDS: usize = 16;
 const MAX_TESTER_EXECUTIONS: usize = 8;
@@ -296,7 +300,8 @@ impl<'a> TesterExecutionRuntime<'a> {
         let workspace =
             TesterWorkspaceRuntime::new(project_root, graph_version, checkpoint_id, attempt_id)?;
         let target_fingerprint = target.fingerprint(graph_version, checkpoint_id)?;
-        let persisted = registry.tester_execution_steps(graph_version, checkpoint_id, attempt_id)?;
+        let persisted =
+            registry.tester_execution_steps(graph_version, checkpoint_id, attempt_id)?;
         let mut observations = Vec::new();
         let mut steps = BTreeMap::new();
         for record in persisted {
@@ -370,7 +375,10 @@ impl<'a> TesterExecutionRuntime<'a> {
                 let observation = self.resume_existing_step(existing)?;
                 return Ok(serde_json::to_value(observation)?);
             }
-            bail!("persisted Tester execution has unresolved status {}", existing.status);
+            bail!(
+                "persisted Tester execution has unresolved status {}",
+                existing.status
+            );
         }
 
         if self.execution_count >= MAX_TESTER_EXECUTIONS {
@@ -441,8 +449,7 @@ impl<'a> TesterExecutionRuntime<'a> {
             bail!("NEEDS_HUMAN: {reason}");
         }
 
-        let observation =
-            self.observe_request(record.execution_id.clone(), &record.request);
+        let observation = self.observe_request(record.execution_id.clone(), &record.request);
         self.registry.complete_tester_execution_step(
             self.project_root,
             self.lease_owner,
