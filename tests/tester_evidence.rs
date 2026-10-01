@@ -1,8 +1,9 @@
 use gsa_local::{
     controller::MilestoneController,
     execution_graph::{
-        CheckpointBoundaryKind, CheckpointPrerequisiteSpec, EvidenceOutputSpec, ExecutionGraph,
-        JobPackSpec, MilestoneSpec, PrerequisiteState, TestCheckpointSpec, TodoSpec,
+        CheckpointBoundaryKind, CheckpointPrerequisiteSpec, EvidenceOutputSpec,
+        EvidenceRequirementSpec, ExecutionGraph, JobPackSpec, MilestoneSpec, PrerequisiteState,
+        TestCheckpointSpec, TodoSpec,
     },
     harness::AgentId,
     plan::{EvidenceMode, EvidenceNeed, PlanArtifact},
@@ -57,24 +58,46 @@ fn graph() -> ExecutionGraph {
             title: "Evidence".into(),
             order: 1,
         }],
-        jobpacks: vec![JobPackSpec {
-            id: "JP1".into(),
-            milestone_id: "M1".into(),
-            title: "Product slice".into(),
-            goal: "Create reviewed target".into(),
-            todo_ids: vec!["T1".into()],
-            depends_on: vec![],
-            required_inputs: vec!["approved plan".into()],
-            expected_outputs: vec!["reviewed source".into()],
-            acceptance: vec!["source reviewed".into()],
-            verification_hints: vec!["deterministic self-check".into()],
-        }],
-        todos: vec![TodoSpec {
-            id: "T1".into(),
-            jobpack_id: "JP1".into(),
-            title: "Implement slice".into(),
-            checklist: vec!["implemented".into()],
-        }],
+        jobpacks: vec![
+            JobPackSpec {
+                id: "JP1".into(),
+                milestone_id: "M1".into(),
+                title: "Product slice".into(),
+                goal: "Create reviewed target".into(),
+                todo_ids: vec!["T1".into()],
+                depends_on: vec![],
+                required_inputs: vec!["approved plan".into()],
+                expected_outputs: vec!["reviewed source".into()],
+                acceptance: vec!["source reviewed".into()],
+                verification_hints: vec!["deterministic self-check".into()],
+            },
+            JobPackSpec {
+                id: "JP2".into(),
+                milestone_id: "M1".into(),
+                title: "Evidence consumer".into(),
+                goal: "Use observed runtime identity".into(),
+                todo_ids: vec!["T2".into()],
+                depends_on: vec!["JP1".into()],
+                required_inputs: vec!["observed runtime identity".into()],
+                expected_outputs: vec!["consumer configured from evidence".into()],
+                acceptance: vec!["no guessed identity".into()],
+                verification_hints: vec!["inspect injected evidence".into()],
+            },
+        ],
+        todos: vec![
+            TodoSpec {
+                id: "T1".into(),
+                jobpack_id: "JP1".into(),
+                title: "Implement slice".into(),
+                checklist: vec!["implemented".into()],
+            },
+            TodoSpec {
+                id: "T2".into(),
+                jobpack_id: "JP2".into(),
+                title: "Consume evidence".into(),
+                checklist: vec!["uses observed value".into()],
+            },
+        ],
         checkpoints: vec![TestCheckpointSpec {
             id: "CP1".into(),
             milestone_id: "M1".into(),
@@ -98,7 +121,12 @@ fn graph() -> ExecutionGraph {
                 evidence_need_id: Some("runtime-id".into()),
             }],
         }],
-        evidence_requirements: vec![],
+        evidence_requirements: vec![EvidenceRequirementSpec {
+            consumer_jobpack_id: "JP2".into(),
+            checkpoint_id: "CP1".into(),
+            output_id: "runtime-id-observation".into(),
+            required: true,
+        }],
     }
 }
 
@@ -1137,4 +1165,45 @@ fn lease_owner_is_required_before_tester_attempt_can_prepare_execution() {
             &serde_json::to_value(&request).unwrap(),
         )
         .unwrap();
+}
+
+
+#[test]
+fn downstream_active_work_receives_only_resolved_observed_tester_evidence() {
+    let (dir, registry, version, verification_run_id) = setup();
+    let due = registry
+        .resolve_tester_checkpoint(&["RUNTIME_PROBE".into()])
+        .unwrap()
+        .unwrap();
+    let artifact = workspace_artifact(&dir, version, due.next_attempt_id.as_deref().unwrap());
+    let attempt = attempt(
+        version,
+        due.next_attempt_id.as_deref().unwrap(),
+        "change-1",
+        artifact,
+        verification_run_id,
+    );
+    registry
+        .record_tester_attempt_evidence(dir.path(), "owner-a", &attempt)
+        .unwrap();
+
+    let controller = MilestoneController::new(&registry, dir.path(), "owner-a");
+    let next = controller.mark_active_jobpack_done().unwrap().unwrap();
+    assert_eq!(next.jobpack_id, "JP2");
+    assert_eq!(next.tester_evidence.len(), 1);
+    assert_eq!(next.tester_evidence[0].checkpoint_id, "CP1");
+    assert_eq!(next.tester_evidence[0].output_id, "runtime-id-observation");
+    assert_eq!(
+        next.tester_evidence[0].value,
+        ObservedValue::Text("runtime-1".into())
+    );
+}
+
+#[test]
+fn required_tester_evidence_fails_closed_when_missing() {
+    let (dir, registry, _version, _verification_run_id) = setup();
+    let controller = MilestoneController::new(&registry, dir.path(), "owner-a");
+    let error = controller.mark_active_jobpack_done().unwrap_err();
+    assert!(format!("{error:#}").contains("PLAN_GAP"));
+    assert!(format!("{error:#}").contains("runtime-id-observation"));
 }
