@@ -150,6 +150,25 @@ pub struct TesterCheckpointWorkRecord {
     pub next_attempt_id: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TesterResumeState {
+    pub graph_version: i64,
+    pub checkpoint_id: String,
+    pub attempt_id: String,
+    pub target_fingerprint: String,
+    pub execution_id: Option<String>,
+    pub stage: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TesterExecutionStepRecord {
+    pub execution_id: String,
+    pub target_fingerprint: String,
+    pub request: TesterExecutionStepRequest,
+    pub status: String,
+    pub observation: Option<TesterExecutionObservation>,
+}
+
 pub struct Registry {
     conn: Connection,
 }
@@ -2023,6 +2042,14 @@ impl Registry {
                 |row| row.get(0),
             )?;
             let next_attempt_id = format!("attempt-{:04}", attempt_count + 1);
+            ensure_tester_resume_checkpoint_tx(
+                &tx,
+                graph_version,
+                plan_revision,
+                &checkpoint,
+                &next_attempt_id,
+                &target_fingerprint,
+            )?;
             tx.commit()?;
             return Ok(Some(TesterCheckpointWorkRecord {
                 graph_version,
@@ -2125,7 +2152,7 @@ impl Registry {
             )?;
         }
 
-        append_event_tx(
+        let sequence = append_event_tx(
             &tx,
             "TESTER_EVIDENCE_RECORDED",
             &serde_json::json!({
@@ -2136,6 +2163,18 @@ impl Registry {
                 "modes": attempt.mode_results,
                 "outputs": attempt.outputs.iter().map(|output| &output.output_id).collect::<Vec<_>>()
             }),
+        )?;
+        write_tester_resume_checkpoint_tx(
+            &tx,
+            sequence,
+            attempt.graph_version,
+            plan_revision_for_graph_tx(&tx, attempt.graph_version)?,
+            &checkpoint.milestone_id,
+            &attempt.checkpoint_id,
+            &attempt.attempt_id,
+            &target_fingerprint,
+            None,
+            "ATTEMPT_RECORDED",
         )?;
         tx.commit()?;
         Ok(target_fingerprint)
@@ -2339,7 +2378,7 @@ impl Registry {
         )
         .context("Tester execution step/fence already exists or is invalid")?;
 
-        append_event_tx(
+        let sequence = append_event_tx(
             &tx,
             "TESTER_EXECUTION_PREPARED",
             &serde_json::json!({
@@ -2353,6 +2392,20 @@ impl Registry {
                 "fence_key": fence_key,
                 "target_fingerprint": target_fingerprint
             }),
+        )?;
+        let (plan_revision, milestone_id) =
+            tester_checkpoint_context_tx(&tx, graph_version, checkpoint_id)?;
+        write_tester_resume_checkpoint_tx(
+            &tx,
+            sequence,
+            graph_version,
+            plan_revision,
+            &milestone_id,
+            checkpoint_id,
+            attempt_id,
+            &target_fingerprint,
+            Some(execution_id),
+            "EXECUTION_PREPARED",
         )?;
         tx.commit()?;
         Ok(())
@@ -2429,7 +2482,7 @@ impl Registry {
             bail!("Tester execution step changed before completion");
         }
 
-        append_event_tx(
+        let sequence = append_event_tx(
             &tx,
             "TESTER_EXECUTION_COMPLETED",
             &serde_json::json!({
@@ -2442,6 +2495,30 @@ impl Registry {
                 "replay_safety": observation.replay_safety.as_str(),
                 "status": observation.status.as_str()
             }),
+        )?;
+        let target_fingerprint: String = tx.query_row(
+            r#"
+            SELECT target_fingerprint
+            FROM tester_execution_steps
+            WHERE graph_version=?1 AND checkpoint_id=?2
+              AND attempt_id=?3 AND execution_id=?4
+            "#,
+            params![graph_version, checkpoint_id, attempt_id, observation.execution_id],
+            |row| row.get(0),
+        )?;
+        let (plan_revision, milestone_id) =
+            tester_checkpoint_context_tx(&tx, graph_version, checkpoint_id)?;
+        write_tester_resume_checkpoint_tx(
+            &tx,
+            sequence,
+            graph_version,
+            plan_revision,
+            &milestone_id,
+            checkpoint_id,
+            attempt_id,
+            &target_fingerprint,
+            Some(&observation.execution_id),
+            "EXECUTION_COMPLETED",
         )?;
         tx.commit()?;
         Ok(())
@@ -2462,7 +2539,7 @@ impl Registry {
                 FROM tester_execution_steps
                 WHERE graph_version=?1 AND checkpoint_id=?2
                   AND attempt_id=?3 AND execution_id=?4
-                  AND status IN ('COMPLETED','FAILED')
+                  AND status IN ('COMPLETED','FAILED','BLOCKED')
                 "#,
                 params![graph_version, checkpoint_id, attempt_id, execution_id],
                 |row| Ok((row.get(0)?, row.get(1)?)),
@@ -2475,6 +2552,145 @@ impl Registry {
             ))
         })
         .transpose()
+    }
+
+    pub fn tester_execution_steps(
+        &self,
+        graph_version: i64,
+        checkpoint_id: &str,
+        attempt_id: &str,
+    ) -> Result<Vec<TesterExecutionStepRecord>> {
+        let mut statement = self.conn.prepare(
+            r#"
+            SELECT execution_id, step_id, adapter_id, replay_safety, fence_key,
+                   target_fingerprint, request_json, status, observation_json
+            FROM tester_execution_steps
+            WHERE graph_version=?1 AND checkpoint_id=?2 AND attempt_id=?3
+            ORDER BY created_at ASC, step_id ASC
+            "#,
+        )?;
+        let rows = statement.query_map(
+            params![graph_version, checkpoint_id, attempt_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, String>(6)?,
+                    row.get::<_, String>(7)?,
+                    row.get::<_, Option<String>>(8)?,
+                ))
+            },
+        )?;
+
+        let mut records = Vec::new();
+        for row in rows {
+            let (
+                execution_id,
+                step_id,
+                adapter_id,
+                replay_safety,
+                fence_key,
+                target_fingerprint,
+                request_json,
+                status,
+                observation_json,
+            ) = row?;
+            let request: TesterExecutionStepRequest = serde_json::from_str(&request_json)
+                .context("invalid persisted Tester execution request")?;
+            if request.step_id != step_id
+                || request.adapter.adapter_id() != adapter_id
+                || request.replay_safety.as_str() != replay_safety
+                || execution_id != fence_key
+            {
+                bail!("persisted Tester execution metadata is inconsistent");
+            }
+            let expected_fence = request.fence_key(
+                graph_version,
+                checkpoint_id,
+                attempt_id,
+                &target_fingerprint,
+            )?;
+            if expected_fence != fence_key {
+                bail!("persisted Tester execution fence is stale");
+            }
+            let observation = observation_json
+                .map(|json| {
+                    serde_json::from_str::<TesterExecutionObservation>(&json)
+                        .context("invalid persisted Tester execution observation")
+                })
+                .transpose()?;
+            records.push(TesterExecutionStepRecord {
+                execution_id,
+                target_fingerprint,
+                request,
+                status,
+                observation,
+            });
+        }
+        Ok(records)
+    }
+
+    pub fn mark_tester_recovery_required(
+        &self,
+        project_root: &Path,
+        owner: &str,
+        graph_version: i64,
+        checkpoint_id: &str,
+        attempt_id: &str,
+        execution_id: &str,
+        reason: &str,
+    ) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        assert_lease_owner_tx(&tx, project_root, owner)?;
+        let row: Option<(String, String)> = tx
+            .query_row(
+                r#"
+                SELECT replay_safety, target_fingerprint
+                FROM tester_execution_steps
+                WHERE graph_version=?1 AND checkpoint_id=?2
+                  AND attempt_id=?3 AND execution_id=?4 AND status='PREPARED'
+                "#,
+                params![graph_version, checkpoint_id, attempt_id, execution_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((replay_safety, target_fingerprint)) = row else {
+            bail!("Tester recovery target is not an unresolved PREPARED execution");
+        };
+        if replay_safety != ReplaySafety::NonIdempotent.as_str() {
+            bail!("Tester recovery-required state is reserved for NON_IDEMPOTENT execution");
+        }
+        let sequence = append_event_tx(
+            &tx,
+            "TESTER_RECOVERY_REQUIRED",
+            &serde_json::json!({
+                "graph_version": graph_version,
+                "checkpoint_id": checkpoint_id,
+                "attempt_id": attempt_id,
+                "execution_id": execution_id,
+                "reason": reason
+            }),
+        )?;
+        let (plan_revision, milestone_id) =
+            tester_checkpoint_context_tx(&tx, graph_version, checkpoint_id)?;
+        write_tester_resume_checkpoint_tx(
+            &tx,
+            sequence,
+            graph_version,
+            plan_revision,
+            &milestone_id,
+            checkpoint_id,
+            attempt_id,
+            &target_fingerprint,
+            Some(execution_id),
+            "RECOVERY_REQUIRED",
+        )?;
+        tx.commit()?;
+        Ok(())
     }
 
     pub fn has_unresolved_tester_execution_steps(
@@ -3200,6 +3416,149 @@ impl Registry {
             .optional()
             .map_err(Into::into)
     }
+
+    pub fn latest_tester_resume_state(&self) -> Result<Option<TesterResumeState>> {
+        let Some(checkpoint) = self.latest_checkpoint()? else {
+            return Ok(None);
+        };
+        decode_tester_resume_state(&checkpoint.stage)
+    }
+}
+
+const TESTER_RESUME_PREFIX: &str = "tester_resume:";
+
+fn encode_tester_resume_state(state: &TesterResumeState) -> Result<String> {
+    Ok(format!(
+        "{}{}",
+        TESTER_RESUME_PREFIX,
+        serde_json::to_string(state)?
+    ))
+}
+
+fn decode_tester_resume_state(stage: &str) -> Result<Option<TesterResumeState>> {
+    let Some(payload) = stage.strip_prefix(TESTER_RESUME_PREFIX) else {
+        return Ok(None);
+    };
+    serde_json::from_str(payload)
+        .context("invalid Tester resume state in latest_checkpoint")
+        .map(Some)
+}
+
+fn plan_revision_for_graph_tx(tx: &Transaction<'_>, graph_version: i64) -> Result<i64> {
+    tx.query_row(
+        "SELECT plan_revision FROM execution_graph WHERE version=?1 AND status='CURRENT'",
+        params![graph_version],
+        |row| row.get(0),
+    )
+    .optional()?
+    .context("Tester resume state requires CURRENT execution graph")
+}
+
+fn tester_checkpoint_context_tx(
+    tx: &Transaction<'_>,
+    graph_version: i64,
+    checkpoint_id: &str,
+) -> Result<(i64, String)> {
+    tx.query_row(
+        r#"
+        SELECT eg.plan_revision, c.milestone_id
+        FROM execution_graph eg
+        JOIN execution_test_checkpoints c ON c.graph_version=eg.version
+        WHERE eg.version=?1 AND eg.status='CURRENT' AND c.checkpoint_id=?2
+        "#,
+        params![graph_version, checkpoint_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )
+    .optional()?
+    .context("Tester resume checkpoint context is missing or stale")
+}
+
+fn write_tester_resume_checkpoint_tx(
+    tx: &Transaction<'_>,
+    sequence: i64,
+    graph_version: i64,
+    plan_revision: i64,
+    milestone_id: &str,
+    checkpoint_id: &str,
+    attempt_id: &str,
+    target_fingerprint: &str,
+    execution_id: Option<&str>,
+    stage: &str,
+) -> Result<()> {
+    let encoded = encode_tester_resume_state(&TesterResumeState {
+        graph_version,
+        checkpoint_id: checkpoint_id.to_owned(),
+        attempt_id: attempt_id.to_owned(),
+        target_fingerprint: target_fingerprint.to_owned(),
+        execution_id: execution_id.map(str::to_owned),
+        stage: stage.to_owned(),
+    })?;
+    write_checkpoint_tx(
+        tx,
+        sequence,
+        plan_revision,
+        Some(milestone_id),
+        None,
+        &encoded,
+        None,
+    )
+}
+
+fn ensure_tester_resume_checkpoint_tx(
+    tx: &Transaction<'_>,
+    graph_version: i64,
+    plan_revision: i64,
+    checkpoint: &TestCheckpointSpec,
+    attempt_id: &str,
+    target_fingerprint: &str,
+) -> Result<()> {
+    let current: Option<(i64, String)> = tx
+        .query_row(
+            "SELECT sequence, stage FROM latest_checkpoint WHERE id=1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let max_sequence: i64 =
+        tx.query_row("SELECT COALESCE(MAX(sequence),0) FROM events", [], |row| row.get(0))?;
+
+    if let Some((sequence, stage)) = current {
+        if sequence == max_sequence {
+            if let Some(state) = decode_tester_resume_state(&stage)? {
+                if state.graph_version == graph_version
+                    && state.checkpoint_id == checkpoint.id
+                    && state.attempt_id == attempt_id
+                    && state.target_fingerprint == target_fingerprint
+                    && state.stage != "ATTEMPT_RECORDED"
+                {
+                    return Ok(());
+                }
+            }
+        }
+    }
+
+    let sequence = append_event_tx(
+        tx,
+        "TESTER_CHECKPOINT_DUE",
+        &serde_json::json!({
+            "graph_version": graph_version,
+            "checkpoint_id": checkpoint.id,
+            "attempt_id": attempt_id,
+            "target_fingerprint": target_fingerprint
+        }),
+    )?;
+    write_tester_resume_checkpoint_tx(
+        tx,
+        sequence,
+        graph_version,
+        plan_revision,
+        &checkpoint.milestone_id,
+        &checkpoint.id,
+        attempt_id,
+        target_fingerprint,
+        None,
+        "CHECKPOINT_DUE",
+    )
 }
 
 fn validate_tester_target_tx(
