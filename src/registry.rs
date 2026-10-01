@@ -3306,8 +3306,7 @@ impl Registry {
                     params![project_root, owner, now],
                 )?;
             }
-            Some((existing_owner, _)) if pid_owner_known_dead(&existing_owner) =>
-            {
+            Some((existing_owner, _)) if pid_owner_known_dead(&existing_owner) => {
                 tx.execute(
                     "DELETE FROM execution_lease WHERE project_root = ?1",
                     params![project_root],
