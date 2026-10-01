@@ -774,7 +774,14 @@ fn review_pass_resume_requests_verification_before_other_gates() {
     registry
         .begin_code_workflow(dir.path(), "owner-a", version, "JP-B")
         .unwrap();
-    submit_code_checkpoint(&dir, &registry, version, "JP-B", "T-B", "review-pass-change");
+    submit_code_checkpoint(
+        &dir,
+        &registry,
+        version,
+        "JP-B",
+        "T-B",
+        "review-pass-change",
+    );
     registry
         .record_code_review(
             dir.path(),
@@ -791,7 +798,10 @@ fn review_pass_resume_requests_verification_before_other_gates() {
 
     let decision = registry.resolve_resume_decision(dir.path(), &[]).unwrap();
     assert_eq!(decision.action, ResumeAction::RunRequiredVerification);
-    assert_eq!(decision.change_set_id.as_deref(), Some("review-pass-change"));
+    assert_eq!(
+        decision.change_set_id.as_deref(),
+        Some("review-pass-change")
+    );
 }
 
 #[test]
