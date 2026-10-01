@@ -1,8 +1,11 @@
 use gsa_local::{
     checkpoint::Checkpoint,
     controller::{ActiveWork, MilestoneController},
-    execution_graph::{ExecutionGraph, JobPackSpec, MilestoneSpec, TodoSpec},
-    plan::PlanArtifact,
+    execution_graph::{
+        CheckpointBoundaryKind, CheckpointPrerequisiteSpec, EvidenceOutputSpec, ExecutionGraph,
+        JobPackSpec, MilestoneSpec, PrerequisiteState, TestCheckpointSpec, TodoSpec,
+    },
+    plan::{EvidenceMode, PlanArtifact},
     registry::{ChecklistClaim, Registry, ReviewActor, ReviewVerdict},
     verification::{
         CommandEvidence, DiscoveryStatus, VerificationCapability, VerificationCommand,
@@ -124,6 +127,13 @@ fn graph() -> ExecutionGraph {
 }
 
 fn approve_and_register(registry: &Registry) -> (i64, String, i64) {
+    approve_and_register_graph(registry, graph())
+}
+
+fn approve_and_register_graph(
+    registry: &Registry,
+    execution_graph: ExecutionGraph,
+) -> (i64, String, i64) {
     registry.begin_plan_workflow().unwrap();
     let revision = registry.persist_plan_revision(&plan("controller")).unwrap();
     for actor in [ReviewActor::Reviewer, ReviewActor::LocalCr] {
@@ -141,7 +151,7 @@ fn approve_and_register(registry: &Registry) -> (i64, String, i64) {
         .approve_current_plan(revision.revision, &revision.hash)
         .unwrap();
     let version = registry
-        .register_execution_graph(revision.revision, &revision.hash, &graph())
+        .register_execution_graph(revision.revision, &revision.hash, &execution_graph)
         .unwrap();
     (revision.revision, revision.hash, version)
 }
@@ -465,4 +475,91 @@ fn superseding_active_graph_retires_old_active_jobpack_before_new_activation() {
     assert_eq!(registry.project_active_jobpack_count().unwrap(), 1);
     assert_eq!(registry.active_jobpack_count(v1).unwrap(), 0);
     assert_eq!(registry.active_jobpack_count(v2).unwrap(), 1);
+}
+
+
+#[test]
+fn milestone_completion_requires_satisfied_milestone_gate_checkpoint() {
+    let dir = tempdir().unwrap();
+    let registry = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    let mut execution_graph = graph();
+    execution_graph.checkpoints.push(TestCheckpointSpec {
+        id: "M1-GATE".into(),
+        milestone_id: "M1".into(),
+        boundary: CheckpointBoundaryKind::MilestoneGate,
+        prerequisites: vec![
+            CheckpointPrerequisiteSpec {
+                jobpack_id: "JP-A".into(),
+                state: PrerequisiteState::Done,
+            },
+            CheckpointPrerequisiteSpec {
+                jobpack_id: "JP-B".into(),
+                state: PrerequisiteState::Done,
+            },
+            CheckpointPrerequisiteSpec {
+                jobpack_id: "JP-C".into(),
+                state: PrerequisiteState::Done,
+            },
+        ],
+        before_jobpack_id: None,
+        cr_review_boundary: false,
+        evidence_need_ids: vec![],
+        modes: vec![EvidenceMode::Verification],
+        goal: "Verify M1 integration".into(),
+        criteria: vec!["All M1 work integrates".into()],
+        required_capabilities: vec![],
+        experiment_dimensions: vec![],
+        evidence_outputs: vec![EvidenceOutputSpec {
+            id: "m1-integration".into(),
+            mode: EvidenceMode::Verification,
+            description: "Milestone integration verification".into(),
+            required: true,
+            evidence_need_id: None,
+        }],
+    });
+
+    let (_revision, _hash, version) =
+        approve_and_register_graph(&registry, execution_graph);
+    registry
+        .acquire_lease(dir.path(), "owner-a", Duration::from_secs(3600))
+        .unwrap();
+
+    let controller = MilestoneController::new(&registry, dir.path(), "owner-a");
+    let first = controller.resolve_or_activate().unwrap().unwrap();
+    assert_eq!(first.jobpack_id, "JP-B");
+    assert_eq!(
+        phase11_complete_active(&dir, &registry, version, "JP-B", "T-B", "change-b")
+            .unwrap()
+            .jobpack_id,
+        "JP-C"
+    );
+    assert_eq!(
+        phase11_complete_active(&dir, &registry, version, "JP-C", "T-C", "change-c")
+            .unwrap()
+            .jobpack_id,
+        "JP-A"
+    );
+    assert!(
+        phase11_complete_active(&dir, &registry, version, "JP-A", "T-A", "change-a").is_none()
+    );
+    assert_eq!(
+        registry.milestone_status(version, "M1").unwrap().as_deref(),
+        Some("VERIFY")
+    );
+
+    let error = controller
+        .mark_verified_milestone_complete("M1")
+        .unwrap_err();
+    assert!(
+        format!("{error:#}")
+            .contains("milestone checkpoint M1-GATE requires a satisfied Tester attempt")
+    );
+    assert_eq!(
+        registry.milestone_status(version, "M1").unwrap().as_deref(),
+        Some("VERIFY")
+    );
+    assert_eq!(
+        registry.milestone_status(version, "M2").unwrap().as_deref(),
+        Some("LOCKED")
+    );
 }
