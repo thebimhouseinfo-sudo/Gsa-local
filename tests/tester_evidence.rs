@@ -134,6 +134,10 @@ fn graph() -> ExecutionGraph {
 }
 
 fn setup() -> (tempfile::TempDir, Registry, i64, i64) {
+    setup_with_graph(graph())
+}
+
+fn setup_with_graph(execution_graph: ExecutionGraph) -> (tempfile::TempDir, Registry, i64, i64) {
     let dir = tempdir().unwrap();
     let registry = Registry::open(dir.path()).unwrap();
     registry.begin_plan_workflow().unwrap();
@@ -153,7 +157,7 @@ fn setup() -> (tempfile::TempDir, Registry, i64, i64) {
         .approve_current_plan(revision.revision, &revision.hash)
         .unwrap();
     let version = registry
-        .register_execution_graph(revision.revision, &revision.hash, &graph())
+        .register_execution_graph(revision.revision, &revision.hash, &execution_graph)
         .unwrap();
     registry
         .acquire_lease(dir.path(), "owner-a", Duration::from_secs(3600))
@@ -1260,4 +1264,60 @@ fn observed_output_from_unsuccessful_mode_cannot_satisfy_required_consumer_evide
     let error = controller.mark_active_jobpack_done().unwrap_err();
     let message = format!("{error:#}");
     assert!(message.contains("not mature for terminal Local CR"));
+}
+
+
+#[test]
+fn nonterminal_local_cr_continuation_preserves_reviewed_checklist_progress() {
+    let mut execution_graph = graph();
+    execution_graph.todos[0]
+        .checklist
+        .push("continue after checkpoint CR".into());
+    execution_graph.checkpoints[0].cr_review_boundary = true;
+
+    let (dir, registry, version, verification_run_id) = setup_with_graph(execution_graph);
+    let due = registry
+        .resolve_tester_checkpoint(&["RUNTIME_PROBE".into()])
+        .unwrap()
+        .unwrap();
+    let artifact = workspace_artifact(&dir, version, due.next_attempt_id.as_deref().unwrap());
+    let attempt = attempt(
+        version,
+        due.next_attempt_id.as_deref().unwrap(),
+        "change-1",
+        artifact,
+        verification_run_id,
+    );
+    registry
+        .record_tester_attempt_evidence(dir.path(), "owner-a", &attempt)
+        .unwrap();
+
+    let cr = registry.resolve_code_cr_boundary().unwrap().unwrap();
+    assert!(!cr.terminal);
+    assert_eq!(cr.boundary_ids, vec!["CHECKPOINT:CP1"]);
+    registry
+        .record_code_cr_review(dir.path(), "owner-a", &cr.key, ReviewVerdict::Pass, &[])
+        .unwrap();
+
+    assert_eq!(registry.checklist_checked(version, "T1", 1).unwrap(), Some(true));
+    assert_eq!(registry.checklist_checked(version, "T1", 2).unwrap(), Some(false));
+    assert_eq!(
+        registry.todo_status(version, "T1").unwrap().as_deref(),
+        Some("PENDING")
+    );
+
+    registry
+        .begin_code_workflow(dir.path(), "owner-a", version, "JP1")
+        .unwrap();
+
+    assert_eq!(registry.checklist_checked(version, "T1", 1).unwrap(), Some(true));
+    assert_eq!(registry.checklist_checked(version, "T1", 2).unwrap(), Some(false));
+    assert_eq!(
+        registry.todo_status(version, "T1").unwrap().as_deref(),
+        Some("PENDING")
+    );
+    assert_eq!(
+        registry.code_workflow_state().unwrap().unwrap().status,
+        "CODER"
+    );
 }
