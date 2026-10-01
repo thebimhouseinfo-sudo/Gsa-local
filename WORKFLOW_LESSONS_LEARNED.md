@@ -2986,3 +2986,135 @@ temporary Human approval
 ```
 
 The long-term fix is to make valid evidence composable and machine-verifiable across the full GSA control plane.
+
+---
+
+# 52. Lessons Learned Collector (LLC) is a recorder/classifier for workflow and skill gaps
+
+GSA Local needs a lightweight Lessons Learned Collector, abbreviated **LLC**.
+
+LLC is not a fixer and does not own workflow changes. Its purpose is to preserve reusable lessons when real project execution shows that the current workflow or an Agent skill is insufficient.
+
+LLC may be invoked explicitly by Human with `llc`, or invoked/recommended by another Agent when that Agent detects one of the trigger conditions below.
+
+## 52.1 Primary trigger: an Agent had to find a workaround instead of the canonical path
+
+The strongest workflow-gap signal is:
+
+    canonical path should work
+    -> canonical path fails / blocks / cannot express required state
+    -> Agent must invent or discover a workaround to continue
+
+When this occurs, the active Agent should treat the workaround as evidence that the workflow contract may be incomplete or inappropriate and call LLC to record it.
+
+Examples include:
+- valid code/test/review evidence exists but lifecycle cannot advance;
+- manual reconciliation is required because runtime state cannot represent the actual continuation;
+- an Agent must bypass, reinterpret, or manually reconstruct a missing contract;
+- the workflow forces repeated Human temporary approval for a healthy implementation state;
+- orchestration requires information that is available in evidence but has no canonical binding path.
+
+The workaround itself is not automatically accepted as the future design. LLC records the canonical path, where it failed, what workaround was needed, why it was necessary, exact evidence references, and the likely workflow-gap class.
+
+Key signal: `workaround required => inspect for workflow contract debt`.
+
+## 52.2 Secondary trigger: a defect required special detection knowledge that normal Agent review missed
+
+A different class of lesson is an **Agent skill gap**.
+
+Signal:
+
+    normal Agent/Reviewer process did not find the defect
+    -> another model, tool, specialist technique, or unusual reasoning path found it
+    -> the detection method is reusable
+
+This should be recorded by LLC as a candidate skill/harness improvement rather than immediately modifying the Agent.
+
+Example pattern:
+
+    Reviewer PASS / no finding
+    -> real problem remains
+    -> Claude or another independent specialist identifies root cause
+    -> detection relied on a reusable heuristic or inspection method
+    => record AGENT_SKILL_GAP
+
+The lesson should capture which role missed the issue, what evidence was available, what special technique exposed it, why the normal procedure missed it, and what reusable heuristic could later be considered for that Agent.
+
+LLC does not update the skill itself.
+
+## 52.3 LLC classifications
+
+LLC should at minimum distinguish:
+- `WORKFLOW_GAP`
+- `AGENT_SKILL_GAP`
+
+Optional descriptive sub-classification may include `CONTRACT_GAP`, `STATE_MODEL_GAP`, `ROUTING_GAP`, `EVIDENCE_BINDING_GAP`, `RECOVERY_GAP`, `HUMAN_GATE_GAP`, `REVIEW_HEURISTIC_GAP`, and `TEST_HEURISTIC_GAP`.
+
+These classifications are descriptive only. They do not trigger repair.
+
+## 52.4 Invocation behavior
+
+Human may invoke LLC directly when a workflow problem is observed.
+
+Agents should also know to invoke LLC when they have concrete evidence that one of the triggers occurred.
+
+Expected pattern:
+
+    Agent performs normal work
+    -> Agent encounters workaround or unusual detection path
+    -> Agent completes/continues the approved task as allowed
+    -> Agent calls LLC with evidence
+    -> LLC records the lesson
+    -> no workflow/source modification occurs
+
+LLC should not be called for every ordinary product bug or expected code failure. It is for reusable deficiencies in GSA workflow, contracts, orchestration, lifecycle/state handling, or Agent review/testing skill.
+
+## 52.5 LLC authority boundary
+
+LLC MAY:
+- record the lesson;
+- classify it;
+- link durable evidence;
+- deduplicate it against an existing lesson;
+- append additional real-project occurrences;
+- note a candidate workflow area or Agent skill that future review should inspect.
+
+LLC MUST NOT:
+- change runtime code;
+- change workflow contracts;
+- modify an Agent skill/harness;
+- alter lifecycle state to make the problem disappear;
+- approve a workaround;
+- create a patch plan;
+- decide that a proposed fix is correct;
+- block the active Job merely because a lesson was recorded.
+
+Future Planner/Reviewer work decides whether and how collected lessons change GSA.
+
+## 52.6 Recommended lesson record
+
+A recorded LLC item should contain enough context for later independent review:
+
+    lesson_id
+    date
+    project/job/run/checkpoint
+    trigger = WORKAROUND_REQUIRED | SPECIAL_DETECTION_REQUIRED
+    classification = WORKFLOW_GAP | AGENT_SKILL_GAP
+    canonical_path
+    observed_failure
+    workaround_or_detection_method
+    evidence_refs
+    affected_role_or_contract
+    reproducibility
+    impact
+    duplicate_of?
+    notes
+
+## 52.7 Key invariants
+
+    LLC records != LLC repairs
+    workaround required => likely workflow lesson
+    special detection required => likely Agent-skill lesson
+    real-project evidence > synthetic confidence for orchestration lessons
+
+The value of LLC is to preserve the signal while the project is still being built and exercised, so later workflow/skill review is based on accumulated real failures rather than memory or isolated anecdotes.
