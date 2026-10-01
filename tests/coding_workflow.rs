@@ -3,6 +3,7 @@ use gsa_local::{
     execution_graph::{ExecutionGraph, JobPackSpec, MilestoneSpec, TodoSpec},
     plan::PlanArtifact,
     registry::{ChecklistClaim, CodeCrBoundaryKey, Registry, ReviewActor, ReviewVerdict},
+    tools::ProjectToolRuntime,
     verification::{
         CommandEvidence, DiscoveryStatus, VerificationCapability, VerificationCommand,
         VerificationCommandKind, VerificationEvidence, VerificationProfile,
@@ -836,4 +837,104 @@ fn phase11_terminal_gate_requires_exact_verification_and_local_cr_pass() {
         registry.jobpack_status(version, "JP1").unwrap().as_deref(),
         Some("DONE")
     );
+}
+
+
+#[test]
+fn reviewer_resume_packet_survives_registry_reopen_with_exact_change_set() {
+    let (dir, registry, version) = setup();
+    registry
+        .begin_code_workflow(dir.path(), "owner-a", version, "JP1")
+        .unwrap();
+    registry
+        .record_code_checkpoint(
+            dir.path(),
+            "owner-a",
+            version,
+            "JP1",
+            "resume-review",
+            "persisted review target",
+            &[ChecklistClaim {
+                todo_id: "T1".into(),
+                position: 1,
+            }],
+            &["review exact target".into()],
+            &journal(),
+            1,
+            0,
+        )
+        .unwrap();
+
+    let reopened = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    let state = reopened.code_workflow_state().unwrap().unwrap();
+    assert_eq!(state.status, "REVIEWER");
+    assert_eq!(state.change_set_id.as_deref(), Some("resume-review"));
+    assert_eq!(state.coder_attempts, 1);
+    assert_eq!(state.reviewer_attempts, 0);
+
+    let checkpoint = reopened
+        .persisted_code_checkpoint(version, "JP1", "resume-review")
+        .unwrap()
+        .unwrap();
+    assert_eq!(checkpoint.summary, "persisted review target");
+    assert_eq!(checkpoint.completed_checklist.len(), 1);
+    assert_eq!(checkpoint.goal_recheck, vec!["review exact target"]);
+
+    let mut runtime = ProjectToolRuntime::new(dir.path()).unwrap();
+    runtime.restore_journal(checkpoint.mutation_journal).unwrap();
+    runtime.verify_journal_current().unwrap();
+}
+
+#[test]
+fn internal_fix_resume_survives_registry_reopen_with_reviewer_findings() {
+    let (dir, registry, version) = setup();
+    registry
+        .begin_code_workflow(dir.path(), "owner-a", version, "JP1")
+        .unwrap();
+    registry
+        .record_code_checkpoint(
+            dir.path(),
+            "owner-a",
+            version,
+            "JP1",
+            "resume-fix",
+            "persisted repair target",
+            &[ChecklistClaim {
+                todo_id: "T1".into(),
+                position: 1,
+            }],
+            &["review exact target".into()],
+            &journal(),
+            1,
+            0,
+        )
+        .unwrap();
+    registry
+        .record_code_review(
+            dir.path(),
+            "owner-a",
+            version,
+            "JP1",
+            "resume-fix",
+            ReviewVerdict::Revise,
+            &["repair this exact defect".into()],
+            1,
+            1,
+        )
+        .unwrap();
+
+    let reopened = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    let state = reopened.code_workflow_state().unwrap().unwrap();
+    assert_eq!(state.status, "INTERNAL_FIX");
+    assert_eq!(state.change_set_id.as_deref(), Some("resume-fix"));
+    assert_eq!(
+        reopened
+            .latest_code_review_findings(version, "JP1", "resume-fix")
+            .unwrap(),
+        vec!["repair this exact defect"]
+    );
+    assert!(reopened
+        .persisted_code_checkpoint(version, "JP1", "resume-fix")
+        .unwrap()
+        .is_some());
 }
