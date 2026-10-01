@@ -9,6 +9,8 @@ use gsa_local::{
     tester_evidence::{
         TesterAttemptEvidence, TesterClassification, TesterModeOutcome, TesterModeResult,
     },
+    tester_execution::tester_capability_catalog,
+    verification::{DiscoveryStatus, VerificationCapability, VerificationProfile},
 };
 use serde_json::json;
 use std::time::Duration;
@@ -210,6 +212,23 @@ fn exact_target_pass_satisfies_checkpoint_without_completion() {
         registry.jobpack_status(version, "JP1").unwrap().as_deref(),
         Some("ACTIVE")
     );
+}
+
+#[test]
+fn runtime_probe_capability_comes_from_tester_catalog() {
+    let (dir, registry, _version) = setup(vec!["RUNTIME_PROBE".into()]);
+    let controller = MilestoneController::new(&registry, dir.path(), "owner-a");
+    let profile = VerificationProfile {
+        status: DiscoveryStatus::Applicable,
+        capabilities: vec![VerificationCapability::Integration],
+        commands: vec![],
+        reason: None,
+    };
+    let capabilities = tester_capability_catalog(&profile);
+    let work = tester_work(&controller, &capabilities);
+    assert_eq!(work.disposition, TesterCheckpointDisposition::Due);
+    assert!(capabilities.iter().any(|item| item == "RUNTIME_PROBE"));
+    assert!(capabilities.iter().any(|item| item == "INTEGRATION"));
 }
 
 #[test]
