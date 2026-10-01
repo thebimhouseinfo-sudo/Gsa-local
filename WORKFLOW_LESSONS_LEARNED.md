@@ -2199,3 +2199,257 @@ control-plane finalization = defective / deferred repair
 ```
 
 When Human-approved progression is used, the next Task must start from the exact accepted source target and carry the unresolved control-plane defect as workflow debt rather than pretending it never happened.
+
+---
+
+# 44. Human-approved temporary progression for non-product gate blockers
+
+A workflow gate can fail even when the bounded implementation itself is already acceptable.
+
+Examples include:
+
+- control-plane identity/bookkeeping defects;
+- stale or malformed lifecycle metadata;
+- CI infrastructure failure;
+- formatting-only policy failure after logic has already been independently verified;
+- unavailable external service required only by the gate machinery;
+- merge/protection/promotion policy that is unrelated to product correctness;
+- a verifier integration defect that prevents a valid evidence record from being recognized.
+
+These cases must not be collapsed into:
+
+```text
+gate failed
+  -> code failed
+```
+
+The workflow needs a first-class temporary exception:
+
+```text
+HUMAN_APPROVED_TEMPORARY_PROGRESSION
+```
+
+This is an operational continuation authority, not a PASS verdict.
+
+## 44.1 Preconditions
+
+Human-approved temporary progression may be requested only when the workflow can show durable evidence for all relevant claims:
+
+1. the exact source target is known;
+2. implementation review for that target is acceptable;
+3. required code/product tests have independently passed, or the blocked gate is demonstrably outside the unexecuted test surface;
+4. no unresolved product/code finding remains;
+5. the blocking gate has been classified as a non-product/non-code blocker;
+6. the blocker and its repair debt are recorded durably;
+7. the Human explicitly approves temporary progression.
+
+If the blocked gate prevented required tests from running and there is no independent PASS evidence for those tests, Human approval must not manufacture that missing evidence.
+
+In that case the workflow may classify the blocker, repair/re-run the gate, or explicitly carry an `UNVERIFIED` limitation, but it must not claim that tests passed.
+
+## 44.2 Temporary progression does not rewrite evidence
+
+The durable record should preserve both facts:
+
+```text
+implementation_evidence = ACCEPTED
+blocking_gate = FAILED / BLOCKED
+progression_authority = HUMAN_APPROVED_TEMPORARY
+repair_debt = OPEN
+```
+
+It must never be rewritten as:
+
+```text
+blocking_gate = PASS
+```
+
+unless that gate later actually passes.
+
+The original failing run/log/result remains part of the audit trail.
+
+## 44.3 Scope of the exception must be narrow
+
+A Human-approved temporary progression record should bind at least:
+
+```text
+project_id
+job_id
+task_ref
+exact source target/revision
+accepted review refs
+accepted test/verification refs
+blocked gate id/type
+block classification
+block evidence ref/log
+Human approval
+allowed next boundary
+deferred repair item
+created_at
+```
+
+The authorization expires when:
+
+- source target changes materially;
+- a new product/code finding appears;
+- evidence applicability changes;
+- the next declared Human/checkpoint boundary is reached;
+- or the blocked gate is repaired and rerun.
+
+The exception must not become a permanent global bypass.
+
+## 44.4 Recommended gate classification
+
+Before asking for temporary Human approval, classify the blocker:
+
+```text
+PRODUCT_FAILURE
+CODE_QUALITY_FAILURE
+TEST_FAILURE
+VERIFICATION_MISSING
+CONTROL_PLANE_DEFECT
+CI_INFRA_FAILURE
+POLICY_FORMATTING_FAILURE
+EXTERNAL_DEPENDENCY_FAILURE
+INTEGRATION_POLICY_BLOCK
+UNKNOWN
+```
+
+Only clearly non-product classes may use temporary progression without first repairing product code.
+
+`UNKNOWN` fails closed.
+
+## 44.5 Current observed incident: formatting-only CI gate blocked T2-ORCHESTRATION
+
+During the current Tester orchestration work, exact target:
+
+```text
+main@a9ea713d43884d70cc5d15809c45257c92d0f8d3
+```
+
+produced GitHub Actions run:
+
+```text
+36745396167
+```
+
+with overall CI result:
+
+```text
+FAIL
+```
+
+The failing repository-check step showed `cargo fmt --check` diffs in:
+
+```text
+tests/tester_orchestration.rs
+```
+
+The observed failure is therefore currently classified as:
+
+```text
+POLICY_FORMATTING_FAILURE
+```
+
+not as evidence of a Tester orchestration logic failure.
+
+Important limitation:
+
+The same CI run stopped at the formatting gate, so that run by itself does **not** prove that all downstream tests passed. Any temporary Human-approved progression at this point would still need independent applicable test/review evidence for the exact source target, or the formatting issue should simply be repaired and CI rerun.
+
+This distinction is essential:
+
+```text
+format gate failed
+!=
+logic test failed
+
+format gate failed
+!=
+tests passed
+```
+
+## 44.6 Gate failures should expose whether they invalidate implementation evidence
+
+Every terminal gate result should carry an impact classification such as:
+
+```text
+invalidates_implementation = true | false | unknown
+invalidates_test_evidence = true | false | unknown
+blocks_progression = true | false
+repair_owner = coder | workflow | ci | human | external
+```
+
+For example:
+
+```text
+cargo fmt --check failure
+  invalidates_implementation = false
+  invalidates_test_evidence = unknown if tests did not run
+  blocks_progression = true
+  repair_owner = coder/workflow
+```
+
+while:
+
+```text
+integration test assertion failure
+  invalidates_implementation = true
+  invalidates_test_evidence = true
+  blocks_progression = true
+  repair_owner = coder
+```
+
+This prevents orchestration from routing every red gate back into product repair.
+
+## 44.7 Deferred architectural requirement
+
+The runtime should eventually support an explicit exception record instead of encoding these cases through ad-hoc `SUPERSEDED` states.
+
+Suggested contract:
+
+```text
+TemporaryProgressionException
+  exception_id
+  project_id
+  job_id
+  task_ref
+  source_target
+  accepted_evidence_refs[]
+  blocked_gate
+  block_classification
+  block_evidence_refs[]
+  human_approved
+  allowed_next_boundary
+  expires_on_target_change
+  repair_debt_ref
+  status = ACTIVE | RESOLVED | EXPIRED
+```
+
+Normal orchestration then becomes:
+
+```text
+gate BLOCKED
+  -> classify blocker
+  -> verify accepted implementation/test evidence
+  -> Human approval when eligible
+  -> persist TemporaryProgressionException
+  -> continue only to bounded next boundary
+  -> repair blocker later
+  -> rerun original gate
+  -> resolve exception
+```
+
+## 44.8 Key invariant
+
+A temporary Human exception may authorize **progression**, but never fabricate **verification**.
+
+Preserve all three dimensions independently:
+
+```text
+product/code correctness
+verification status
+workflow progression authority
+```
+
+A failure in one dimension must not silently rewrite the other two.
