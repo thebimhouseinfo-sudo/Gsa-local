@@ -294,7 +294,10 @@ fn exact_target_pass_satisfies_checkpoint_without_completion() {
         NextWork::Coder(work) => assert_eq!(work.jobpack_id, "JP1"),
         NextWork::Tester(work) => panic!("checkpoint remained {}", work.disposition.as_str()),
         NextWork::Repair(work) => panic!("checkpoint requested repair {}", work.checkpoint.id),
-        NextWork::Cr(work) => panic!("checkpoint unexpectedly requested CR {}", work.key.boundary_id),
+        NextWork::Cr(work) => panic!(
+            "checkpoint unexpectedly requested CR {}",
+            work.key.boundary_id
+        ),
     }
     assert_eq!(
         registry.jobpack_status(version, "JP1").unwrap().as_deref(),
@@ -418,7 +421,10 @@ fn reviewed_repair_retests_same_checkpoint_on_new_exact_target() {
         NextWork::Coder(work) => assert_eq!(work.jobpack_id, "JP1"),
         NextWork::Tester(work) => panic!("retest remained {}", work.disposition.as_str()),
         NextWork::Repair(work) => panic!("retest still requested repair {}", work.checkpoint.id),
-        NextWork::Cr(work) => panic!("retest unexpectedly requested CR {}", work.key.boundary_id),
+        NextWork::Cr(work) => panic!(
+            "retest unexpectedly requested CR {}",
+            work.key.boundary_id
+        ),
     }
 }
 
