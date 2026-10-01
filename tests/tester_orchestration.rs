@@ -156,7 +156,90 @@ fn tester_work(
     match controller.resolve_next(capabilities).unwrap().unwrap() {
         NextWork::Tester(work) => work,
         NextWork::Coder(work) => panic!("expected Tester, got Coder {}", work.jobpack_id),
+        NextWork::Repair(work) => panic!(
+            "expected Tester, got Repair for checkpoint {}",
+            work.checkpoint.id
+        ),
     }
+}
+
+fn repair_work(
+    controller: &MilestoneController<'_>,
+) -> gsa_local::controller::TesterRepairWork {
+    match controller.resolve_next(&[]).unwrap().unwrap() {
+        NextWork::Repair(work) => work,
+        NextWork::Tester(work) => panic!("expected Repair, got Tester {}", work.disposition.as_str()),
+        NextWork::Coder(work) => panic!("expected Repair, got Coder {}", work.jobpack_id),
+    }
+}
+
+fn record_product_failure(
+    dir: &tempfile::TempDir,
+    registry: &Registry,
+    version: i64,
+    attempt_id: String,
+    target: gsa_local::tester_evidence::TesterTargetBinding,
+) {
+    registry
+        .record_tester_attempt_evidence(
+            dir.path(),
+            "owner-a",
+            &TesterAttemptEvidence {
+                graph_version: version,
+                checkpoint_id: "CP1".into(),
+                attempt_id,
+                target,
+                mode_results: vec![TesterModeResult {
+                    mode: EvidenceMode::Verify,
+                    outcome: TesterModeOutcome::Fail,
+                    reason: Some("observed product behavior violates checkpoint criterion".into()),
+                }],
+                classifications: vec![TesterClassification::ProductFailure],
+                experiment: None,
+                outputs: vec![],
+                limitations: vec![],
+            },
+        )
+        .unwrap();
+}
+
+fn review_repair_target(
+    dir: &tempfile::TempDir,
+    registry: &Registry,
+    version: i64,
+    change_set_id: &str,
+) {
+    registry
+        .begin_code_workflow(dir.path(), "owner-a", version, "JP1")
+        .unwrap();
+    registry
+        .record_code_checkpoint(
+            dir.path(),
+            "owner-a",
+            version,
+            "JP1",
+            change_set_id,
+            "repair product failure",
+            &[],
+            &["recheck failed Tester criterion".into()],
+            &json!([{"path":"src/example.rs","before_sha256":"old","after_sha256":change_set_id}]),
+            1,
+            0,
+        )
+        .unwrap();
+    registry
+        .record_code_review(
+            dir.path(),
+            "owner-a",
+            version,
+            "JP1",
+            change_set_id,
+            ReviewVerdict::Pass,
+            &[],
+            1,
+            1,
+        )
+        .unwrap();
 }
 
 #[test]
@@ -244,14 +327,147 @@ fn missing_capability_is_integration_not_ready() {
 }
 
 #[test]
-fn fail_and_needs_human_stop_coder_progression() {
-    for (outcome, expected) in [
+fn product_failure_routes_to_active_coder_repair_without_marking_done() {
+    let (dir, registry, version) = setup(vec![]);
+    let controller = MilestoneController::new(&registry, dir.path(), "owner-a");
+    let due = tester_work(&controller, &[]);
+    record_product_failure(
+        &dir,
+        &registry,
+        version,
+        due.next_attempt_id.unwrap(),
+        due.target.unwrap(),
+    );
+
+    let repair = repair_work(&controller);
+    assert_eq!(repair.active_work.jobpack_id, "JP1");
+    assert_eq!(repair.checkpoint.id, "CP1");
+    assert_eq!(repair.retest_context.failed_attempt_id, "attempt-0001");
+    assert!(repair
+        .retest_context
+        .failure_summary
+        .contains("PRODUCT_FAILURE"));
+    assert_eq!(
+        registry.jobpack_status(version, "JP1").unwrap().as_deref(),
+        Some("ACTIVE")
+    );
+}
+
+#[test]
+fn reviewed_repair_retests_same_checkpoint_on_new_exact_target() {
+    let (dir, registry, version) = setup(vec![]);
+    let controller = MilestoneController::new(&registry, dir.path(), "owner-a");
+    let due = tester_work(&controller, &[]);
+    record_product_failure(
+        &dir,
+        &registry,
+        version,
+        due.next_attempt_id.unwrap(),
+        due.target.unwrap(),
+    );
+    let repair = repair_work(&controller);
+    assert_eq!(repair.active_work.jobpack_id, "JP1");
+
+    review_repair_target(&dir, &registry, version, "change-2");
+
+    let retest = tester_work(&controller, &[]);
+    assert_eq!(retest.disposition, TesterCheckpointDisposition::Due);
+    assert_eq!(retest.checkpoint.id, "CP1");
+    assert_eq!(retest.next_attempt_id.as_deref(), Some("attempt-0002"));
+    assert_eq!(
+        retest.target.as_ref().unwrap().prerequisites[0]
+            .change_set_id
+            .as_deref(),
+        Some("change-2")
+    );
+    let context = retest.retest_context.as_ref().unwrap();
+    assert_eq!(context.failed_attempt_id, "attempt-0001");
+    assert_ne!(
+        context.failed_target_fingerprint,
+        retest.target_fingerprint.as_deref().unwrap()
+    );
+
+    registry
+        .record_tester_attempt_evidence(
+            dir.path(),
+            "owner-a",
+            &TesterAttemptEvidence {
+                graph_version: version,
+                checkpoint_id: "CP1".into(),
+                attempt_id: retest.next_attempt_id.unwrap(),
+                target: retest.target.unwrap(),
+                mode_results: vec![TesterModeResult {
+                    mode: EvidenceMode::Verify,
+                    outcome: TesterModeOutcome::Pass,
+                    reason: None,
+                }],
+                classifications: vec![],
+                experiment: None,
+                outputs: vec![],
+                limitations: vec![],
+            },
+        )
+        .unwrap();
+
+    match controller.resolve_next(&[]).unwrap().unwrap() {
+        NextWork::Coder(work) => assert_eq!(work.jobpack_id, "JP1"),
+        NextWork::Tester(work) => panic!("retest remained {}", work.disposition.as_str()),
+        NextWork::Repair(work) => panic!("retest still requested repair {}", work.checkpoint.id),
+    }
+}
+
+#[test]
+fn prior_quality_pass_cannot_satisfy_a_later_reviewed_target() {
+    let (dir, registry, version) = setup(vec![]);
+    let controller = MilestoneController::new(&registry, dir.path(), "owner-a");
+    let due = tester_work(&controller, &[]);
+    registry
+        .record_tester_attempt_evidence(
+            dir.path(),
+            "owner-a",
+            &TesterAttemptEvidence {
+                graph_version: version,
+                checkpoint_id: "CP1".into(),
+                attempt_id: due.next_attempt_id.unwrap(),
+                target: due.target.unwrap(),
+                mode_results: vec![TesterModeResult {
+                    mode: EvidenceMode::Verify,
+                    outcome: TesterModeOutcome::Pass,
+                    reason: None,
+                }],
+                classifications: vec![],
+                experiment: None,
+                outputs: vec![],
+                limitations: vec![],
+            },
+        )
+        .unwrap();
+
+    review_repair_target(&dir, &registry, version, "change-2");
+
+    let new_target = tester_work(&controller, &[]);
+    assert_eq!(new_target.disposition, TesterCheckpointDisposition::Due);
+    assert_eq!(new_target.next_attempt_id.as_deref(), Some("attempt-0002"));
+    assert_eq!(
+        new_target.target.as_ref().unwrap().prerequisites[0]
+            .change_set_id
+            .as_deref(),
+        Some("change-2")
+    );
+    assert!(new_target.retest_context.is_none());
+}
+
+#[test]
+fn non_product_failure_and_needs_human_still_stop_coder_progression() {
+    for (outcome, classification, expected) in [
         (
             TesterModeOutcome::Fail,
+            TesterClassification::TestFailure,
             TesterCheckpointDisposition::Blocked,
         ),
         (
             TesterModeOutcome::NeedsHuman,
+            TesterClassification::ProductFailure,
             TesterCheckpointDisposition::NeedsHuman,
         ),
     ] {
@@ -272,7 +488,7 @@ fn fail_and_needs_human_stop_coder_progression() {
                         outcome,
                         reason: Some("not satisfied".into()),
                     }],
-                    classifications: vec![TesterClassification::ProductFailure],
+                    classifications: vec![classification],
                     experiment: None,
                     outputs: vec![],
                     limitations: vec![],
