@@ -64,6 +64,7 @@ fn graph(required_capabilities: Vec<String>) -> ExecutionGraph {
                 state: PrerequisiteState::ReviewPass,
             }],
             before_jobpack_id: None,
+            cr_review_boundary: false,
             evidence_need_ids: vec![],
             modes: vec![EvidenceMode::Verify],
             goal: "verify reviewed target".into(),
