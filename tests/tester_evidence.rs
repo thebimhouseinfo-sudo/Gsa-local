@@ -1167,7 +1167,6 @@ fn lease_owner_is_required_before_tester_attempt_can_prepare_execution() {
         .unwrap();
 }
 
-
 #[test]
 fn downstream_active_work_receives_only_resolved_observed_tester_evidence() {
     let (dir, registry, version, verification_run_id) = setup();
