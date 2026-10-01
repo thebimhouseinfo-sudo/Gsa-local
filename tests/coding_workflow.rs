@@ -2,7 +2,7 @@ use gsa_local::{
     controller::MilestoneController,
     execution_graph::{ExecutionGraph, JobPackSpec, MilestoneSpec, TodoSpec},
     plan::PlanArtifact,
-    registry::{ChecklistClaim, Registry, ReviewActor, ReviewVerdict},
+    registry::{CodeCrBoundaryKey, ChecklistClaim, Registry, ReviewActor, ReviewVerdict},
 };
 use serde_json::json;
 use std::time::Duration;
@@ -600,4 +600,117 @@ fn new_code_workflow_invalidates_prior_checklist_completion() {
         registry.jobpack_status(version, "JP1").unwrap().as_deref(),
         Some("ACTIVE")
     );
+}
+
+
+#[test]
+fn exact_code_cr_boundary_result_is_idempotent_and_conflict_safe() {
+    let (dir, registry, version) = setup();
+    registry
+        .begin_code_workflow(dir.path(), "owner-a", version, "JP1")
+        .unwrap();
+    registry
+        .record_code_checkpoint(
+            dir.path(),
+            "owner-a",
+            version,
+            "JP1",
+            "change-1",
+            "implemented",
+            &[
+                ChecklistClaim {
+                    todo_id: "T1".into(),
+                    position: 1,
+                },
+                ChecklistClaim {
+                    todo_id: "T1".into(),
+                    position: 2,
+                },
+            ],
+            &["criteria checked".into()],
+            &journal(),
+            1,
+            0,
+        )
+        .unwrap();
+    registry
+        .record_code_review(
+            dir.path(),
+            "owner-a",
+            version,
+            "JP1",
+            "change-1",
+            ReviewVerdict::Pass,
+            &[],
+            1,
+            1,
+        )
+        .unwrap();
+
+    let key = CodeCrBoundaryKey {
+        graph_version: version,
+        jobpack_id: "JP1".into(),
+        change_set_id: "change-1".into(),
+        boundary_id: "JOBPACK_TERMINAL".into(),
+        evidence_fingerprint: "evidence-v1".into(),
+    };
+    registry
+        .record_code_cr_review(dir.path(), "owner-a", &key, ReviewVerdict::Pass, &[])
+        .unwrap();
+    registry
+        .record_code_cr_review(dir.path(), "owner-a", &key, ReviewVerdict::Pass, &[])
+        .unwrap();
+
+    let stored = registry.code_cr_review(&key).unwrap().unwrap();
+    assert_eq!(stored.key, key);
+    assert_eq!(stored.verdict, "PASS");
+    assert!(stored.findings.is_empty());
+
+    assert!(registry
+        .record_code_cr_review(
+            dir.path(),
+            "owner-a",
+            &stored.key,
+            ReviewVerdict::Revise,
+            &["different verdict".into()],
+        )
+        .is_err());
+}
+
+#[test]
+fn code_cr_rejects_stale_change_set_without_exact_reviewer_pass() {
+    let (dir, registry, version) = setup();
+    registry
+        .begin_code_workflow(dir.path(), "owner-a", version, "JP1")
+        .unwrap();
+    registry
+        .record_code_checkpoint(
+            dir.path(),
+            "owner-a",
+            version,
+            "JP1",
+            "change-1",
+            "implemented",
+            &[ChecklistClaim {
+                todo_id: "T1".into(),
+                position: 1,
+            }],
+            &["partial".into()],
+            &journal(),
+            1,
+            0,
+        )
+        .unwrap();
+
+    let stale = CodeCrBoundaryKey {
+        graph_version: version,
+        jobpack_id: "JP1".into(),
+        change_set_id: "change-stale".into(),
+        boundary_id: "JOBPACK_TERMINAL".into(),
+        evidence_fingerprint: "evidence-v1".into(),
+    };
+    let error = registry
+        .record_code_cr_review(dir.path(), "owner-a", &stale, ReviewVerdict::Pass, &[])
+        .unwrap_err();
+    assert!(format!("{error:#}").contains("exact REVIEW_PASS"));
 }
