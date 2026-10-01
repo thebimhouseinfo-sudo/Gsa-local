@@ -3325,6 +3325,21 @@ impl Registry {
         let work = active_work_tx(&tx, graph_version)?
             .context("there is no ACTIVE Job Pack to complete")?;
 
+        let cr_work = code_cr_boundary_work_tx(&tx, graph_version)?
+            .context("Job Pack is not mature for terminal Local CR")?;
+        if !cr_work.terminal
+            || !cr_work.boundary_ids.iter().any(|boundary| boundary == "JOBPACK_TERMINAL")
+        {
+            bail!("Job Pack terminal gates are not fully satisfied");
+        }
+        let cr_pass = cr_work
+            .existing_review
+            .as_ref()
+            .is_some_and(|review| review.verdict == "PASS");
+        if !cr_pass {
+            bail!("Job Pack terminal requires exact Local CR PASS");
+        }
+
         let updated = tx.execute(
             r#"
             UPDATE execution_jobpacks
