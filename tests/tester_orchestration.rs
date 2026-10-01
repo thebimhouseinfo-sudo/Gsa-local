@@ -421,10 +421,7 @@ fn reviewed_repair_retests_same_checkpoint_on_new_exact_target() {
         NextWork::Coder(work) => assert_eq!(work.jobpack_id, "JP1"),
         NextWork::Tester(work) => panic!("retest remained {}", work.disposition.as_str()),
         NextWork::Repair(work) => panic!("retest still requested repair {}", work.checkpoint.id),
-        NextWork::Cr(work) => panic!(
-            "retest unexpectedly requested CR {}",
-            work.key.boundary_id
-        ),
+        NextWork::Cr(work) => panic!("retest unexpectedly requested CR {}", work.key.boundary_id),
     }
 }
 
