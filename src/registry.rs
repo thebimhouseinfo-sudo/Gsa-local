@@ -25,6 +25,22 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeCrBoundaryKey {
+    pub graph_version: i64,
+    pub jobpack_id: String,
+    pub change_set_id: String,
+    pub boundary_id: String,
+    pub evidence_fingerprint: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeCrReviewRecord {
+    pub key: CodeCrBoundaryKey,
+    pub verdict: String,
+    pub findings: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanBinding {
     pub revision: i64,
@@ -402,6 +418,21 @@ impl Registry {
                 verdict TEXT NOT NULL,
                 findings TEXT NOT NULL,
                 created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS code_cr_reviews (
+                graph_version INTEGER NOT NULL,
+                jobpack_id TEXT NOT NULL,
+                change_set_id TEXT NOT NULL,
+                boundary_id TEXT NOT NULL,
+                evidence_fingerprint TEXT NOT NULL,
+                verdict TEXT NOT NULL,
+                findings TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY (
+                    graph_version, jobpack_id, change_set_id,
+                    boundary_id, evidence_fingerprint
+                )
             );
 
             CREATE TABLE IF NOT EXISTS verification_runs (
@@ -2005,6 +2036,149 @@ impl Registry {
             )
             .optional()
             .map_err(Into::into)
+    }
+
+    pub fn record_code_cr_review(
+        &self,
+        project_root: &Path,
+        owner: &str,
+        key: &CodeCrBoundaryKey,
+        verdict: ReviewVerdict,
+        findings: &[String],
+    ) -> Result<()> {
+        if key.jobpack_id.trim().is_empty()
+            || key.change_set_id.trim().is_empty()
+            || key.boundary_id.trim().is_empty()
+            || key.evidence_fingerprint.trim().is_empty()
+        {
+            bail!("code CR boundary key fields must be non-empty");
+        }
+
+        let tx = self.conn.unchecked_transaction()?;
+        assert_lease_owner_tx(&tx, project_root, owner)?;
+        assert_active_jobpack_binding_tx(&tx, key.graph_version, &key.jobpack_id)?;
+
+        let workflow_state: Option<(Option<String>, String)> = tx
+            .query_row(
+                r#"
+                SELECT change_set_id, status
+                FROM code_workflow_state
+                WHERE id=1 AND graph_version=?1 AND jobpack_id=?2
+                "#,
+                params![key.graph_version, key.jobpack_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let Some((state_change_set, state_status)) = workflow_state else {
+            bail!("code CR target has no code workflow state");
+        };
+        if state_status != "REVIEW_PASS"
+            || state_change_set.as_deref() != Some(key.change_set_id.as_str())
+        {
+            bail!(
+                "code CR requires exact REVIEW_PASS on change set {}; found status={} change_set={:?}",
+                key.change_set_id,
+                state_status,
+                state_change_set
+            );
+        }
+
+        let existing: Option<(String, String)> = tx
+            .query_row(
+                r#"
+                SELECT verdict, findings
+                FROM code_cr_reviews
+                WHERE graph_version=?1 AND jobpack_id=?2 AND change_set_id=?3
+                  AND boundary_id=?4 AND evidence_fingerprint=?5
+                "#,
+                params![
+                    key.graph_version,
+                    key.jobpack_id,
+                    key.change_set_id,
+                    key.boundary_id,
+                    key.evidence_fingerprint
+                ],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let findings_json = serde_json::to_string(findings)?;
+        if let Some((existing_verdict, existing_findings)) = existing {
+            if existing_verdict == verdict.as_str() && existing_findings == findings_json {
+                tx.commit()?;
+                return Ok(());
+            }
+            bail!("conflicting code CR result already exists for exact boundary key");
+        }
+
+        tx.execute(
+            r#"
+            INSERT INTO code_cr_reviews
+                (graph_version, jobpack_id, change_set_id, boundary_id,
+                 evidence_fingerprint, verdict, findings, created_at)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+            "#,
+            params![
+                key.graph_version,
+                key.jobpack_id,
+                key.change_set_id,
+                key.boundary_id,
+                key.evidence_fingerprint,
+                verdict.as_str(),
+                findings_json,
+                unix_seconds()?
+            ],
+        )?;
+        append_event_tx(
+            &tx,
+            if verdict == ReviewVerdict::Pass {
+                "CODE_CR_PASS"
+            } else {
+                "CODE_CR_REVISE"
+            },
+            &serde_json::json!({
+                "graph_version": key.graph_version,
+                "jobpack": key.jobpack_id,
+                "change_set_id": key.change_set_id,
+                "boundary_id": key.boundary_id,
+                "evidence_fingerprint": key.evidence_fingerprint,
+                "findings": findings
+            }),
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn code_cr_review(
+        &self,
+        key: &CodeCrBoundaryKey,
+    ) -> Result<Option<CodeCrReviewRecord>> {
+        let row: Option<(String, String)> = self
+            .conn
+            .query_row(
+                r#"
+                SELECT verdict, findings
+                FROM code_cr_reviews
+                WHERE graph_version=?1 AND jobpack_id=?2 AND change_set_id=?3
+                  AND boundary_id=?4 AND evidence_fingerprint=?5
+                "#,
+                params![
+                    key.graph_version,
+                    key.jobpack_id,
+                    key.change_set_id,
+                    key.boundary_id,
+                    key.evidence_fingerprint
+                ],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        row.map(|(verdict, findings)| {
+            Ok(CodeCrReviewRecord {
+                key: key.clone(),
+                verdict,
+                findings: serde_json::from_str(&findings)?,
+            })
+        })
+        .transpose()
     }
 
     pub fn resolve_tester_checkpoint(
@@ -3713,6 +3887,7 @@ fn validate_tester_target_tx(
         boundary: CheckpointBoundaryKind::AfterJobpackSet,
         prerequisites: checkpoint_states,
         before_jobpack_id: None,
+        cr_review_boundary: false,
         evidence_need_ids: vec![],
         modes: vec![crate::plan::EvidenceMode::Verify],
         goal: "validate Tester target".into(),
