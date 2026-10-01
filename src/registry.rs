@@ -3306,8 +3306,7 @@ impl Registry {
                     params![project_root, owner, now],
                 )?;
             }
-            Some((existing_owner, _))
-                if existing_owner.starts_with("pid:") && !owner_process_alive(&existing_owner) =>
+            Some((existing_owner, _)) if pid_owner_known_dead(&existing_owner) =>
             {
                 tx.execute(
                     "DELETE FROM execution_lease WHERE project_root = ?1",
@@ -4643,6 +4642,25 @@ fn ensure_milestone_checkpoint_tx(
 }
 
 #[cfg(unix)]
+fn pid_owner_known_dead(owner: &str) -> bool {
+    let Some(pid) = owner
+        .strip_prefix("pid:")
+        .and_then(|value| value.parse::<i32>().ok())
+    else {
+        return false;
+    };
+    if pid <= 0 {
+        return false;
+    }
+    !owner_process_alive(owner)
+}
+
+#[cfg(not(unix))]
+fn pid_owner_known_dead(_owner: &str) -> bool {
+    false
+}
+
+#[cfg(unix)]
 fn owner_process_alive(owner: &str) -> bool {
     let Some(pid) = owner
         .strip_prefix("pid:")
@@ -4701,6 +4719,16 @@ mod tests {
         registry
             .acquire_lease(dir.path(), "owner-b", Duration::from_secs(3600))
             .unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn pid_reclaim_requires_positive_dead_process_evidence() {
+        let current = format!("pid:{}", std::process::id());
+        assert!(!pid_owner_known_dead(&current));
+        assert!(pid_owner_known_dead("pid:999999999"));
+        assert!(!pid_owner_known_dead("pid:not-a-number"));
+        assert!(!pid_owner_known_dead("owner-a"));
     }
 
     #[cfg(unix)]
