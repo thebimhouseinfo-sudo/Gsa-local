@@ -316,16 +316,27 @@ fn controller_activates_deterministically_and_never_jumps_milestones() {
     );
     assert_eq!(registry.active_jobpack_count(version).unwrap(), 0);
 
-    let next = controller
+    assert!(controller
         .mark_verified_milestone_complete("M1")
         .unwrap()
-        .unwrap();
-    assert_eq!(next.milestone_id, "M2");
-    assert_eq!(next.jobpack_id, "JP-D");
+        .is_none());
     assert_eq!(
         registry.milestone_status(version, "M1").unwrap().as_deref(),
         Some("COMPLETE")
     );
+    assert_eq!(
+        registry.milestone_status(version, "M2").unwrap().as_deref(),
+        Some("LOCKED")
+    );
+    assert!(controller.resolve_or_activate().unwrap().is_none());
+    assert_eq!(
+        registry.milestone_status(version, "M2").unwrap().as_deref(),
+        Some("LOCKED")
+    );
+
+    let next = controller.start_next_milestone().unwrap().unwrap();
+    assert_eq!(next.milestone_id, "M2");
+    assert_eq!(next.jobpack_id, "JP-D");
     assert_eq!(
         registry.milestone_status(version, "M2").unwrap().as_deref(),
         Some("ACTIVE")
