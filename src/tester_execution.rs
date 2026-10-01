@@ -5,7 +5,7 @@ use crate::{
     ollama::{ChatMessage, OllamaClient, ToolCall, ToolDefinition},
     plan::EvidenceNeed,
     process_runner::{ProcessObservation, TesterSandboxRunner},
-    registry::{Registry, TesterExecutionStepRecord},
+    registry::{Registry, TesterExecutionStepRecord, TesterRetestContext},
     session::Session,
     tester_evidence::{
         AdapterObservationField, ExperimentContext, ReplaySafety, TesterAttemptEvidence,
@@ -692,6 +692,7 @@ impl<'a> TesterWorkflow<'a> {
         checkpoint: &TestCheckpointSpec,
         target: TesterTargetBinding,
         attempt_id: &str,
+        retest_context: Option<&TesterRetestContext>,
         project_tools: &mut ProjectToolRuntime,
     ) -> Result<TesterAttemptEvidence> {
         let plan = self
@@ -731,10 +732,11 @@ impl<'a> TesterWorkflow<'a> {
             "checkpoint": checkpoint,
             "target": target,
             "evidence_needs": evidence_needs,
+            "retest_context": retest_context,
             "resume_state": resume_state,
             "persisted_execution_steps": persisted_execution_steps,
             "resumed_execution_observations": resumed_observations,
-            "instruction": "Independently ground on the checkpoint contract and persisted resume state. Reuse completed persisted execution evidence, do not duplicate completed steps, plan only remaining tests/experiments, author Tester-owned artifacts if needed, execute through fixed adapters, analyze/adapt within checkpoint scope, then submit a structured report. Do not invent runtime facts or thresholds."
+            "instruction": "Independently ground on the checkpoint contract and persisted resume state. If retest_context is present, explicitly rerun the relevant previously failing case(s) plus the checkpoint regression surface against the new exact target; do not treat the prior quality verdict as applicable to the new target. Reuse completed persisted execution evidence only when it belongs to the current exact attempt/target, do not duplicate completed steps, plan only remaining tests/experiments, author Tester-owned artifacts if needed, execute through fixed adapters, analyze/adapt within checkpoint scope, then submit a structured report. Do not invent runtime facts or thresholds."
         });
         let mut messages = vec![
             ChatMessage::system(system),
