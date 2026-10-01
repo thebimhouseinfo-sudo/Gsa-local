@@ -97,6 +97,27 @@ impl ProjectToolRuntime {
         self.journal.clear();
     }
 
+    pub fn restore_journal(&mut self, records: Vec<MutationRecord>) -> Result<()> {
+        let mut restored = Vec::with_capacity(records.len());
+        for mut record in records {
+            let resolved = self.resolve_existing(&record.path, false)?;
+            let current = sha256_file(&resolved)?;
+            if current != record.after_sha256 {
+                bail!(
+                    "stale restored change set: {} expected {}, current {}",
+                    record.path,
+                    record.after_sha256,
+                    current
+                );
+            }
+            record.after_content = fs::read_to_string(&resolved).unwrap_or_default();
+            record.before_content = None;
+            restored.push(record);
+        }
+        self.journal = restored;
+        Ok(())
+    }
+
     pub fn change_set_id(&self) -> Result<String> {
         let canonical = serde_json::to_vec(&self.journal)?;
         Ok(sha256_bytes(&canonical))
