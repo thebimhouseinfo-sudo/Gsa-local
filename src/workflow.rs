@@ -644,38 +644,174 @@ impl<'a> CodingWorkflow<'a> {
         repair_context: Option<&serde_json::Value>,
         tool_runtime: &mut ProjectToolRuntime,
     ) -> Result<CodingOutcome> {
-        self.registry.begin_code_workflow(
-            self.project_root,
-            self.lease_owner,
-            active_work.graph_version,
-            &active_work.jobpack_id,
-        )?;
-        tool_runtime.clear_journal();
+        let mut state = self
+            .registry
+            .code_workflow_state()?
+            .filter(|state| {
+                state.graph_version == active_work.graph_version
+                    && state.jobpack_id == active_work.jobpack_id
+            });
 
-        let mut coder_attempts = 1u32;
-        let mut reviewer_attempts = 0u32;
+        if entry_agent == AgentId::InternalFix {
+            if let Some(current) = &state {
+                if current.status == "REVIEW_PASS" {
+                    let change_set_id = current
+                        .change_set_id
+                        .as_deref()
+                        .context("repair entry requires exact reviewed change set")?;
+                    self.registry.enter_code_internal_fix(
+                        self.project_root,
+                        self.lease_owner,
+                        active_work.graph_version,
+                        &active_work.jobpack_id,
+                        change_set_id,
+                        "external repair findings require normal Internal Fix -> Reviewer flow",
+                    )?;
+                    state = self.registry.code_workflow_state()?;
+                }
+            }
+        }
+
+        if state.is_none() {
+            self.registry.begin_code_workflow(
+                self.project_root,
+                self.lease_owner,
+                active_work.graph_version,
+                &active_work.jobpack_id,
+            )?;
+            state = self.registry.code_workflow_state()?;
+        }
+
+        let state = state.context("code workflow state is missing after entry resolution")?;
         let mut tasks = self
             .registry
             .jobpack_code_tasks(active_work.graph_version, &active_work.jobpack_id)?;
-        let mut checkpoint = self
-            .invoke_code_agent(
-                entry_agent,
-                requirement,
-                active_work,
-                &tasks,
-                initial_findings,
-                None,
-                repair_context,
-                tool_runtime,
-            )
-            .await?;
-        let mut change_set_id = self.persist_code_checkpoint(
-            active_work,
-            &checkpoint,
-            tool_runtime,
-            coder_attempts,
-            reviewer_attempts,
-        )?;
+        let mut coder_attempts = state.coder_attempts;
+        let mut reviewer_attempts = state.reviewer_attempts;
+
+        let load_checkpoint = |change_set_id: &str,
+                               tool_runtime: &mut ProjectToolRuntime|
+         -> Result<CodeCheckpointSubmission> {
+            let persisted = self
+                .registry
+                .persisted_code_checkpoint(
+                    active_work.graph_version,
+                    &active_work.jobpack_id,
+                    change_set_id,
+                )?
+                .context("persisted code workflow state is missing its code checkpoint")?;
+            tool_runtime.restore_journal(persisted.mutation_journal)?;
+            Ok(CodeCheckpointSubmission {
+                summary: persisted.summary,
+                completed_checklist: persisted.completed_checklist,
+                goal_recheck: persisted.goal_recheck,
+            })
+        };
+
+        let (mut checkpoint, mut change_set_id) = match state.status.as_str() {
+            "CODER" => {
+                tool_runtime.clear_journal();
+                coder_attempts += 1;
+                let checkpoint = self
+                    .invoke_code_agent(
+                        AgentId::Coder,
+                        requirement,
+                        active_work,
+                        &tasks,
+                        initial_findings,
+                        None,
+                        repair_context,
+                        tool_runtime,
+                    )
+                    .await?;
+                let change_set_id = self.persist_code_checkpoint(
+                    active_work,
+                    &checkpoint,
+                    tool_runtime,
+                    coder_attempts,
+                    reviewer_attempts,
+                )?;
+                (checkpoint, change_set_id)
+            }
+            "REVIEWER" => {
+                let change_set_id = state
+                    .change_set_id
+                    .context("REVIEWER resume requires exact change set")?;
+                let checkpoint = load_checkpoint(&change_set_id, tool_runtime)?;
+                (checkpoint, change_set_id)
+            }
+            "INTERNAL_FIX" => {
+                let previous_change_set_id = state
+                    .change_set_id
+                    .context("INTERNAL_FIX resume requires exact change set")?;
+                let previous = load_checkpoint(&previous_change_set_id, tool_runtime)?;
+                let findings = if initial_findings.is_empty() {
+                    self.registry.latest_code_review_findings(
+                        active_work.graph_version,
+                        &active_work.jobpack_id,
+                        &previous_change_set_id,
+                    )?
+                } else {
+                    initial_findings.to_vec()
+                };
+                if findings.is_empty() {
+                    bail!("INTERNAL_FIX resume requires persisted or supplied findings");
+                }
+                let journal_len_before_fix = tool_runtime.journal().len();
+                coder_attempts += 1;
+                tasks = self
+                    .registry
+                    .jobpack_code_tasks(active_work.graph_version, &active_work.jobpack_id)?;
+                let checkpoint = self
+                    .invoke_code_agent(
+                        AgentId::InternalFix,
+                        requirement,
+                        active_work,
+                        &tasks,
+                        &findings,
+                        Some(&previous),
+                        repair_context,
+                        tool_runtime,
+                    )
+                    .await?;
+                let change_set_id = self.persist_code_checkpoint(
+                    active_work,
+                    &checkpoint,
+                    tool_runtime,
+                    coder_attempts,
+                    reviewer_attempts,
+                )?;
+                if !repair_progressed(
+                    journal_len_before_fix,
+                    tool_runtime.journal().len(),
+                    &previous_change_set_id,
+                    &change_set_id,
+                ) {
+                    return self.pause(
+                        active_work,
+                        Some(previous_change_set_id),
+                        coder_attempts,
+                        reviewer_attempts,
+                        "Internal Fix resume produced no new source mutation/change set",
+                    );
+                }
+                (checkpoint, change_set_id)
+            }
+            "REVIEW_PASS" => {
+                let change_set_id = state
+                    .change_set_id
+                    .context("REVIEW_PASS resume requires exact change set")?;
+                return Ok(CodingOutcome::ReviewPass { change_set_id });
+            }
+            "PAUSED" => {
+                return Ok(CodingOutcome::Paused {
+                    change_set_id: state.change_set_id,
+                    reason: "persisted code workflow is PAUSED and requires explicit recovery"
+                        .into(),
+                });
+            }
+            other => bail!("unsupported persisted code workflow state {other}"),
+        };
 
         loop {
             if reviewer_attempts >= self.max_attempts {
