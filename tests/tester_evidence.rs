@@ -1298,6 +1298,13 @@ fn nonterminal_local_cr_continuation_preserves_reviewed_checklist_progress() {
         .record_code_cr_review(dir.path(), "owner-a", &cr.key, ReviewVerdict::Pass, &[])
         .unwrap();
 
+    std::fs::write(dir.path().join("src/session.rs"), "stale-after-cr").unwrap();
+    let stale_error = registry
+        .begin_code_workflow(dir.path(), "owner-a", version, "JP1")
+        .unwrap_err();
+    assert!(format!("{stale_error:#}").contains("stale reviewed change set"));
+    std::fs::write(dir.path().join("src/session.rs"), "after").unwrap();
+
     assert_eq!(
         registry.checklist_checked(version, "T1", 1).unwrap(),
         Some(true)
