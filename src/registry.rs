@@ -1425,6 +1425,9 @@ impl Registry {
             if validate_tester_target_tx(&tx, graph_version, &attempt.target).is_err() {
                 continue;
             }
+            if !tester_output_mode_satisfied(&attempt, record.mode) {
+                continue;
+            }
             let context = applicability_context_for_attempt(&attempt);
             if record.applicability.evaluate(&context)? != ApplicabilityDecision::Compatible {
                 continue;
@@ -4624,6 +4627,18 @@ fn active_work_tx(tx: &Transaction<'_>, graph_version: i64) -> Result<Option<Act
     }))
 }
 
+fn tester_output_mode_satisfied(
+    attempt: &TesterAttemptEvidence,
+    mode: crate::plan::EvidenceMode,
+) -> bool {
+    attempt
+        .mode_results
+        .iter()
+        .find(|result| result.mode == mode)
+        .map(|result| result.satisfies_output_requirement())
+        .unwrap_or(false)
+}
+
 fn applicability_context_for_attempt(attempt: &TesterAttemptEvidence) -> ApplicabilityContext {
     let mut context = ApplicabilityContext::default();
     if attempt.target.prerequisites.len() == 1 {
@@ -4731,6 +4746,18 @@ fn resolve_required_tester_evidence_tx(
                     output_id,
                     jobpack_id,
                     error
+                );
+            }
+            continue;
+        }
+        if !tester_output_mode_satisfied(&attempt, record.mode) {
+            if required {
+                bail!(
+                    "PLAN_GAP: required Tester evidence {}:{} for consumer {} came from an unsuccessful {:?} mode",
+                    checkpoint_id,
+                    output_id,
+                    jobpack_id,
+                    record.mode
                 );
             }
             continue;
