@@ -644,13 +644,10 @@ impl<'a> CodingWorkflow<'a> {
         repair_context: Option<&serde_json::Value>,
         tool_runtime: &mut ProjectToolRuntime,
     ) -> Result<CodingOutcome> {
-        let mut state = self
-            .registry
-            .code_workflow_state()?
-            .filter(|state| {
-                state.graph_version == active_work.graph_version
-                    && state.jobpack_id == active_work.jobpack_id
-            });
+        let mut state = self.registry.code_workflow_state()?.filter(|state| {
+            state.graph_version == active_work.graph_version
+                && state.jobpack_id == active_work.jobpack_id
+        });
 
         if entry_agent == AgentId::InternalFix {
             if let Some(current) = &state {
