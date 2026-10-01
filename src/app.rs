@@ -228,8 +228,7 @@ impl App {
                         &repair.retest_context.failed_attempt_id,
                     )?;
                     if prior_failed_execution_steps.iter().any(|step| {
-                        step.target_fingerprint
-                            != repair.retest_context.failed_target_fingerprint
+                        step.target_fingerprint != repair.retest_context.failed_target_fingerprint
                     }) {
                         bail!(
                             "Tester PRODUCT_FAILURE evidence target does not match failed target fingerprint"
