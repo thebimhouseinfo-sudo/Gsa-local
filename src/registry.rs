@@ -1737,12 +1737,12 @@ impl Registry {
         project_root: &Path,
         available_capabilities: &[String],
     ) -> Result<ResumeDecision> {
-        let Some((graph_version, _, _)) = {
+        let Some((graph_version, _, _)) = ({
             let tx = self.conn.unchecked_transaction()?;
             let binding = current_graph_binding_tx(&tx)?;
             tx.commit()?;
             binding
-        } else {
+        }) else {
             return Ok(ResumeDecision {
                 classification: RecoveryClassification::DurableExact,
                 action: ResumeAction::ExecutionComplete,
