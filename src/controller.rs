@@ -172,4 +172,10 @@ impl<'a> MilestoneController<'a> {
             .complete_verified_milestone(self.project_root, self.lease_owner, milestone_id)
             .map(|work| work.map(Into::into))
     }
+
+    pub fn start_next_milestone(&self) -> Result<Option<ActiveWork>> {
+        self.registry
+            .activate_next_milestone(self.project_root, self.lease_owner)
+            .map(|work| work.map(Into::into))
+    }
 }
