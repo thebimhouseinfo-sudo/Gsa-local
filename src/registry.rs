@@ -122,6 +122,7 @@ pub struct ActiveWorkRecord {
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum TesterCheckpointDisposition {
     Due,
+    ProductFailure,
     Blocked,
     NeedsHuman,
     IntegrationNotReady,
@@ -131,6 +132,7 @@ impl TesterCheckpointDisposition {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Due => "DUE",
+            Self::ProductFailure => "PRODUCT_FAILURE",
             Self::Blocked => "BLOCKED",
             Self::NeedsHuman => "NEEDS_HUMAN",
             Self::IntegrationNotReady => "INTEGRATION_NOT_READY",
@@ -148,6 +150,14 @@ pub struct TesterCheckpointWorkRecord {
     pub disposition: TesterCheckpointDisposition,
     pub reason: Option<String>,
     pub next_attempt_id: Option<String>,
+    pub retest_context: Option<TesterRetestContext>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TesterRetestContext {
+    pub failed_attempt_id: String,
+    pub failed_target_fingerprint: String,
+    pub failure_summary: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1530,6 +1540,17 @@ impl Registry {
             .map_err(Into::into)
     }
 
+    pub fn current_active_work(&self) -> Result<Option<ActiveWorkRecord>> {
+        let tx = self.conn.unchecked_transaction()?;
+        let Some((graph_version, _, _)) = current_graph_binding_tx(&tx)? else {
+            tx.commit()?;
+            return Ok(None);
+        };
+        let work = active_work_tx(&tx, graph_version)?;
+        tx.commit()?;
+        Ok(work)
+    }
+
     pub fn jobpack_code_tasks(
         &self,
         graph_version: i64,
@@ -1967,6 +1988,7 @@ impl Registry {
                     disposition: TesterCheckpointDisposition::Blocked,
                     reason: Some(reason),
                     next_attempt_id: None,
+                    retest_context: None,
                 }));
             };
 
@@ -1983,6 +2005,8 @@ impl Registry {
                     continue;
                 }
                 let (disposition, reason) = tester_attempt_blocking_state(&attempt);
+                let retest_context =
+                    tester_product_failure_context(&attempt, &target_fingerprint, &reason);
                 tx.commit()?;
                 return Ok(Some(TesterCheckpointWorkRecord {
                     graph_version,
@@ -1993,6 +2017,7 @@ impl Registry {
                     disposition,
                     reason: Some(reason),
                     next_attempt_id: None,
+                    retest_context,
                 }));
             }
 
@@ -2007,6 +2032,7 @@ impl Registry {
                     disposition: TesterCheckpointDisposition::Blocked,
                     reason: Some(reason),
                     next_attempt_id: None,
+                    retest_context: None,
                 }));
             }
 
@@ -2030,9 +2056,16 @@ impl Registry {
                         missing.join(", ")
                     )),
                     next_attempt_id: None,
+                    retest_context: None,
                 }));
             }
 
+            let retest_context = latest_product_failure_context_for_previous_target_tx(
+                &tx,
+                graph_version,
+                &checkpoint.id,
+                &target_fingerprint,
+            )?;
             let attempt_count: i64 = tx.query_row(
                 r#"
                 SELECT COUNT(*) FROM tester_evidence_attempts
@@ -2060,6 +2093,7 @@ impl Registry {
                 disposition: TesterCheckpointDisposition::Due,
                 reason: None,
                 next_attempt_id: Some(next_attempt_id),
+                retest_context,
             }));
         }
 
@@ -3864,6 +3898,20 @@ fn tester_attempt_blocking_state(
     if attempt
         .classifications
         .iter()
+        .any(|item| *item == TesterClassification::ProductFailure)
+    {
+        let detail = tester_failure_summary(attempt);
+        return (
+            TesterCheckpointDisposition::ProductFailure,
+            format!(
+                "Tester attempt {} classified PRODUCT_FAILURE: {}",
+                attempt.attempt_id, detail
+            ),
+        );
+    }
+    if attempt
+        .classifications
+        .iter()
         .any(|item| *item == TesterClassification::IntegrationNotReady)
     {
         return (
@@ -3882,6 +3930,92 @@ fn tester_attempt_blocking_state(
             attempt.attempt_id
         ),
     )
+}
+
+fn tester_failure_summary(attempt: &TesterAttemptEvidence) -> String {
+    let mut reasons = attempt
+        .mode_results
+        .iter()
+        .filter_map(|result| result.reason.as_deref())
+        .map(str::trim)
+        .filter(|reason| !reason.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    reasons.extend(
+        attempt
+            .limitations
+            .iter()
+            .map(|item| item.trim())
+            .filter(|item| !item.is_empty())
+            .map(str::to_owned),
+    );
+    reasons.sort();
+    reasons.dedup();
+    if reasons.is_empty() {
+        "checkpoint behavior did not satisfy the declared contract".into()
+    } else {
+        reasons.join("; ")
+    }
+}
+
+fn tester_product_failure_context(
+    attempt: &TesterAttemptEvidence,
+    target_fingerprint: &str,
+    failure_summary: &str,
+) -> Option<TesterRetestContext> {
+    attempt
+        .classifications
+        .iter()
+        .any(|item| *item == TesterClassification::ProductFailure)
+        .then(|| TesterRetestContext {
+            failed_attempt_id: attempt.attempt_id.clone(),
+            failed_target_fingerprint: target_fingerprint.to_owned(),
+            failure_summary: failure_summary.to_owned(),
+        })
+}
+
+fn latest_product_failure_context_for_previous_target_tx(
+    tx: &Transaction<'_>,
+    graph_version: i64,
+    checkpoint_id: &str,
+    current_target_fingerprint: &str,
+) -> Result<Option<TesterRetestContext>> {
+    let row: Option<(String, String)> = tx
+        .query_row(
+            r#"
+            SELECT target_fingerprint, attempt_json
+            FROM tester_evidence_attempts
+            WHERE graph_version=?1 AND checkpoint_id=?2
+            ORDER BY created_at DESC, attempt_id DESC LIMIT 1
+            "#,
+            params![graph_version, checkpoint_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let Some((target_fingerprint, attempt_json)) = row else {
+        return Ok(None);
+    };
+    if target_fingerprint == current_target_fingerprint {
+        return Ok(None);
+    }
+    let attempt: TesterAttemptEvidence = serde_json::from_str(&attempt_json)?;
+    if !attempt
+        .classifications
+        .iter()
+        .any(|item| *item == TesterClassification::ProductFailure)
+    {
+        return Ok(None);
+    }
+    let summary = format!(
+        "Retest after {}: {}",
+        attempt.attempt_id,
+        tester_failure_summary(&attempt)
+    );
+    Ok(Some(TesterRetestContext {
+        failed_attempt_id: attempt.attempt_id,
+        failed_target_fingerprint: target_fingerprint,
+        failure_summary: summary,
+    }))
 }
 
 fn validate_tester_evidence_refs(
