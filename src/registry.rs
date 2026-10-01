@@ -4350,7 +4350,7 @@ fn code_cr_boundary_work_tx(
             )
             .optional()?;
         row.map(|(verdict, findings)| {
-            Ok(CodeCrReviewRecord {
+            Ok::<CodeCrReviewRecord, anyhow::Error>(CodeCrReviewRecord {
                 key: key.clone(),
                 verdict,
                 findings: serde_json::from_str(&findings)?,
