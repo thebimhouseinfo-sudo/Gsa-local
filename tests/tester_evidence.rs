@@ -27,6 +27,7 @@ use gsa_local::{
     },
 };
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, time::Duration};
 use tempfile::tempdir;
 
@@ -166,6 +167,12 @@ fn setup() -> (tempfile::TempDir, Registry, i64, i64) {
     registry
         .begin_code_workflow(dir.path(), "owner-a", version, "JP1")
         .unwrap();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::write(dir.path().join("src/session.rs"), "after").unwrap();
+    let session_sha = Sha256::digest(b"after")
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
     registry
         .record_code_checkpoint(
             dir.path(),
@@ -182,7 +189,7 @@ fn setup() -> (tempfile::TempDir, Registry, i64, i64) {
             &json!([{
                 "path":"src/session.rs",
                 "before_sha256":"before",
-                "after_sha256":"after"
+                "after_sha256":session_sha
             }]),
             1,
             0,
