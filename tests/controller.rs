@@ -314,15 +314,7 @@ fn controller_activates_deterministically_and_never_jumps_milestones() {
         Some("ACTIVE")
     );
 
-    assert!(phase11_complete_active(
-        &dir,
-        &registry,
-        version,
-        "JP-D",
-        "T-D",
-        "change-d"
-    )
-    .is_none());
+    assert!(phase11_complete_active(&dir, &registry, version, "JP-D", "T-D", "change-d").is_none());
     assert_eq!(
         registry.milestone_status(version, "M2").unwrap().as_deref(),
         Some("VERIFY")
