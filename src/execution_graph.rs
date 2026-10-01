@@ -86,6 +86,8 @@ pub struct TestCheckpointSpec {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub before_jobpack_id: Option<String>,
     #[serde(default)]
+    pub cr_review_boundary: bool,
+    #[serde(default)]
     pub evidence_need_ids: Vec<String>,
     pub modes: Vec<EvidenceMode>,
     pub goal: String,
@@ -772,6 +774,7 @@ mod tests {
                 },
             ],
             before_jobpack_id: None,
+            cr_review_boundary: false,
             evidence_need_ids: vec![],
             modes: vec![EvidenceMode::Verify],
             goal: "Verify integrated milestone behavior".into(),
@@ -801,6 +804,7 @@ mod tests {
                 state: PrerequisiteState::ReviewPass,
             }],
             before_jobpack_id: None,
+            cr_review_boundary: false,
             evidence_need_ids: vec!["runtime-id".into()],
             modes: vec![EvidenceMode::Probe],
             goal: "Observe runtime identity".into(),
@@ -853,6 +857,7 @@ mod tests {
                 state: PrerequisiteState::ReviewPass,
             }],
             before_jobpack_id: None,
+            cr_review_boundary: false,
             evidence_need_ids: vec!["runtime-id".into()],
             modes: vec![EvidenceMode::Probe],
             goal: "Observe runtime identity".into(),
@@ -904,6 +909,7 @@ mod tests {
                 state: PrerequisiteState::ReviewPass,
             }],
             before_jobpack_id: Some("JP1".into()),
+            cr_review_boundary: false,
             evidence_need_ids: vec![],
             modes: vec![EvidenceMode::Verify],
             goal: "Gate JP1 on reviewed JP2".into(),
