@@ -2198,6 +2198,17 @@ impl Registry {
         .transpose()
     }
 
+    pub fn resolve_code_cr_boundary(&self) -> Result<Option<CodeCrBoundaryWork>> {
+        let tx = self.conn.unchecked_transaction()?;
+        let Some((graph_version, _, _)) = current_graph_binding_tx(&tx)? else {
+            tx.commit()?;
+            return Ok(None);
+        };
+        let work = code_cr_boundary_work_tx(&tx, graph_version)?;
+        tx.commit()?;
+        Ok(work)
+    }
+
     pub fn resolve_tester_checkpoint(
         &self,
         available_capabilities: &[String],
@@ -4122,6 +4133,224 @@ fn build_tester_target_tx(
     let target = TesterTargetBinding { prerequisites };
     target.validate_against_checkpoint(checkpoint)?;
     Ok(Some(target))
+}
+
+fn code_cr_boundary_work_tx(
+    tx: &Transaction<'_>,
+    graph_version: i64,
+) -> Result<Option<CodeCrBoundaryWork>> {
+    let Some(work) = active_work_tx(tx, graph_version)? else {
+        return Ok(None);
+    };
+
+    let workflow_state: Option<(Option<String>, String)> = tx
+        .query_row(
+            r#"
+            SELECT change_set_id, status
+            FROM code_workflow_state
+            WHERE id=1 AND graph_version=?1 AND jobpack_id=?2
+            "#,
+            params![graph_version, work.jobpack_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let Some((Some(change_set_id), workflow_status)) = workflow_state else {
+        return Ok(None);
+    };
+    if workflow_status != "REVIEW_PASS" {
+        return Ok(None);
+    }
+
+    let latest_review: Option<String> = tx
+        .query_row(
+            r#"
+            SELECT verdict
+            FROM code_reviews
+            WHERE graph_version=?1 AND jobpack_id=?2 AND change_set_id=?3
+            ORDER BY id DESC LIMIT 1
+            "#,
+            params![graph_version, work.jobpack_id, change_set_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if latest_review.as_deref() != Some("PASS") {
+        return Ok(None);
+    }
+
+    let verification: Option<(i64, String)> = tx
+        .query_row(
+            r#"
+            SELECT id, result
+            FROM verification_runs
+            WHERE graph_version=?1 AND jobpack_id=?2 AND change_set_id=?3
+            ORDER BY id DESC LIMIT 1
+            "#,
+            params![graph_version, work.jobpack_id, change_set_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    let Some((verification_run_id, verification_result)) = verification else {
+        return Ok(None);
+    };
+    if verification_result != "TEST_PASS" {
+        return Ok(None);
+    }
+
+    let checkpoints = {
+        let mut statement = tx.prepare(
+            r#"
+            SELECT definition_json
+            FROM execution_test_checkpoints
+            WHERE graph_version=?1
+            ORDER BY checkpoint_id
+            "#,
+        )?;
+        let values = statement
+            .query_map(params![graph_version], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        values
+    };
+
+    let mut tester_evidence = Vec::new();
+    let mut cr_checkpoint_boundaries = Vec::new();
+    let mut required_checkpoint_ready = true;
+
+    for checkpoint_json in checkpoints {
+        let checkpoint: TestCheckpointSpec = serde_json::from_str(&checkpoint_json)?;
+        if !checkpoint
+            .prerequisites
+            .iter()
+            .any(|item| item.jobpack_id == work.jobpack_id)
+        {
+            continue;
+        }
+
+        let target = build_tester_target_tx(tx, graph_version, &checkpoint)?;
+        let boundary =
+            tester_boundary_state_tx(tx, graph_version, &checkpoint, target.is_some())?;
+        if matches!(boundary, TesterBoundaryState::NotReached) {
+            continue;
+        }
+
+        let Some(target) = target else {
+            required_checkpoint_ready = false;
+            continue;
+        };
+        let target_fingerprint = target.fingerprint(graph_version, &checkpoint.id)?;
+        let attempt = latest_tester_attempt_for_target_tx(
+            tx,
+            graph_version,
+            &checkpoint.id,
+            &target_fingerprint,
+        )?;
+        let Some(attempt) = attempt else {
+            required_checkpoint_ready = false;
+            continue;
+        };
+        if !tester_attempt_satisfied(&attempt) {
+            required_checkpoint_ready = false;
+            continue;
+        }
+
+        tester_evidence.push(CodeCrTesterEvidenceRef {
+            checkpoint_id: checkpoint.id.clone(),
+            attempt_id: attempt.attempt_id.clone(),
+            target_fingerprint,
+        });
+        if checkpoint.cr_review_boundary {
+            cr_checkpoint_boundaries.push(format!("CHECKPOINT:{}", checkpoint.id));
+        }
+    }
+
+    let incomplete_todos: i64 = tx.query_row(
+        r#"
+        SELECT COUNT(*)
+        FROM execution_todos
+        WHERE graph_version=?1 AND jobpack_id=?2 AND status!='DONE'
+        "#,
+        params![graph_version, work.jobpack_id],
+        |row| row.get(0),
+    )?;
+    let incomplete_checklist: i64 = tx.query_row(
+        r#"
+        SELECT COUNT(*)
+        FROM execution_checklist_items c
+        JOIN execution_todos t
+          ON t.graph_version=c.graph_version AND t.todo_id=c.todo_id
+        WHERE c.graph_version=?1 AND t.jobpack_id=?2 AND c.checked=0
+        "#,
+        params![graph_version, work.jobpack_id],
+        |row| row.get(0),
+    )?;
+
+    tester_evidence.sort_by(|left, right| left.checkpoint_id.cmp(&right.checkpoint_id));
+    let terminal = incomplete_todos == 0 && incomplete_checklist == 0 && required_checkpoint_ready;
+
+    let mut boundary_ids = cr_checkpoint_boundaries;
+    if terminal {
+        boundary_ids.push("JOBPACK_TERMINAL".into());
+    }
+    boundary_ids.sort();
+    boundary_ids.dedup();
+    if boundary_ids.is_empty() {
+        return Ok(None);
+    }
+
+    let evidence_bytes = serde_json::to_vec(&serde_json::json!({
+        "verification_run_id": verification_run_id,
+        "verification_result": verification_result,
+        "tester_evidence": tester_evidence
+    }))?;
+    let digest = Sha256::digest(evidence_bytes);
+    let evidence_fingerprint = digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let boundary_id = boundary_ids.join("+");
+    let key = CodeCrBoundaryKey {
+        graph_version,
+        jobpack_id: work.jobpack_id,
+        change_set_id,
+        boundary_id,
+        evidence_fingerprint,
+    };
+    let existing_review = {
+        let row: Option<(String, String)> = tx
+            .query_row(
+                r#"
+                SELECT verdict, findings
+                FROM code_cr_reviews
+                WHERE graph_version=?1 AND jobpack_id=?2 AND change_set_id=?3
+                  AND boundary_id=?4 AND evidence_fingerprint=?5
+                "#,
+                params![
+                    key.graph_version,
+                    key.jobpack_id,
+                    key.change_set_id,
+                    key.boundary_id,
+                    key.evidence_fingerprint
+                ],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        row.map(|(verdict, findings)| {
+            Ok(CodeCrReviewRecord {
+                key: key.clone(),
+                verdict,
+                findings: serde_json::from_str(&findings)?,
+            })
+        })
+        .transpose()?
+    };
+
+    Ok(Some(CodeCrBoundaryWork {
+        key,
+        boundary_ids,
+        verification_run_id,
+        tester_evidence,
+        terminal,
+        existing_review,
+    }))
 }
 
 fn latest_tester_attempt_for_target_tx(
