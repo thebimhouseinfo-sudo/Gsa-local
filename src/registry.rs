@@ -3659,7 +3659,7 @@ impl Registry {
             )
             .optional()?;
 
-        if let Some((next_id, next_status, next_position)) = next {
+        let checkpoint_sequence = if let Some((next_id, next_status, next_position)) = next {
             if next_position != position + 1 {
                 bail!("milestone ordering is not contiguous after {milestone_id}");
             }
@@ -3673,12 +3673,14 @@ impl Registry {
                     "graph_version": graph_version,
                     "milestone": next_id
                 }),
-            )?;
-        }
+            )?
+        } else {
+            complete_sequence
+        };
 
         write_checkpoint_tx(
             &tx,
-            complete_sequence,
+            checkpoint_sequence,
             plan_revision,
             Some(milestone_id),
             None,
