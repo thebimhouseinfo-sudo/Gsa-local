@@ -2160,6 +2160,89 @@ Acceptance extension for Phase 12:
 - restart cannot silently enter the next Task/phase when activation requires explicit Human start;
 - recovery from source-ahead state is explicit and auditable.
 
+## Cross-cutting capability — Lessons Learned Collector (LLC)
+
+LLC is a **recording/classification capability**, not a fixer and not an execution gate.
+
+Purpose:
+
+```text
+real project execution
+  -> workflow/agent encounters a reusable deficiency
+  -> LLC records the lesson with durable evidence
+  -> active Job continues under its existing authority
+  -> future Planner/Reviewer review decides whether/how to change GSA
+```
+
+Invocation:
+- Human may call `llc` directly.
+- Other Agents should invoke/recommend LLC when they have concrete evidence that one of the trigger conditions below occurred.
+
+Primary trigger — `WORKAROUND_REQUIRED`:
+
+```text
+canonical workflow path should work
+  -> path fails / blocks / cannot represent required state
+  -> Agent must find a workaround or manual reconciliation
+  => record WORKFLOW_GAP
+```
+
+Examples include:
+- valid implementation/test/review evidence exists but lifecycle cannot progress normally;
+- state/evidence exists but has no canonical binding path;
+- an Agent must reconstruct or bypass missing workflow semantics;
+- Human temporary progression is required because the workflow contract cannot represent an otherwise healthy state.
+
+Secondary trigger — `SPECIAL_DETECTION_REQUIRED`:
+
+```text
+normal Agent/Reviewer process misses a defect
+  -> another model/tool/special inspection technique finds it
+  -> the detection method is reusable
+  => record AGENT_SKILL_GAP
+```
+
+This covers cases where the correct future improvement may belong to an Agent skill/harness rather than the runtime workflow itself.
+
+Minimum LLC classification:
+
+```text
+WORKFLOW_GAP
+AGENT_SKILL_GAP
+```
+
+Possible descriptive subtypes:
+- CONTRACT_GAP;
+- STATE_MODEL_GAP;
+- ROUTING_GAP;
+- EVIDENCE_BINDING_GAP;
+- RECOVERY_GAP;
+- HUMAN_GATE_GAP;
+- REVIEW_HEURISTIC_GAP;
+- TEST_HEURISTIC_GAP.
+
+LLC authority:
+- may record, classify, deduplicate, link evidence, and append repeated real-project occurrences;
+- may identify the workflow area or Agent role that future review should inspect;
+- must not modify runtime code;
+- must not modify workflow contracts;
+- must not update Agent skills/harnesses;
+- must not approve a workaround;
+- must not create or execute a patch plan;
+- must not block the active Job merely because a lesson was recorded.
+
+Real-project evidence is preferred for workflow/orchestration lessons. Synthetic tests may support reproduction but do not replace real-project evidence when the issue depends on real execution semantics.
+
+Detailed rationale and record guidance live in `WORKFLOW_LESSONS_LEARNED.md`, section 52.
+
+Acceptance:
+- Human can intentionally invoke LLC;
+- Agents recognize workaround-required and special-detection-required situations as LLC triggers;
+- LLC produces durable lessons without changing source, workflow, skill, lifecycle, or active-Job progression;
+- later workflow/skill review can reconstruct the issue from LLC evidence without relying on chat memory.
+
+---
+
 ## Phase 13 — Hardening
 
 Negative tests:
