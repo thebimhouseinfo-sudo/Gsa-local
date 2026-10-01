@@ -301,7 +301,7 @@ fn attempt(
                 jobpack_id: "JP1".into(),
                 state: PrerequisiteState::ReviewPass,
                 change_set_id: Some(change_set_id.into()),
-                target_revision: Some("revision-1".into()),
+                target_revision: None,
             }],
         },
         mode_results: vec![TesterModeResult {
