@@ -15,8 +15,8 @@ use gsa_local::{
         TesterPrerequisiteTarget, TesterTargetBinding, VerificationObservationField,
     },
     tester_execution::{
-        TesterAdapterRequest, TesterExecutionObservation, TesterExecutionStatus,
-        TesterExecutionStepRequest,
+        TesterAdapterRequest, TesterExecutionObservation, TesterExecutionRuntime,
+        TesterExecutionStatus, TesterExecutionStepRequest,
     },
     tester_workspace::{TesterArtifactRef, TesterWorkspaceRuntime},
     verification::{
@@ -784,4 +784,292 @@ fn applicability_runtime_decision_cannot_be_overridden_by_prose() {
             .unwrap(),
         ApplicabilityDecision::Invalidated
     );
+}
+
+#[test]
+fn latest_checkpoint_tracks_exact_tester_execution_stage() {
+    let (dir, registry, version, verification_run_id) = setup();
+    let artifact = workspace_artifact(&dir, version, "ATT-RESUME-STATE");
+    let evidence = attempt(
+        version,
+        "ATT-RESUME-STATE",
+        "change-1",
+        artifact,
+        verification_run_id,
+    );
+    let target = evidence.target;
+    let request = TesterExecutionStepRequest {
+        step_id: "resume-probe".into(),
+        replay_safety: ReplaySafety::ObserveOnly,
+        adapter: TesterAdapterRequest::WorkspacePython {
+            script_path: "tests/resume_probe.py".into(),
+            args: vec![],
+        },
+    };
+    let target_fingerprint = target.fingerprint(version, "CP1").unwrap();
+    let fence = request
+        .fence_key(version, "CP1", "ATT-RESUME-STATE", &target_fingerprint)
+        .unwrap();
+
+    registry
+        .prepare_tester_execution_step(
+            dir.path(),
+            "owner-a",
+            version,
+            "CP1",
+            "ATT-RESUME-STATE",
+            &target,
+            &fence,
+            &request.step_id,
+            request.adapter.adapter_id(),
+            request.replay_safety,
+            &fence,
+            &serde_json::to_value(&request).unwrap(),
+        )
+        .unwrap();
+
+    let prepared = registry.latest_tester_resume_state().unwrap().unwrap();
+    assert_eq!(prepared.graph_version, version);
+    assert_eq!(prepared.checkpoint_id, "CP1");
+    assert_eq!(prepared.attempt_id, "ATT-RESUME-STATE");
+    assert_eq!(prepared.execution_id.as_deref(), Some(fence.as_str()));
+    assert_eq!(prepared.target_fingerprint, target_fingerprint);
+    assert_eq!(prepared.stage, "EXECUTION_PREPARED");
+
+    registry
+        .complete_tester_execution_step(
+            dir.path(),
+            "owner-a",
+            version,
+            "CP1",
+            "ATT-RESUME-STATE",
+            &TesterExecutionObservation {
+                execution_id: fence.clone(),
+                step_id: request.step_id.clone(),
+                adapter_id: request.adapter.adapter_id().into(),
+                replay_safety: request.replay_safety,
+                fence_key: fence.clone(),
+                status: TesterExecutionStatus::Blocked,
+                exit_code: None,
+                duration_ms: 0,
+                timed_out: false,
+                blocked_reason: Some("simulated restart boundary".into()),
+                stdout: String::new(),
+                stderr: String::new(),
+                evidence_refs: vec![],
+            },
+        )
+        .unwrap();
+
+    let completed = registry.latest_tester_resume_state().unwrap().unwrap();
+    assert_eq!(completed.execution_id.as_deref(), Some(fence.as_str()));
+    assert_eq!(completed.stage, "EXECUTION_COMPLETED");
+}
+
+#[test]
+fn safe_prepared_execution_replays_same_fence_after_restart() {
+    let (dir, registry, version, verification_run_id) = setup();
+    let artifact = workspace_artifact(&dir, version, "ATT-SAFE-REPLAY");
+    let evidence = attempt(
+        version,
+        "ATT-SAFE-REPLAY",
+        "change-1",
+        artifact,
+        verification_run_id,
+    );
+    let target = evidence.target;
+    let request = TesterExecutionStepRequest {
+        step_id: "resume-safe".into(),
+        replay_safety: ReplaySafety::ObserveOnly,
+        adapter: TesterAdapterRequest::WorkspacePython {
+            script_path: "tests/resume_safe.py".into(),
+            args: vec![],
+        },
+    };
+    let target_fingerprint = target.fingerprint(version, "CP1").unwrap();
+    let fence = request
+        .fence_key(version, "CP1", "ATT-SAFE-REPLAY", &target_fingerprint)
+        .unwrap();
+
+    registry
+        .prepare_tester_execution_step(
+            dir.path(),
+            "owner-a",
+            version,
+            "CP1",
+            "ATT-SAFE-REPLAY",
+            &target,
+            &fence,
+            &request.step_id,
+            request.adapter.adapter_id(),
+            request.replay_safety,
+            &fence,
+            &serde_json::to_value(&request).unwrap(),
+        )
+        .unwrap();
+
+    let mut resumed = TesterExecutionRuntime::new(
+        &registry,
+        dir.path(),
+        "owner-a",
+        version,
+        "CP1",
+        "ATT-SAFE-REPLAY",
+        target.clone(),
+    )
+    .unwrap();
+    let observations = resumed.resume_prepared().unwrap();
+    assert_eq!(observations.len(), 1);
+    assert_eq!(observations[0].execution_id, fence);
+    assert!(!registry
+        .has_unresolved_tester_execution_steps(version, "CP1", "ATT-SAFE-REPLAY")
+        .unwrap());
+
+    let rows = registry
+        .tester_execution_steps(version, "CP1", "ATT-SAFE-REPLAY")
+        .unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_ne!(rows[0].status, "PREPARED");
+
+    let mut restarted = TesterExecutionRuntime::new(
+        &registry,
+        dir.path(),
+        "owner-a",
+        version,
+        "CP1",
+        "ATT-SAFE-REPLAY",
+        target,
+    )
+    .unwrap();
+    assert!(restarted.resume_prepared().unwrap().is_empty());
+    assert_eq!(
+        registry
+            .tester_execution_steps(version, "CP1", "ATT-SAFE-REPLAY")
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn uncertain_non_idempotent_execution_requires_human_after_restart() {
+    let (dir, registry, version, verification_run_id) = setup();
+    let artifact = workspace_artifact(&dir, version, "ATT-NON-IDEMPOTENT");
+    let evidence = attempt(
+        version,
+        "ATT-NON-IDEMPOTENT",
+        "change-1",
+        artifact,
+        verification_run_id,
+    );
+    let target = evidence.target;
+    let request = TesterExecutionStepRequest {
+        step_id: "external-mutation".into(),
+        replay_safety: ReplaySafety::NonIdempotent,
+        adapter: TesterAdapterRequest::WorkspacePython {
+            script_path: "tests/non_idempotent.py".into(),
+            args: vec![],
+        },
+    };
+    let target_fingerprint = target.fingerprint(version, "CP1").unwrap();
+    let fence = request
+        .fence_key(version, "CP1", "ATT-NON-IDEMPOTENT", &target_fingerprint)
+        .unwrap();
+
+    registry
+        .prepare_tester_execution_step(
+            dir.path(),
+            "owner-a",
+            version,
+            "CP1",
+            "ATT-NON-IDEMPOTENT",
+            &target,
+            &fence,
+            &request.step_id,
+            request.adapter.adapter_id(),
+            request.replay_safety,
+            &fence,
+            &serde_json::to_value(&request).unwrap(),
+        )
+        .unwrap();
+
+    let mut resumed = TesterExecutionRuntime::new(
+        &registry,
+        dir.path(),
+        "owner-a",
+        version,
+        "CP1",
+        "ATT-NON-IDEMPOTENT",
+        target,
+    )
+    .unwrap();
+    let error = resumed.resume_prepared().unwrap_err();
+    assert!(format!("{error:#}").contains("NEEDS_HUMAN"));
+    assert!(registry
+        .has_unresolved_tester_execution_steps(version, "CP1", "ATT-NON-IDEMPOTENT")
+        .unwrap());
+
+    let recovery = registry.latest_tester_resume_state().unwrap().unwrap();
+    assert_eq!(recovery.execution_id.as_deref(), Some(fence.as_str()));
+    assert_eq!(recovery.stage, "RECOVERY_REQUIRED");
+}
+
+#[test]
+fn lease_owner_is_required_before_tester_attempt_can_prepare_execution() {
+    let (dir, registry, version, verification_run_id) = setup();
+    let artifact = workspace_artifact(&dir, version, "ATT-LEASE");
+    let evidence = attempt(
+        version,
+        "ATT-LEASE",
+        "change-1",
+        artifact,
+        verification_run_id,
+    );
+    let target = evidence.target;
+    let request = TesterExecutionStepRequest {
+        step_id: "lease-guard".into(),
+        replay_safety: ReplaySafety::ObserveOnly,
+        adapter: TesterAdapterRequest::WorkspacePython {
+            script_path: "tests/lease_guard.py".into(),
+            args: vec![],
+        },
+    };
+    let target_fingerprint = target.fingerprint(version, "CP1").unwrap();
+    let fence = request
+        .fence_key(version, "CP1", "ATT-LEASE", &target_fingerprint)
+        .unwrap();
+
+    assert!(registry
+        .prepare_tester_execution_step(
+            dir.path(),
+            "owner-b",
+            version,
+            "CP1",
+            "ATT-LEASE",
+            &target,
+            &fence,
+            &request.step_id,
+            request.adapter.adapter_id(),
+            request.replay_safety,
+            &fence,
+            &serde_json::to_value(&request).unwrap(),
+        )
+        .is_err());
+
+    registry
+        .prepare_tester_execution_step(
+            dir.path(),
+            "owner-a",
+            version,
+            "CP1",
+            "ATT-LEASE",
+            &target,
+            &fence,
+            &request.step_id,
+            request.adapter.adapter_id(),
+            request.replay_safety,
+            &fence,
+            &serde_json::to_value(&request).unwrap(),
+        )
+        .unwrap();
 }
