@@ -2691,3 +2691,128 @@ unknown != dead
 ```
 
 Fail closed when runtime authority is insufficient.
+
+---
+
+# 50. Temporary progression approval is transition-scoped and must be persisted before the next task
+
+A Human-approved temporary progression is not a reusable project-wide waiver.
+
+The same control-plane defect may recur across multiple Tasks, but each affected boundary has its own exact source target, evidence set, blocked Run and next allowed transition.
+
+Observed sequence:
+
+```text
+T2-ORCHESTRATION
+  exact implementation evidence PASS
+  terminal gate blocked by task identity defect
+  Human approves T2-ORCHESTRATION -> T2-RESUME only
+
+T2-RESUME
+  exact implementation evidence PASS
+  terminal gate blocked by the same task identity defect
+  prior approval does not automatically apply
+  Human separately approves T2-RESUME -> T2-RETEST
+```
+
+The recurrence of the same root defect is useful diagnostic evidence, but it does not broaden authorization.
+
+## 50.1 Persist approval before opening the next Task
+
+The ordering must be:
+
+```text
+1. exact CI/test evidence PASS
+2. independent Reviewer PASS
+3. GOAL_RECHECK PASS
+4. normal terminalization attempted
+5. non-product control-plane blocker reproduced
+6. TemporaryProgressionException / eligibility record persisted
+7. explicit Human approval obtained
+8. approval persisted with exact transition scope
+9. blocked Run terminalized without fake PASS
+10. Handoff persisted
+11. only then open the next Task
+```
+
+Do not open the next Task first and backfill the approval later.
+
+The durable approval record is part of the predecessor boundary, not documentation that can be reconstructed after progression.
+
+## 50.2 Scope must bind both source and destination
+
+A temporary progression approval should include:
+
+```text
+source_task_ref
+source_run_id
+source_target_revision
+accepted evidence refs
+blocked gate + blocker classification
+destination_task_ref
+allowed next boundary
+Human approval
+status
+```
+
+Example:
+
+```text
+source = T2-RESUME
+target = main@70e7782...
+destination = T2-RETEST
+scope = T2-RESUME -> T2-RETEST only
+```
+
+A later transition such as:
+
+```text
+T2-RETEST -> T2-CONSUMER-EVIDENCE
+```
+
+requires its own eligibility evaluation and, if still blocked by the same defect, its own Human approval.
+
+## 50.3 Repeated blocker does not require repeated diagnosis from zero
+
+When the same defect recurs with the same signature, the workflow may reuse the durable root-cause classification:
+
+```text
+CONTROL_PLANE_DEFECT
+task_ref / GOAL_RECHECK identity mismatch
+```
+
+but it must still re-establish the current Task's eligibility:
+
+- exact target CI/test PASS;
+- current Reviewer PASS;
+- current GOAL_RECHECK PASS;
+- no unresolved code/product finding;
+- current terminal gate reproduces the same blocker signature.
+
+This keeps the process efficient without turning one Human approval into a blanket bypass.
+
+## 50.4 Lessons learned are collection, not immediate repair work
+
+When a workflow defect is discovered during an active product/runtime task:
+
+```text
+observe
+-> record durable lesson
+-> preserve evidence
+-> finish/continue the approved task path
+-> defer architectural repair to a dedicated future task
+```
+
+Do not opportunistically patch the workflow/control-plane architecture inside an unrelated Task merely because the defect was observed there.
+
+This prevents scope drift and keeps the active Job's evidence interpretable.
+
+## 50.5 Key invariant
+
+```text
+same defect
+!=
+same authorization
+```
+
+Human approval authorizes one explicitly bounded progression. It never silently propagates to later task boundaries.
