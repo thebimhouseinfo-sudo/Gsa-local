@@ -18,6 +18,7 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use rusqlite::{params, Connection, OptionalExtension, Transaction};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     collections::HashSet,
     fs,
@@ -39,6 +40,25 @@ pub struct CodeCrReviewRecord {
     pub key: CodeCrBoundaryKey,
     pub verdict: String,
     pub findings: Vec<String>,
+}
+
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeCrTesterEvidenceRef {
+    pub checkpoint_id: String,
+    pub attempt_id: String,
+    pub target_fingerprint: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CodeCrBoundaryWork {
+    pub key: CodeCrBoundaryKey,
+    pub boundary_ids: Vec<String>,
+    pub verification_run_id: i64,
+    pub tester_evidence: Vec<CodeCrTesterEvidenceRef>,
+    pub terminal: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub existing_review: Option<CodeCrReviewRecord>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
