@@ -3550,7 +3550,9 @@ impl Registry {
                 "#,
             )?;
             statement
-                .query_map(params![graph_version, milestone_id], |row| row.get::<_, String>(0))?
+                .query_map(params![graph_version, milestone_id], |row| {
+                    row.get::<_, String>(0)
+                })?
                 .collect::<std::result::Result<Vec<_>, _>>()?
         };
         for checkpoint_json in milestone_checkpoints {
@@ -3559,8 +3561,8 @@ impl Registry {
                 continue;
             }
 
-            let target = build_tester_target_tx(&tx, graph_version, &checkpoint)?
-                .with_context(|| {
+            let target =
+                build_tester_target_tx(&tx, graph_version, &checkpoint)?.with_context(|| {
                     format!(
                         "milestone checkpoint {} prerequisites are not ready",
                         checkpoint.id
