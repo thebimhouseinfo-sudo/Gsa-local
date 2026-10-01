@@ -718,7 +718,6 @@ fn code_cr_rejects_stale_change_set_without_exact_reviewer_pass() {
     assert!(format!("{error:#}").contains("exact REVIEW_PASS"));
 }
 
-
 fn phase11_passing_verification() -> VerificationEvidence {
     VerificationEvidence {
         profile: VerificationProfile {
