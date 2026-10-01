@@ -839,7 +839,6 @@ fn phase11_terminal_gate_requires_exact_verification_and_local_cr_pass() {
     );
 }
 
-
 #[test]
 fn reviewer_resume_packet_survives_registry_reopen_with_exact_change_set() {
     let (dir, registry, version) = setup();
@@ -881,7 +880,9 @@ fn reviewer_resume_packet_survives_registry_reopen_with_exact_change_set() {
     assert_eq!(checkpoint.goal_recheck, vec!["review exact target"]);
 
     let mut runtime = ProjectToolRuntime::new(dir.path()).unwrap();
-    runtime.restore_journal(checkpoint.mutation_journal).unwrap();
+    runtime
+        .restore_journal(checkpoint.mutation_journal)
+        .unwrap();
     runtime.verify_journal_current().unwrap();
 }
 
