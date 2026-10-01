@@ -1405,6 +1405,7 @@ fn execution_graph_tool() -> ToolDefinition {
                                         }
                                     },
                                     "before_jobpack_id": {"type": ["string", "null"]},
+                                    "cr_review_boundary": {"type": "boolean"},
                                     "evidence_need_ids": {
                                         "type": "array",
                                         "items": {"type": "string", "minLength": 1}
