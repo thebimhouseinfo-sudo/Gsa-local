@@ -10,7 +10,10 @@ use crate::{
     tester_execution::{tester_capability_catalog, TesterWorkflow},
     tools::ProjectToolRuntime,
     verification::{discover_profile, VerificationController},
-    workflow::{CodingOutcome, CodingWorkflow, PlanningOutcome, PlanningWorkflow},
+    workflow::{
+        CodeCrOutcome, CodeCrWorkflow, CodingOutcome, CodingWorkflow, PlanningOutcome,
+        PlanningWorkflow,
+    },
 };
 use anyhow::{bail, Context, Result};
 use std::{
@@ -22,6 +25,7 @@ use std::{
 };
 
 const MAX_TESTER_PRODUCT_REPAIRS: usize = 3;
+const MAX_CODE_CR_REPAIRS: usize = 3;
 
 pub struct App {
     project_root: PathBuf,
@@ -198,6 +202,7 @@ impl App {
     async fn resolve_coder_work_after_testers(&mut self) -> Result<Option<ActiveWork>> {
         self.active_work = None;
         let mut product_repairs = 0usize;
+        let mut cr_repairs = 0usize;
         loop {
             let profile = discover_profile(&self.project_root)?;
             let available_capabilities = tester_capability_catalog(&profile);
@@ -311,6 +316,145 @@ Do not edit Tester-owned artifacts as the product fix. Use the structured repair
                                 change_set_id,
                                 reason
                             );
+                        }
+                    }
+                }
+                Some(NextWork::Cr(cr_work)) => {
+                    let active_work = self
+                        .registry
+                        .current_active_work()?
+                        .map(Into::into)
+                        .context("Local CR boundary requires an ACTIVE Job Pack")?;
+                    if active_work.jobpack_id != cr_work.key.jobpack_id {
+                        bail!(
+                            "Local CR boundary target {} does not match ACTIVE Job Pack {}",
+                            cr_work.key.jobpack_id,
+                            active_work.jobpack_id
+                        );
+                    }
+
+                    let workflow = CodeCrWorkflow::new(
+                        &self.ollama,
+                        &self.harnesses,
+                        &self.registry,
+                        &self.config,
+                        &self.session,
+                        &self.project_root,
+                        &self.lease_owner,
+                    );
+                    let requirement = format!(
+                        "Review mature Local CR boundary {} for Job Pack {} on exact change set {}.",
+                        cr_work.key.boundary_id,
+                        cr_work.key.jobpack_id,
+                        cr_work.key.change_set_id
+                    );
+                    match workflow
+                        .run(
+                            &requirement,
+                            &active_work,
+                            &cr_work,
+                            &mut self.tool_runtime,
+                        )
+                        .await?
+                    {
+                        CodeCrOutcome::Pass => {
+                            println!(
+                                "CODE_CR_PASS jobpack={} boundary={} change_set={}",
+                                cr_work.key.jobpack_id,
+                                cr_work.key.boundary_id,
+                                cr_work.key.change_set_id
+                            );
+                            if cr_work.terminal {
+                                self.active_work =
+                                    MilestoneController::new(
+                                        &self.registry,
+                                        &self.project_root,
+                                        &self.lease_owner,
+                                    )
+                                    .mark_active_jobpack_done()?;
+                                println!(
+                                    "JOBPACK_DONE jobpack={} change_set={}",
+                                    cr_work.key.jobpack_id, cr_work.key.change_set_id
+                                );
+                            }
+                            continue;
+                        }
+                        CodeCrOutcome::Revise { findings } => {
+                            if cr_repairs >= MAX_CODE_CR_REPAIRS {
+                                bail!(
+                                    "Local CR repair limit exhausted for Job Pack {}",
+                                    cr_work.key.jobpack_id
+                                );
+                            }
+                            cr_repairs += 1;
+                            println!(
+                                "CODE_CR_REVISE jobpack={} boundary={} repair_round={}",
+                                cr_work.key.jobpack_id,
+                                cr_work.key.boundary_id,
+                                cr_repairs
+                            );
+                            let repair_context = serde_json::json!({
+                                "cr_boundary": &cr_work,
+                                "findings": &findings,
+                                "evidence_role": "local_cr_findings_require_normal_repair_and_revalidation"
+                            });
+                            let coding = CodingWorkflow::new(
+                                &self.ollama,
+                                &self.harnesses,
+                                &self.registry,
+                                &self.config,
+                                &self.session,
+                                &self.project_root,
+                                &self.lease_owner,
+                            );
+                            match coding
+                                .run_repair(
+                                    "Repair only the Local CR findings for the current mature boundary. Return through Reviewer and exact-target verification before Local CR runs again.",
+                                    &active_work,
+                                    &findings,
+                                    Some(&repair_context),
+                                    &mut self.tool_runtime,
+                                )
+                                .await?
+                            {
+                                CodingOutcome::ReviewPass { change_set_id } => {
+                                    let changed_paths = self
+                                        .tool_runtime
+                                        .review_evidence()
+                                        .into_iter()
+                                        .map(|item| item.path)
+                                        .collect::<Vec<_>>();
+                                    let verification = VerificationController::new(
+                                        &self.registry,
+                                        &self.project_root,
+                                        &self.lease_owner,
+                                    )
+                                    .verify(
+                                        active_work.graph_version,
+                                        &active_work.jobpack_id,
+                                        &change_set_id,
+                                        &changed_paths,
+                                    )?;
+                                    println!(
+                                        "CODE_CR_REPAIR_REVIEW_PASS jobpack={} change_set={} verification={}",
+                                        active_work.jobpack_id,
+                                        change_set_id,
+                                        verification.as_str()
+                                    );
+                                    continue;
+                                }
+                                CodingOutcome::Paused {
+                                    change_set_id,
+                                    reason,
+                                } => {
+                                    bail!(
+                                        "Local CR repair paused jobpack={} change_set={:?}: {}",
+                                        active_work.jobpack_id,
+                                        change_set_id,
+                                        reason
+                                    );
+                                }
+                            }
                         }
                     }
                 }
