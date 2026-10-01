@@ -222,11 +222,31 @@ impl App {
                         repair.retest_context.failed_attempt_id,
                         product_repairs
                     );
+                    let prior_failed_execution_steps = self.registry.tester_execution_steps(
+                        repair.active_work.graph_version,
+                        &repair.checkpoint.id,
+                        &repair.retest_context.failed_attempt_id,
+                    )?;
+                    if prior_failed_execution_steps.iter().any(|step| {
+                        step.target_fingerprint
+                            != repair.retest_context.failed_target_fingerprint
+                    }) {
+                        bail!(
+                            "Tester PRODUCT_FAILURE evidence target does not match failed target fingerprint"
+                        );
+                    }
+                    let repair_context = serde_json::json!({
+                        "checkpoint": &repair.checkpoint,
+                        "failed_target": &repair.failed_target,
+                        "retest_context": &repair.retest_context,
+                        "prior_failed_execution_steps": prior_failed_execution_steps,
+                        "evidence_role": "context_only_not_quality_pass"
+                    });
                     let requirement = format!(
                         "Repair the product source for a declared Tester PRODUCT_FAILURE. \
 Checkpoint: {}. Goal: {}. Criteria: {}. Failed attempt: {}. \
 Failed target fingerprint: {}. Observed failure: {}. \
-Do not edit Tester-owned artifacts as the product fix. Keep the repair within the active Job Pack, perform the normal Coder self-check, and return through independent Reviewer before any retest.",
+Do not edit Tester-owned artifacts as the product fix. Use the structured repair_context as observed failure evidence, keep the repair within the active Job Pack, perform the normal Coder self-check, and return through independent Reviewer before any retest.",
                         repair.checkpoint.id,
                         repair.checkpoint.goal,
                         repair.checkpoint.criteria.join("; "),
@@ -244,7 +264,12 @@ Do not edit Tester-owned artifacts as the product fix. Keep the repair within th
                         &self.lease_owner,
                     );
                     match workflow
-                        .run(&requirement, &repair.active_work, &mut self.tool_runtime)
+                        .run_with_context(
+                            &requirement,
+                            &repair.active_work,
+                            Some(&repair_context),
+                            &mut self.tool_runtime,
+                        )
                         .await?
                     {
                         CodingOutcome::ReviewPass { change_set_id } => {
