@@ -14,17 +14,36 @@ use crate::{
     },
     tester_workspace::TesterWorkspaceRuntime,
     tools::ProjectToolRuntime,
-    verification::{VerificationController, VerificationResult},
+    verification::{VerificationController, VerificationProfile, VerificationResult},
 };
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{path::Path, time::Duration};
+use std::{collections::BTreeSet, path::Path, time::Duration};
 
 const MAX_TESTER_TOOL_ROUNDS: usize = 16;
 const MAX_TESTER_EXECUTIONS: usize = 8;
 const DEFAULT_TESTER_TIMEOUT: Duration = Duration::from_secs(120);
+
+pub fn tester_capability_catalog(profile: &VerificationProfile) -> Vec<String> {
+    let mut capabilities = profile
+        .capabilities
+        .iter()
+        .map(|capability| capability.as_str().to_owned())
+        .collect::<BTreeSet<_>>();
+
+    for capability in [
+        "PROJECT_VERIFICATION",
+        "WORKSPACE_PYTHON",
+        "WORKSPACE_NODE",
+        "RUNTIME_PROBE",
+    ] {
+        capabilities.insert(capability.to_owned());
+    }
+
+    capabilities.into_iter().collect()
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "adapter", rename_all = "SCREAMING_SNAKE_CASE")]
