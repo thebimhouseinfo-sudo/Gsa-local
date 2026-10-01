@@ -1,5 +1,5 @@
 use gsa_local::{
-    checkpoint::Checkpoint,
+    checkpoint::{Checkpoint, RecoveryClassification, ResumeAction},
     controller::{ActiveWork, MilestoneController},
     execution_graph::{
         CheckpointBoundaryKind, CheckpointPrerequisiteSpec, EvidenceOutputSpec, ExecutionGraph,
@@ -185,6 +185,44 @@ fn phase11_verification() -> VerificationEvidence {
         }],
         test_surface_changed: false,
     }
+}
+
+fn submit_code_checkpoint(
+    dir: &tempfile::TempDir,
+    registry: &Registry,
+    version: i64,
+    jobpack_id: &str,
+    todo_id: &str,
+    change_set: &str,
+) {
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::write(dir.path().join("src/controller.rs"), change_set).unwrap();
+    let after_sha256 = Sha256::digest(change_set.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    registry
+        .record_code_checkpoint(
+            dir.path(),
+            "owner-a",
+            version,
+            jobpack_id,
+            change_set,
+            "resume target",
+            &[ChecklistClaim {
+                todo_id: todo_id.into(),
+                position: 1,
+            }],
+            &["resume exact state".into()],
+            &json!([{
+                "path":"src/controller.rs",
+                "before_sha256":"before",
+                "after_sha256":after_sha256
+            }]),
+            1,
+            0,
+        )
+        .unwrap();
 }
 
 fn phase11_complete_active(
@@ -672,4 +710,107 @@ fn satisfied_milestone_gate_allows_completion_but_not_implicit_next_activation()
     let next = controller.start_next_milestone().unwrap().unwrap();
     assert_eq!(next.milestone_id, "M2");
     assert_eq!(next.jobpack_id, "JP-D");
+}
+
+
+#[test]
+fn resume_decision_tracks_code_stages_without_reinitializing() {
+    let dir = tempdir().unwrap();
+    let registry = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    let (_revision, _hash, version) = approve_and_register(&registry);
+    registry
+        .acquire_lease(dir.path(), "owner-a", Duration::from_secs(3600))
+        .unwrap();
+    let controller = MilestoneController::new(&registry, dir.path(), "owner-a");
+    let active = controller.resolve_or_activate().unwrap().unwrap();
+    assert_eq!(active.jobpack_id, "JP-B");
+
+    registry
+        .begin_code_workflow(dir.path(), "owner-a", version, "JP-B")
+        .unwrap();
+    let coder = registry.resolve_resume_decision(dir.path(), &[]).unwrap();
+    assert_eq!(coder.action, ResumeAction::ResumeCoder);
+    assert_eq!(coder.classification, RecoveryClassification::DurableExact);
+
+    submit_code_checkpoint(&dir, &registry, version, "JP-B", "T-B", "resume-change");
+    let reviewer = registry.resolve_resume_decision(dir.path(), &[]).unwrap();
+    assert_eq!(reviewer.action, ResumeAction::ResumeReviewer);
+    assert_eq!(reviewer.change_set_id.as_deref(), Some("resume-change"));
+
+    registry
+        .record_code_review(
+            dir.path(),
+            "owner-a",
+            version,
+            "JP-B",
+            "resume-change",
+            ReviewVerdict::Revise,
+            &["fix it".into()],
+            1,
+            1,
+        )
+        .unwrap();
+    let fix = registry.resolve_resume_decision(dir.path(), &[]).unwrap();
+    assert_eq!(fix.action, ResumeAction::ResumeInternalFix);
+    assert_eq!(fix.change_set_id.as_deref(), Some("resume-change"));
+}
+
+#[test]
+fn review_pass_resume_requests_verification_before_other_gates() {
+    let dir = tempdir().unwrap();
+    let registry = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    let (_revision, _hash, version) = approve_and_register(&registry);
+    registry
+        .acquire_lease(dir.path(), "owner-a", Duration::from_secs(3600))
+        .unwrap();
+    let controller = MilestoneController::new(&registry, dir.path(), "owner-a");
+    controller.resolve_or_activate().unwrap();
+
+    registry
+        .begin_code_workflow(dir.path(), "owner-a", version, "JP-B")
+        .unwrap();
+    submit_code_checkpoint(&dir, &registry, version, "JP-B", "T-B", "review-pass-change");
+    registry
+        .record_code_review(
+            dir.path(),
+            "owner-a",
+            version,
+            "JP-B",
+            "review-pass-change",
+            ReviewVerdict::Pass,
+            &[],
+            1,
+            1,
+        )
+        .unwrap();
+
+    let decision = registry.resolve_resume_decision(dir.path(), &[]).unwrap();
+    assert_eq!(decision.action, ResumeAction::RunRequiredVerification);
+    assert_eq!(decision.change_set_id.as_deref(), Some("review-pass-change"));
+}
+
+#[test]
+fn resume_decision_fails_closed_when_review_target_source_diverged() {
+    let dir = tempdir().unwrap();
+    let registry = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    let (_revision, _hash, version) = approve_and_register(&registry);
+    registry
+        .acquire_lease(dir.path(), "owner-a", Duration::from_secs(3600))
+        .unwrap();
+    let controller = MilestoneController::new(&registry, dir.path(), "owner-a");
+    controller.resolve_or_activate().unwrap();
+
+    registry
+        .begin_code_workflow(dir.path(), "owner-a", version, "JP-B")
+        .unwrap();
+    submit_code_checkpoint(&dir, &registry, version, "JP-B", "T-B", "stable-source");
+    std::fs::write(dir.path().join("src/controller.rs"), "source-ahead").unwrap();
+
+    let decision = registry.resolve_resume_decision(dir.path(), &[]).unwrap();
+    assert_eq!(decision.action, ResumeAction::BlockedNeedsHuman);
+    assert_eq!(
+        decision.classification,
+        RecoveryClassification::SourceDiverged
+    );
+    assert!(decision.reason.contains("source diverged"));
 }
