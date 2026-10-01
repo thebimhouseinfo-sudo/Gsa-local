@@ -1737,7 +1737,7 @@ impl Registry {
         jobpack_id: &str,
         change_set_id: &str,
     ) -> Result<Option<PersistedCodeCheckpoint>> {
-        let row: Option<PersistedCodeCheckpoint> = self
+        let raw: Option<(String, String, String, String)> = self
             .conn
             .query_row(
                 r#"
@@ -1756,18 +1756,17 @@ impl Registry {
                     ))
                 },
             )
-            .optional()?
-            .map(|(summary, checklist, goal_recheck, journal)| {
-                Ok::<PersistedCodeCheckpoint, anyhow::Error>(PersistedCodeCheckpoint {
-                    change_set_id: change_set_id.to_owned(),
-                    summary,
-                    completed_checklist: serde_json::from_str(&checklist)?,
-                    goal_recheck: serde_json::from_str(&goal_recheck)?,
-                    mutation_journal: serde_json::from_str(&journal)?,
-                })
+            .optional()?;
+        raw.map(|(summary, checklist, goal_recheck, journal)| {
+            Ok(PersistedCodeCheckpoint {
+                change_set_id: change_set_id.to_owned(),
+                summary,
+                completed_checklist: serde_json::from_str(&checklist)?,
+                goal_recheck: serde_json::from_str(&goal_recheck)?,
+                mutation_journal: serde_json::from_str(&journal)?,
             })
-            .transpose()?;
-        Ok(row)
+        })
+        .transpose()
     }
 
     pub fn latest_code_review_findings(
