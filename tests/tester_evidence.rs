@@ -1186,6 +1186,11 @@ fn downstream_active_work_receives_only_resolved_observed_tester_evidence() {
         .record_tester_attempt_evidence(dir.path(), "owner-a", &attempt)
         .unwrap();
 
+    let catalog = registry.current_tester_evidence_catalog().unwrap();
+    assert_eq!(catalog.len(), 1);
+    assert_eq!(catalog[0].output_id, "runtime-id-observation");
+    assert_eq!(catalog[0].value, ObservedValue::Text("runtime-1".into()));
+
     let controller = MilestoneController::new(&registry, dir.path(), "owner-a");
     let next = controller.mark_active_jobpack_done().unwrap().unwrap();
     assert_eq!(next.jobpack_id, "JP2");
