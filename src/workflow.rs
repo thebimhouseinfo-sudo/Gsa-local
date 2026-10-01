@@ -1294,7 +1294,8 @@ impl<'a> CodeCrWorkflow<'a> {
             tester_attempts.push(attempt);
         }
 
-        let model = if let Some(model) = self.session.resolved_model(self.config, AgentId::LocalCr) {
+        let model = if let Some(model) = self.session.resolved_model(self.config, AgentId::LocalCr)
+        {
             model.to_owned()
         } else {
             self.ollama
@@ -1334,7 +1335,10 @@ impl<'a> CodeCrWorkflow<'a> {
             if calls.is_empty() {
                 bail!("Local CR stopped without submit_code_cr_review");
             }
-            if calls.iter().any(|call| call.function.name == "submit_code_cr_review") {
+            if calls
+                .iter()
+                .any(|call| call.function.name == "submit_code_cr_review")
+            {
                 if calls.len() != 1 || calls[0].function.name != "submit_code_cr_review" {
                     bail!("submit_code_cr_review must be the only tool call in its response");
                 }
