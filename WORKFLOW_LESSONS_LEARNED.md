@@ -2517,3 +2517,62 @@ first failing gate != only failing gate
 ```
 
 Progression decisions must use the deepest actually executed evidence, not the superficial first red status.
+
+---
+
+# 46. Exact-target validation must compare only fields the runtime can authoritatively reconstruct
+
+A T2-ORCHESTRATION regression caused four pre-existing Tester evidence tests to fail with:
+
+```text
+Tester target binding is stale for current reviewed prerequisite state
+```
+
+The new validator reconstructed the current target from Registry state and compared the entire `TesterTargetBinding` for structural equality.
+
+That was too strict because the current Registry authority can reconstruct:
+
+```text
+jobpack_id
+prerequisite state
+change_set_id
+```
+
+but it does not currently persist/reconstruct an authoritative `target_revision` for that prerequisite. Existing valid evidence may carry `target_revision`, while the reconstructed binding returns `None`.
+
+Therefore:
+
+```text
+authoritative fields match
++ optional non-reconstructable metadata differs
+!= stale target
+```
+
+The validator should compare fields according to their authority:
+
+- exact `jobpack_id`;
+- exact declared prerequisite state;
+- exact current reviewed `change_set_id`;
+- `target_revision` only when both the persisted/current authority and supplied binding have authoritative values.
+
+This is not permission to ignore exact-target identity. It is a rule that exactness must be defined against data the runtime can actually prove.
+
+## 46.1 Do not use whole-object equality as an authority check
+
+Whole-object equality is safe only when every field has the same provenance and can be reconstructed from the same authoritative state.
+
+For mixed records containing authoritative identity plus optional observational metadata, validation should be field-aware.
+
+## 46.2 Future repair direction
+
+If `target_revision` becomes required for exact-target safety, persist it first-class in the code/review target state and make Registry able to reconstruct it. Only then should absence/mismatch become a hard stale-target failure.
+
+## 46.3 Key invariant
+
+```text
+strict validation
+!=
+comparison of data the runtime cannot prove
+```
+
+Fail closed on authoritative mismatches; do not create false blockers from metadata that currently lacks a reconstruction authority.
