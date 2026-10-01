@@ -3344,6 +3344,24 @@ impl Registry {
                         "cannot jump to milestone {milestone_id}; earlier milestone is incomplete"
                     );
                 }
+                let completed_before: i64 = tx.query_row(
+                    r#"
+                    SELECT COUNT(*) FROM execution_milestones
+                    WHERE graph_version=?1 AND position<?2 AND status='COMPLETE'
+                    "#,
+                    params![graph_version, position],
+                    |row| row.get(0),
+                )?;
+                if completed_before != 0 {
+                    ensure_milestone_checkpoint_tx(
+                        &tx,
+                        plan_revision,
+                        Some(&milestone_id),
+                        "milestone_ready_explicit_start",
+                    )?;
+                    tx.commit()?;
+                    return Ok(None);
+                }
                 tx.execute(
                     r#"
                     UPDATE execution_milestones
@@ -3357,7 +3375,8 @@ impl Registry {
                     "MILESTONE_ACTIVE",
                     &serde_json::json!({
                         "graph_version": graph_version,
-                        "milestone": milestone_id
+                        "milestone": milestone_id,
+                        "activation_policy": "INITIAL_START"
                     }),
                 )?;
             }
