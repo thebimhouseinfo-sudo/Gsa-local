@@ -1266,7 +1266,6 @@ fn observed_output_from_unsuccessful_mode_cannot_satisfy_required_consumer_evide
     assert!(message.contains("not mature for terminal Local CR"));
 }
 
-
 #[test]
 fn nonterminal_local_cr_continuation_preserves_reviewed_checklist_progress() {
     let mut execution_graph = graph();
@@ -1299,8 +1298,14 @@ fn nonterminal_local_cr_continuation_preserves_reviewed_checklist_progress() {
         .record_code_cr_review(dir.path(), "owner-a", &cr.key, ReviewVerdict::Pass, &[])
         .unwrap();
 
-    assert_eq!(registry.checklist_checked(version, "T1", 1).unwrap(), Some(true));
-    assert_eq!(registry.checklist_checked(version, "T1", 2).unwrap(), Some(false));
+    assert_eq!(
+        registry.checklist_checked(version, "T1", 1).unwrap(),
+        Some(true)
+    );
+    assert_eq!(
+        registry.checklist_checked(version, "T1", 2).unwrap(),
+        Some(false)
+    );
     assert_eq!(
         registry.todo_status(version, "T1").unwrap().as_deref(),
         Some("PENDING")
