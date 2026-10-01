@@ -1,5 +1,5 @@
 use crate::{
-    checkpoint::Checkpoint,
+    checkpoint::{Checkpoint, RecoveryClassification, ResumeAction, ResumeDecision},
     execution_graph::{
         CheckpointBoundaryKind, EvidenceRequirementSpec, ExecutionGraph, PrerequisiteState,
         TestCheckpointSpec,
@@ -1730,6 +1730,298 @@ impl Registry {
         let work = active_work_tx(&tx, graph_version)?;
         tx.commit()?;
         Ok(work)
+    }
+
+    pub fn resolve_resume_decision(
+        &self,
+        project_root: &Path,
+        available_capabilities: &[String],
+    ) -> Result<ResumeDecision> {
+        let Some((graph_version, _, _)) = {
+            let tx = self.conn.unchecked_transaction()?;
+            let binding = current_graph_binding_tx(&tx)?;
+            tx.commit()?;
+            binding
+        } else {
+            return Ok(ResumeDecision {
+                classification: RecoveryClassification::DurableExact,
+                action: ResumeAction::ExecutionComplete,
+                graph_version: None,
+                milestone_id: None,
+                jobpack_id: None,
+                change_set_id: None,
+                checkpoint_id: None,
+                attempt_id: None,
+                reason: "no CURRENT execution graph".into(),
+            });
+        };
+
+        if let Some(state) = self.latest_tester_resume_state()? {
+            if state.graph_version == graph_version && state.stage != "ATTEMPT_RECORDED" {
+                if state.stage == "RECOVERY_REQUIRED" {
+                    return Ok(ResumeDecision {
+                        classification: RecoveryClassification::NeedsHuman,
+                        action: ResumeAction::BlockedNeedsHuman,
+                        graph_version: Some(graph_version),
+                        milestone_id: None,
+                        jobpack_id: None,
+                        change_set_id: None,
+                        checkpoint_id: Some(state.checkpoint_id),
+                        attempt_id: Some(state.attempt_id),
+                        reason: "Tester has unresolved NON_IDEMPOTENT execution recovery".into(),
+                    });
+                }
+                if state.stage == "EXECUTION_PREPARED" {
+                    let steps = self.tester_execution_steps(
+                        graph_version,
+                        &state.checkpoint_id,
+                        &state.attempt_id,
+                    )?;
+                    if steps.iter().any(|step| {
+                        step.status == "PREPARED"
+                            && step.request.replay_safety == ReplaySafety::NonIdempotent
+                    }) {
+                        return Ok(ResumeDecision {
+                            classification: RecoveryClassification::NeedsHuman,
+                            action: ResumeAction::BlockedNeedsHuman,
+                            graph_version: Some(graph_version),
+                            milestone_id: None,
+                            jobpack_id: None,
+                            change_set_id: None,
+                            checkpoint_id: Some(state.checkpoint_id),
+                            attempt_id: Some(state.attempt_id),
+                            reason: "uncertain NON_IDEMPOTENT Tester execution cannot auto-replay"
+                                .into(),
+                        });
+                    }
+                }
+                return Ok(ResumeDecision {
+                    classification: RecoveryClassification::DurableExact,
+                    action: ResumeAction::ResumeTesterAttempt,
+                    graph_version: Some(graph_version),
+                    milestone_id: None,
+                    jobpack_id: None,
+                    change_set_id: None,
+                    checkpoint_id: Some(state.checkpoint_id),
+                    attempt_id: Some(state.attempt_id),
+                    reason: format!("resume persisted Tester stage {}", state.stage),
+                });
+            }
+        }
+
+        if let Some(checkpoint) = self.resolve_tester_checkpoint(available_capabilities)? {
+            let action = match checkpoint.disposition {
+                TesterCheckpointDisposition::Due => ResumeAction::ResumeTesterAttempt,
+                TesterCheckpointDisposition::ProductFailure => ResumeAction::ResumeCoder,
+                TesterCheckpointDisposition::NeedsHuman
+                | TesterCheckpointDisposition::Blocked
+                | TesterCheckpointDisposition::IntegrationNotReady
+                | TesterCheckpointDisposition::SpecGap => ResumeAction::BlockedNeedsHuman,
+            };
+            let classification = if action == ResumeAction::BlockedNeedsHuman {
+                RecoveryClassification::NeedsHuman
+            } else {
+                RecoveryClassification::DurableExact
+            };
+            return Ok(ResumeDecision {
+                classification,
+                action,
+                graph_version: Some(graph_version),
+                milestone_id: Some(checkpoint.checkpoint.milestone_id.clone()),
+                jobpack_id: checkpoint
+                    .target
+                    .as_ref()
+                    .and_then(|target| target.prerequisites.first())
+                    .map(|target| target.jobpack_id.clone()),
+                change_set_id: checkpoint
+                    .target
+                    .as_ref()
+                    .and_then(|target| target.prerequisites.first())
+                    .and_then(|target| target.change_set_id.clone()),
+                checkpoint_id: Some(checkpoint.checkpoint.id.clone()),
+                attempt_id: checkpoint.next_attempt_id.clone(),
+                reason: checkpoint
+                    .reason
+                    .clone()
+                    .unwrap_or_else(|| format!("Tester checkpoint {} is due", checkpoint.checkpoint.id)),
+            });
+        }
+
+        if let Some(state) = self.code_workflow_state()? {
+            if state.graph_version == graph_version {
+                if let Some(change_set_id) = state.change_set_id.as_deref() {
+                    if state.status != "CODER" {
+                        let tx = self.conn.unchecked_transaction()?;
+                        let current = assert_code_change_set_current_tx(
+                            &tx,
+                            project_root,
+                            graph_version,
+                            &state.jobpack_id,
+                            change_set_id,
+                        );
+                        tx.commit()?;
+                        if let Err(error) = current {
+                            return Ok(ResumeDecision {
+                                classification: RecoveryClassification::SourceDiverged,
+                                action: ResumeAction::BlockedNeedsHuman,
+                                graph_version: Some(graph_version),
+                                milestone_id: self
+                                    .current_active_work()?
+                                    .map(|work| work.milestone_id),
+                                jobpack_id: Some(state.jobpack_id),
+                                change_set_id: Some(change_set_id.to_owned()),
+                                checkpoint_id: None,
+                                attempt_id: None,
+                                reason: format!("source diverged from durable change set: {error:#}"),
+                            });
+                        }
+                    }
+                }
+
+                let active = self.current_active_work()?;
+                let milestone_id = active.as_ref().map(|work| work.milestone_id.clone());
+                let action = match state.status.as_str() {
+                    "CODER" => ResumeAction::ResumeCoder,
+                    "REVIEWER" => ResumeAction::ResumeReviewer,
+                    "INTERNAL_FIX" => ResumeAction::ResumeInternalFix,
+                    "PAUSED" => ResumeAction::BlockedNeedsHuman,
+                    "REVIEW_PASS" => {
+                        let change_set_id = state
+                            .change_set_id
+                            .as_deref()
+                            .context("REVIEW_PASS resume requires exact change set")?;
+                        if self
+                            .latest_verification_result(
+                                graph_version,
+                                &state.jobpack_id,
+                                change_set_id,
+                            )?
+                            .as_deref()
+                            != Some("TEST_PASS")
+                        {
+                            ResumeAction::RunRequiredVerification
+                        } else if self.resolve_code_cr_boundary()?.is_some() {
+                            ResumeAction::ResumeLocalCr
+                        } else {
+                            ResumeAction::ResumeCoder
+                        }
+                    }
+                    other => {
+                        return Ok(ResumeDecision {
+                            classification: RecoveryClassification::Blocked,
+                            action: ResumeAction::BlockedNeedsHuman,
+                            graph_version: Some(graph_version),
+                            milestone_id,
+                            jobpack_id: Some(state.jobpack_id),
+                            change_set_id: state.change_set_id,
+                            checkpoint_id: None,
+                            attempt_id: None,
+                            reason: format!("unsupported persisted code workflow state {other}"),
+                        });
+                    }
+                };
+                let classification = if action == ResumeAction::BlockedNeedsHuman {
+                    RecoveryClassification::Blocked
+                } else {
+                    RecoveryClassification::DurableExact
+                };
+                return Ok(ResumeDecision {
+                    classification,
+                    action,
+                    graph_version: Some(graph_version),
+                    milestone_id,
+                    jobpack_id: Some(state.jobpack_id),
+                    change_set_id: state.change_set_id,
+                    checkpoint_id: None,
+                    attempt_id: None,
+                    reason: format!("resume persisted code workflow state {}", state.status),
+                });
+            }
+        }
+
+        let tx = self.conn.unchecked_transaction()?;
+        let milestone = current_milestone_tx(&tx, graph_version)?;
+        if let Some((milestone_id, _, status, _)) = milestone {
+            let action = if status == "VERIFY" {
+                ResumeAction::CompleteMilestone
+            } else {
+                ResumeAction::ResumeCoder
+            };
+            tx.commit()?;
+            return Ok(ResumeDecision {
+                classification: RecoveryClassification::DurableExact,
+                action,
+                graph_version: Some(graph_version),
+                milestone_id: Some(milestone_id),
+                jobpack_id: None,
+                change_set_id: None,
+                checkpoint_id: None,
+                attempt_id: None,
+                reason: format!("resume milestone state {status}"),
+            });
+        }
+
+        let next: Option<(String, i64)> = tx
+            .query_row(
+                r#"
+                SELECT milestone_id, position
+                FROM execution_milestones
+                WHERE graph_version=?1 AND status!='COMPLETE'
+                ORDER BY position ASC LIMIT 1
+                "#,
+                params![graph_version],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        let decision = if let Some((milestone_id, position)) = next {
+            let completed_before: i64 = tx.query_row(
+                r#"
+                SELECT COUNT(*) FROM execution_milestones
+                WHERE graph_version=?1 AND position<?2 AND status='COMPLETE'
+                "#,
+                params![graph_version, position],
+                |row| row.get(0),
+            )?;
+            if completed_before == 0 {
+                ResumeDecision {
+                    classification: RecoveryClassification::DurableExact,
+                    action: ResumeAction::ActivateInitialMilestone,
+                    graph_version: Some(graph_version),
+                    milestone_id: Some(milestone_id),
+                    jobpack_id: None,
+                    change_set_id: None,
+                    checkpoint_id: None,
+                    attempt_id: None,
+                    reason: "initial milestone is ready to start".into(),
+                }
+            } else {
+                ResumeDecision {
+                    classification: RecoveryClassification::DurableExact,
+                    action: ResumeAction::WaitExplicitNextMilestoneStart,
+                    graph_version: Some(graph_version),
+                    milestone_id: Some(milestone_id),
+                    jobpack_id: None,
+                    change_set_id: None,
+                    checkpoint_id: None,
+                    attempt_id: None,
+                    reason: "next milestone requires explicit start".into(),
+                }
+            }
+        } else {
+            ResumeDecision {
+                classification: RecoveryClassification::DurableExact,
+                action: ResumeAction::ExecutionComplete,
+                graph_version: Some(graph_version),
+                milestone_id: None,
+                jobpack_id: None,
+                change_set_id: None,
+                checkpoint_id: None,
+                attempt_id: None,
+                reason: "execution graph has no remaining milestone".into(),
+            }
+        };
+        tx.commit()?;
+        Ok(decision)
     }
 
     pub fn jobpack_code_tasks(
