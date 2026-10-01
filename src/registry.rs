@@ -6,9 +6,10 @@ use crate::{
     },
     plan::{PlanArtifact, PlanRevision},
     tester_evidence::{
-        AdapterObservationField, ObservedValue, ReplaySafety, TesterAttemptEvidence,
-        TesterClassification, TesterEvidenceOutputRecord, TesterEvidenceRef, TesterModeOutcome,
-        TesterPrerequisiteTarget, TesterTargetBinding, VerificationObservationField,
+        AdapterObservationField, ApplicabilityContext, ApplicabilityDecision, EvidenceProvenance,
+        ObservedValue, ReplaySafety, TesterAttemptEvidence, TesterClassification,
+        TesterEvidenceOutputRecord, TesterEvidenceRef, TesterModeOutcome, TesterPrerequisiteTarget,
+        TesterTargetBinding, VerificationObservationField,
     },
     tester_execution::{TesterExecutionObservation, TesterExecutionStepRequest},
     tester_workspace::TesterWorkspaceRuntime,
@@ -100,6 +101,15 @@ pub struct CodeWorkflowState {
     pub status: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResolvedTesterEvidence {
+    pub checkpoint_id: String,
+    pub output_id: String,
+    pub attempt_id: String,
+    pub value: ObservedValue,
+    pub evidence_refs: Vec<TesterEvidenceRef>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActiveWorkRecord {
     pub graph_version: i64,
@@ -116,6 +126,7 @@ pub struct ActiveWorkRecord {
     pub expected_outputs: Vec<String>,
     pub acceptance: Vec<String>,
     pub verification_hints: Vec<String>,
+    pub tester_evidence: Vec<ResolvedTesterEvidence>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -4527,7 +4538,141 @@ fn active_work_tx(tx: &Transaction<'_>, graph_version: i64) -> Result<Option<Act
         expected_outputs: serde_json::from_str(&row.11)?,
         acceptance: serde_json::from_str(&row.12)?,
         verification_hints: serde_json::from_str(&row.13)?,
+        tester_evidence: resolve_required_tester_evidence_tx(tx, graph_version, &row.6)?,
     }))
+}
+
+fn resolve_required_tester_evidence_tx(
+    tx: &Transaction<'_>,
+    graph_version: i64,
+    jobpack_id: &str,
+) -> Result<Vec<ResolvedTesterEvidence>> {
+    let requirements = {
+        let mut statement = tx.prepare(
+            r#"
+            SELECT checkpoint_id, output_id, required
+            FROM execution_evidence_requirements
+            WHERE graph_version=?1 AND consumer_jobpack_id=?2
+            ORDER BY checkpoint_id, output_id
+            "#,
+        )?;
+        statement
+            .query_map(params![graph_version, jobpack_id], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)? != 0,
+                ))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+    };
+
+    let mut resolved = Vec::new();
+    for (checkpoint_id, output_id, required) in requirements {
+        let row: Option<(String, String)> = tx
+            .query_row(
+                r#"
+                SELECT r.attempt_id, r.record_json
+                FROM tester_evidence_records r
+                JOIN tester_evidence_attempts a
+                  ON a.graph_version=r.graph_version
+                 AND a.checkpoint_id=r.checkpoint_id
+                 AND a.attempt_id=r.attempt_id
+                WHERE r.graph_version=?1
+                  AND r.checkpoint_id=?2
+                  AND r.output_id=?3
+                ORDER BY r.id DESC
+                LIMIT 1
+                "#,
+                params![graph_version, checkpoint_id, output_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+
+        let Some((attempt_id, record_json)) = row else {
+            if required {
+                bail!(
+                    "PLAN_GAP: required Tester evidence {}:{} for consumer {} is missing",
+                    checkpoint_id,
+                    output_id,
+                    jobpack_id
+                );
+            }
+            continue;
+        };
+
+        let record: TesterEvidenceOutputRecord = serde_json::from_str(&record_json)?;
+        if record.provenance != EvidenceProvenance::Observed {
+            if required {
+                bail!(
+                    "PLAN_GAP: required Tester evidence {}:{} for consumer {} is not OBSERVED",
+                    checkpoint_id,
+                    output_id,
+                    jobpack_id
+                );
+            }
+            continue;
+        }
+
+        let attempt = tester_attempt_evidence_tx(tx, graph_version, &checkpoint_id, &attempt_id)?
+            .context("Tester evidence output references a missing attempt")?;
+        validate_tester_target_tx(tx, graph_version, &attempt.target)?;
+
+        let mut context = ApplicabilityContext::default();
+        if attempt.target.prerequisites.len() == 1 {
+            let target = &attempt.target.prerequisites[0];
+            context.change_set_id = target.change_set_id.clone();
+            context.product_revision = target.target_revision.clone();
+        }
+        match record.applicability.evaluate(&context)? {
+            ApplicabilityDecision::Compatible => {}
+            ApplicabilityDecision::Invalidated | ApplicabilityDecision::RevalidationRequired => {
+                if required {
+                    bail!(
+                        "PLAN_GAP: required Tester evidence {}:{} for consumer {} is stale or requires revalidation",
+                        checkpoint_id,
+                        output_id,
+                        jobpack_id
+                    );
+                }
+                continue;
+            }
+        }
+
+        let value = record
+            .value
+            .clone()
+            .context("OBSERVED Tester evidence is missing its value")?;
+        resolved.push(ResolvedTesterEvidence {
+            checkpoint_id,
+            output_id,
+            attempt_id,
+            value,
+            evidence_refs: record.evidence_refs.clone(),
+        });
+    }
+    Ok(resolved)
+}
+
+fn tester_attempt_evidence_tx(
+    tx: &Transaction<'_>,
+    graph_version: i64,
+    checkpoint_id: &str,
+    attempt_id: &str,
+) -> Result<Option<TesterAttemptEvidence>> {
+    let json: Option<String> = tx
+        .query_row(
+            r#"
+            SELECT attempt_json
+            FROM tester_evidence_attempts
+            WHERE graph_version=?1 AND checkpoint_id=?2 AND attempt_id=?3
+            "#,
+            params![graph_version, checkpoint_id, attempt_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    json.map(|value| serde_json::from_str(&value).map_err(Into::into))
+        .transpose()
 }
 
 fn activate_eligible_jobpack_tx(
