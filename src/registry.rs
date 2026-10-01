@@ -150,7 +150,6 @@ pub struct TesterCheckpointWorkRecord {
     pub next_attempt_id: Option<String>,
 }
 
-
 pub struct Registry {
     conn: Connection,
 }
@@ -1886,13 +1885,13 @@ impl Registry {
             .map_err(Into::into)
     }
 
-
     pub fn resolve_tester_checkpoint(
         &self,
         available_capabilities: &[String],
     ) -> Result<Option<TesterCheckpointWorkRecord>> {
         let tx = self.conn.unchecked_transaction()?;
-        let Some((graph_version, plan_revision, _plan_hash)) = current_graph_binding_tx(&tx)? else {
+        let Some((graph_version, plan_revision, _plan_hash)) = current_graph_binding_tx(&tx)?
+        else {
             tx.commit()?;
             return Ok(None);
         };
@@ -1921,7 +1920,8 @@ impl Registry {
         for checkpoint_json in checkpoints {
             let checkpoint: TestCheckpointSpec = serde_json::from_str(&checkpoint_json)?;
             let target = build_tester_target_tx(&tx, graph_version, &checkpoint)?;
-            let boundary = tester_boundary_state_tx(&tx, graph_version, &checkpoint, target.is_some())?;
+            let boundary =
+                tester_boundary_state_tx(&tx, graph_version, &checkpoint, target.is_some())?;
             if matches!(boundary, TesterBoundaryState::NotReached) {
                 continue;
             }
@@ -1930,7 +1930,10 @@ impl Registry {
                 let reason = match boundary {
                     TesterBoundaryState::Crossed(reason) => reason,
                     TesterBoundaryState::Reached => {
-                        format!("checkpoint {} boundary is reached but prerequisites are not ready", checkpoint.id)
+                        format!(
+                            "checkpoint {} boundary is reached but prerequisites are not ready",
+                            checkpoint.id
+                        )
                     }
                     TesterBoundaryState::NotReached => unreachable!(),
                 };
@@ -1948,9 +1951,12 @@ impl Registry {
             };
 
             let target_fingerprint = target.fingerprint(graph_version, &checkpoint.id)?;
-            if let Some(attempt) =
-                latest_tester_attempt_for_target_tx(&tx, graph_version, &checkpoint.id, &target_fingerprint)?
-            {
+            if let Some(attempt) = latest_tester_attempt_for_target_tx(
+                &tx,
+                graph_version,
+                &checkpoint.id,
+                &target_fingerprint,
+            )? {
                 attempt.validate_against_checkpoint(&checkpoint)?;
                 validate_tester_target_tx(&tx, graph_version, &attempt.target)?;
                 if tester_attempt_satisfied(&attempt) {
@@ -3203,10 +3209,12 @@ fn validate_tester_target_tx(
     let checkpoint_states = target_binding
         .prerequisites
         .iter()
-        .map(|target| crate::execution_graph::CheckpointPrerequisiteSpec {
-            jobpack_id: target.jobpack_id.clone(),
-            state: target.state,
-        })
+        .map(
+            |target| crate::execution_graph::CheckpointPrerequisiteSpec {
+                jobpack_id: target.jobpack_id.clone(),
+                state: target.state,
+            },
+        )
         .collect::<Vec<_>>();
     let synthetic = TestCheckpointSpec {
         id: "__target_validation__".into(),
@@ -3277,7 +3285,11 @@ fn tester_boundary_state_tx(
                     "checkpoint {} gated Job Pack {} is in blocking state {}",
                     checkpoint.id, before, other
                 ))),
-                None => bail!("checkpoint {} references missing before Job Pack {}", checkpoint.id, before),
+                None => bail!(
+                    "checkpoint {} references missing before Job Pack {}",
+                    checkpoint.id,
+                    before
+                ),
             }
         }
         CheckpointBoundaryKind::MilestoneGate => {
@@ -3307,7 +3319,11 @@ fn tester_boundary_state_tx(
                     checkpoint.milestone_id,
                     other
                 ),
-                None => bail!("checkpoint {} references missing milestone {}", checkpoint.id, checkpoint.milestone_id),
+                None => bail!(
+                    "checkpoint {} references missing milestone {}",
+                    checkpoint.id,
+                    checkpoint.milestone_id
+                ),
             }
         }
     }
@@ -3441,7 +3457,10 @@ fn tester_attempt_blocking_state(
     {
         return (
             TesterCheckpointDisposition::NeedsHuman,
-            format!("Tester attempt {} requires Human evidence", attempt.attempt_id),
+            format!(
+                "Tester attempt {} requires Human evidence",
+                attempt.attempt_id
+            ),
         );
     }
     if attempt
