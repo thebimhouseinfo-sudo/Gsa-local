@@ -1908,9 +1908,10 @@ impl Registry {
                 ORDER BY m.position ASC, c.checkpoint_id ASC
                 "#,
             )?;
-            statement
+            let rows = statement
                 .query_map(params![graph_version], |row| row.get::<_, String>(0))?
-                .collect::<std::result::Result<Vec<_>, _>>()?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            rows
         };
         let available = available_capabilities
             .iter()
