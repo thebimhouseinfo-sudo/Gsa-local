@@ -320,7 +320,7 @@ Do not edit Tester-owned artifacts as the product fix. Use the structured repair
                     }
                 }
                 Some(NextWork::Cr(cr_work)) => {
-                    let active_work = self
+                    let active_work: ActiveWork = self
                         .registry
                         .current_active_work()?
                         .map(Into::into)
