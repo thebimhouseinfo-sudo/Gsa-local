@@ -3498,7 +3498,7 @@ impl Registry {
     ) -> Result<Option<ActiveWorkRecord>> {
         let tx = self.conn.unchecked_transaction()?;
         assert_lease_owner_tx(&tx, project_root, owner)?;
-        let Some((graph_version, plan_revision, plan_hash)) = current_graph_binding_tx(&tx)? else {
+        let Some((graph_version, plan_revision, _plan_hash)) = current_graph_binding_tx(&tx)? else {
             bail!("cannot complete Milestone without a current execution graph");
         };
 
@@ -3549,11 +3549,12 @@ impl Registry {
                 ORDER BY checkpoint_id
                 "#,
             )?;
-            statement
+            let rows = statement
                 .query_map(params![graph_version, milestone_id], |row| {
                     row.get::<_, String>(0)
                 })?
-                .collect::<std::result::Result<Vec<_>, _>>()?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            rows
         };
         for checkpoint_json in milestone_checkpoints {
             let checkpoint: TestCheckpointSpec = serde_json::from_str(&checkpoint_json)?;
@@ -3638,24 +3639,78 @@ impl Registry {
             )
             .optional()?;
 
-        let Some((next_id, next_status, next_position)) = next else {
-            write_checkpoint_tx(
+        if let Some((next_id, next_status, next_position)) = next {
+            if next_position != position + 1 {
+                bail!("milestone ordering is not contiguous after {milestone_id}");
+            }
+            if next_status != "LOCKED" {
+                bail!("next milestone {next_id} must be LOCKED; found {next_status}");
+            }
+            append_event_tx(
                 &tx,
-                complete_sequence,
+                "MILESTONE_READY_FOR_EXPLICIT_START",
+                &serde_json::json!({
+                    "graph_version": graph_version,
+                    "milestone": next_id
+                }),
+            )?;
+        }
+
+        write_checkpoint_tx(
+            &tx,
+            complete_sequence,
+            plan_revision,
+            Some(milestone_id),
+            None,
+            "milestone_complete",
+            None,
+        )?;
+        tx.commit()?;
+        Ok(None)
+    }
+
+    pub fn activate_next_milestone(
+        &self,
+        project_root: &Path,
+        owner: &str,
+    ) -> Result<Option<ActiveWorkRecord>> {
+        let tx = self.conn.unchecked_transaction()?;
+        assert_lease_owner_tx(&tx, project_root, owner)?;
+        let Some((graph_version, plan_revision, plan_hash)) = current_graph_binding_tx(&tx)? else {
+            bail!("cannot activate Milestone without a current execution graph");
+        };
+        if let Some(work) = active_work_tx(&tx, graph_version)? {
+            tx.commit()?;
+            return Ok(Some(work));
+        }
+        if current_milestone_tx(&tx, graph_version)?.is_some() {
+            bail!("cannot explicitly activate the next Milestone while one is already ACTIVE or VERIFY");
+        }
+
+        let next: Option<(String, String, i64)> = tx
+            .query_row(
+                r#"
+                SELECT milestone_id, status, position
+                FROM execution_milestones
+                WHERE graph_version=?1 AND status!='COMPLETE'
+                ORDER BY position ASC LIMIT 1
+                "#,
+                params![graph_version],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .optional()?;
+        let Some((milestone_id, status, position)) = next else {
+            ensure_milestone_checkpoint_tx(
+                &tx,
                 plan_revision,
-                Some(milestone_id),
                 None,
-                "milestone_complete",
-                None,
+                "execution_graph_complete",
             )?;
             tx.commit()?;
             return Ok(None);
         };
-        if next_position != position + 1 {
-            bail!("milestone ordering is not contiguous after {milestone_id}");
-        }
-        if next_status != "LOCKED" {
-            bail!("next milestone {next_id} must be LOCKED; found {next_status}");
+        if status != "LOCKED" {
+            bail!("cannot activate milestone {milestone_id} from state {status}; expected LOCKED");
         }
 
         let earlier_incomplete: i64 = tx.query_row(
@@ -3663,11 +3718,11 @@ impl Registry {
             SELECT COUNT(*) FROM execution_milestones
             WHERE graph_version=?1 AND position<?2 AND status!='COMPLETE'
             "#,
-            params![graph_version, next_position],
+            params![graph_version, position],
             |row| row.get(0),
         )?;
         if earlier_incomplete != 0 {
-            bail!("cannot activate {next_id}; an earlier milestone is incomplete");
+            bail!("cannot activate {milestone_id}; an earlier milestone is incomplete");
         }
 
         tx.execute(
@@ -3676,17 +3731,17 @@ impl Registry {
             SET status='ACTIVE'
             WHERE graph_version=?1 AND milestone_id=?2 AND status='LOCKED'
             "#,
-            params![graph_version, next_id],
+            params![graph_version, milestone_id],
         )?;
         append_event_tx(
             &tx,
             "MILESTONE_ACTIVE",
             &serde_json::json!({
                 "graph_version": graph_version,
-                "milestone": next_id
+                "milestone": milestone_id,
+                "activation_policy": "EXPLICIT_START"
             }),
         )?;
-
         let work = activate_eligible_jobpack_tx(&tx, graph_version, plan_revision, &plan_hash)?
             .context("new ACTIVE milestone has no dependency-eligible Job Pack")?;
         tx.commit()?;
