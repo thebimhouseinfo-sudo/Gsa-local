@@ -3328,7 +3328,10 @@ impl Registry {
         let cr_work = code_cr_boundary_work_tx(&tx, graph_version)?
             .context("Job Pack is not mature for terminal Local CR")?;
         if !cr_work.terminal
-            || !cr_work.boundary_ids.iter().any(|boundary| boundary == "JOBPACK_TERMINAL")
+            || !cr_work
+                .boundary_ids
+                .iter()
+                .any(|boundary| boundary == "JOBPACK_TERMINAL")
         {
             bail!("Job Pack terminal gates are not fully satisfied");
         }
@@ -4240,8 +4243,7 @@ fn code_cr_boundary_work_tx(
         }
 
         let target = build_tester_target_tx(tx, graph_version, &checkpoint)?;
-        let boundary =
-            tester_boundary_state_tx(tx, graph_version, &checkpoint, target.is_some())?;
+        let boundary = tester_boundary_state_tx(tx, graph_version, &checkpoint, target.is_some())?;
         if matches!(boundary, TesterBoundaryState::NotReached) {
             continue;
         }
