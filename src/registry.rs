@@ -3233,8 +3233,31 @@ fn validate_tester_target_tx(
     };
     let current = build_tester_target_tx(tx, graph_version, &synthetic)?
         .context("Tester target prerequisites are not currently satisfied")?;
-    if &current != target_binding {
+
+    if current.prerequisites.len() != target_binding.prerequisites.len() {
         bail!("Tester target binding is stale for current reviewed prerequisite state");
+    }
+
+    for target in &target_binding.prerequisites {
+        let Some(observed) = current
+            .prerequisites
+            .iter()
+            .find(|candidate| candidate.jobpack_id == target.jobpack_id)
+        else {
+            bail!("Tester target binding is stale for current reviewed prerequisite state");
+        };
+
+        if observed.state != target.state || observed.change_set_id != target.change_set_id {
+            bail!("Tester target binding is stale for current reviewed prerequisite state");
+        }
+
+        if let (Some(expected_revision), Some(observed_revision)) =
+            (&target.target_revision, &observed.target_revision)
+        {
+            if expected_revision != observed_revision {
+                bail!("Tester target binding is stale for current reviewed prerequisite state");
+            }
+        }
     }
     Ok(())
 }
