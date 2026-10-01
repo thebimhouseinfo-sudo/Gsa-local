@@ -163,12 +163,12 @@ fn tester_work(
     }
 }
 
-fn repair_work(
-    controller: &MilestoneController<'_>,
-) -> gsa_local::controller::TesterRepairWork {
+fn repair_work(controller: &MilestoneController<'_>) -> gsa_local::controller::TesterRepairWork {
     match controller.resolve_next(&[]).unwrap().unwrap() {
         NextWork::Repair(work) => work,
-        NextWork::Tester(work) => panic!("expected Repair, got Tester {}", work.disposition.as_str()),
+        NextWork::Tester(work) => {
+            panic!("expected Repair, got Tester {}", work.disposition.as_str())
+        }
         NextWork::Coder(work) => panic!("expected Repair, got Coder {}", work.jobpack_id),
     }
 }
