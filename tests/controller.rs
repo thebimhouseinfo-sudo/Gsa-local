@@ -477,7 +477,6 @@ fn superseding_active_graph_retires_old_active_jobpack_before_new_activation() {
     assert_eq!(registry.active_jobpack_count(v2).unwrap(), 1);
 }
 
-
 #[test]
 fn milestone_completion_requires_satisfied_milestone_gate_checkpoint() {
     let dir = tempdir().unwrap();
@@ -518,8 +517,7 @@ fn milestone_completion_requires_satisfied_milestone_gate_checkpoint() {
         }],
     });
 
-    let (_revision, _hash, version) =
-        approve_and_register_graph(&registry, execution_graph);
+    let (_revision, _hash, version) = approve_and_register_graph(&registry, execution_graph);
     registry
         .acquire_lease(dir.path(), "owner-a", Duration::from_secs(3600))
         .unwrap();
@@ -539,9 +537,7 @@ fn milestone_completion_requires_satisfied_milestone_gate_checkpoint() {
             .jobpack_id,
         "JP-A"
     );
-    assert!(
-        phase11_complete_active(&dir, &registry, version, "JP-A", "T-A", "change-a").is_none()
-    );
+    assert!(phase11_complete_active(&dir, &registry, version, "JP-A", "T-A", "change-a").is_none());
     assert_eq!(
         registry.milestone_status(version, "M1").unwrap().as_deref(),
         Some("VERIFY")
@@ -550,10 +546,8 @@ fn milestone_completion_requires_satisfied_milestone_gate_checkpoint() {
     let error = controller
         .mark_verified_milestone_complete("M1")
         .unwrap_err();
-    assert!(
-        format!("{error:#}")
-            .contains("milestone checkpoint M1-GATE requires a satisfied Tester attempt")
-    );
+    assert!(format!("{error:#}")
+        .contains("milestone checkpoint M1-GATE requires a satisfied Tester attempt"));
     assert_eq!(
         registry.milestone_status(version, "M1").unwrap().as_deref(),
         Some("VERIFY")
