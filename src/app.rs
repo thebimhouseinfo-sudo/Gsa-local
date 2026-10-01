@@ -315,6 +315,56 @@ Do not edit Tester-owned artifacts as the product fix. Use the structured repair
                     }
                 }
                 Some(NextWork::Tester(checkpoint_work)) => {
+                    if checkpoint_work.disposition == TesterCheckpointDisposition::SpecGap {
+                        let reason = checkpoint_work
+                            .reason
+                            .as_deref()
+                            .unwrap_or("Tester reported a material specification gap");
+                        let prior_plan = self
+                            .registry
+                            .plan_for_current_execution_graph(checkpoint_work.graph_version)?;
+                        println!(
+                            "TEST_SPEC_GAP checkpoint={} plan_revision={} reason={}",
+                            checkpoint_work.checkpoint.id,
+                            prior_plan.revision,
+                            reason
+                        );
+                        let requirement = format!(
+                            "Replan the current approved work because Tester found a material SPEC_GAP at declared checkpoint {}. Prior approved goal: {}. Checkpoint goal: {}. Criteria: {}. Observed gap: {}. Preserve valid observed evidence and do not invent missing runtime facts. Produce a new complete plan revision that resolves the gap or routes to Human when the requirement cannot be decided safely.",
+                            checkpoint_work.checkpoint.id,
+                            prior_plan.artifact.goal,
+                            checkpoint_work.checkpoint.goal,
+                            checkpoint_work.checkpoint.criteria.join("; "),
+                            reason
+                        );
+                        let workflow = PlanningWorkflow::new(
+                            &self.ollama,
+                            &self.harnesses,
+                            &self.registry,
+                            &self.config,
+                            &self.session,
+                            &self.project_root,
+                        );
+                        match workflow.run(&requirement).await? {
+                            PlanningOutcome::Registered {
+                                plan,
+                                graph_version,
+                            } => {
+                                println!(
+                                    "TEST_SPEC_GAP_REPLANNED revision={} graph_version={}",
+                                    plan.revision, graph_version
+                                );
+                                continue;
+                            }
+                            PlanningOutcome::Paused { revision, .. } => {
+                                bail!(
+                                    "Tester SPEC_GAP replanning paused at revision {:?}; Human decision is required",
+                                    revision
+                                );
+                            }
+                        }
+                    }
+
                     if checkpoint_work.disposition != TesterCheckpointDisposition::Due {
                         let reason = checkpoint_work
                             .reason
