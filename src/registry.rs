@@ -42,7 +42,6 @@ pub struct CodeCrReviewRecord {
     pub findings: Vec<String>,
 }
 
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodeCrTesterEvidenceRef {
     pub checkpoint_id: String,
