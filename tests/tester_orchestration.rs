@@ -503,3 +503,35 @@ fn non_product_failure_and_needs_human_still_stop_coder_progression() {
         );
     }
 }
+
+#[test]
+fn spec_gap_is_preserved_as_a_distinct_replanning_signal() {
+    let (dir, registry, version) = setup(vec![]);
+    let controller = MilestoneController::new(&registry, dir.path(), "owner-a");
+    let due = tester_work(&controller, &[]);
+    registry
+        .record_tester_attempt_evidence(
+            dir.path(),
+            "owner-a",
+            &TesterAttemptEvidence {
+                graph_version: version,
+                checkpoint_id: "CP1".into(),
+                attempt_id: due.next_attempt_id.unwrap(),
+                target: due.target.unwrap(),
+                mode_results: vec![TesterModeResult {
+                    mode: EvidenceMode::Verify,
+                    outcome: TesterModeOutcome::Blocked,
+                    reason: Some("approved behavior is underspecified".into()),
+                }],
+                classifications: vec![TesterClassification::SpecGap],
+                experiment: None,
+                outputs: vec![],
+                limitations: vec![],
+            },
+        )
+        .unwrap();
+
+    let work = tester_work(&controller, &[]);
+    assert_eq!(work.disposition, TesterCheckpointDisposition::SpecGap);
+    assert!(work.reason.unwrap().contains("SPEC_GAP"));
+}
