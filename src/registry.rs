@@ -1737,7 +1737,7 @@ impl Registry {
         jobpack_id: &str,
         change_set_id: &str,
     ) -> Result<Option<PersistedCodeCheckpoint>> {
-        let row: Option<(String, String, String, String)> = self
+        let row: Option<PersistedCodeCheckpoint> = self
             .conn
             .query_row(
                 r#"
