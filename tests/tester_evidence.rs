@@ -1083,6 +1083,28 @@ fn resume_decision_reuses_due_tester_attempt_identity() {
 }
 
 #[test]
+fn due_tester_resume_identity_survives_registry_reopen() {
+    let (dir, registry, _version, _verification_run_id) = setup();
+    let before = registry
+        .resolve_resume_decision(dir.path(), &["RUNTIME_PROBE".into()])
+        .unwrap();
+    assert_eq!(before.action, ResumeAction::ResumeTesterAttempt);
+    let expected_checkpoint = before.checkpoint_id.clone();
+    let expected_attempt = before.attempt_id.clone();
+
+    drop(registry);
+    let reopened = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    let after = reopened
+        .resolve_resume_decision(dir.path(), &["RUNTIME_PROBE".into()])
+        .unwrap();
+
+    assert_eq!(after.action, ResumeAction::ResumeTesterAttempt);
+    assert_eq!(after.classification, RecoveryClassification::DurableExact);
+    assert_eq!(after.checkpoint_id, expected_checkpoint);
+    assert_eq!(after.attempt_id, expected_attempt);
+}
+
+#[test]
 fn uncertain_non_idempotent_execution_requires_human_after_restart() {
     let (dir, registry, version, verification_run_id) = setup();
     let artifact = workspace_artifact(&dir, version, "ATT-NON-IDEMPOTENT");
