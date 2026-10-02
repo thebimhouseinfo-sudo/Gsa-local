@@ -1867,6 +1867,38 @@ impl Registry {
             });
         };
 
+        let persisted_code_state = self.code_workflow_state()?;
+        if let Some(state) = persisted_code_state.as_ref() {
+            if state.graph_version == graph_version && state.status != "CODER" {
+                if let Some(change_set_id) = state.change_set_id.as_deref() {
+                    let tx = self.conn.unchecked_transaction()?;
+                    let (classification, reason) = reconcile_code_change_set_source_tx(
+                        &tx,
+                        project_root,
+                        graph_version,
+                        &state.jobpack_id,
+                        change_set_id,
+                    )?;
+                    tx.commit()?;
+                    if classification != RecoveryClassification::DurableExact {
+                        return Ok(ResumeDecision {
+                            classification,
+                            action: ResumeAction::BlockedNeedsHuman,
+                            graph_version: Some(graph_version),
+                            milestone_id: self
+                                .current_active_work()?
+                                .map(|work| work.milestone_id),
+                            jobpack_id: Some(state.jobpack_id.clone()),
+                            change_set_id: Some(change_set_id.to_owned()),
+                            checkpoint_id: None,
+                            attempt_id: None,
+                            reason,
+                        });
+                    }
+                }
+            }
+        }
+
         if let Some(state) = self.latest_tester_resume_state()? {
             if state.graph_version == graph_version && state.stage != "ATTEMPT_RECORDED" {
                 if state.stage == "RECOVERY_REQUIRED" {
@@ -1957,39 +1989,8 @@ impl Registry {
             });
         }
 
-        if let Some(state) = self.code_workflow_state()? {
+        if let Some(state) = persisted_code_state {
             if state.graph_version == graph_version {
-                if let Some(change_set_id) = state.change_set_id.as_deref() {
-                    if state.status != "CODER" {
-                        let tx = self.conn.unchecked_transaction()?;
-                        let current = assert_code_change_set_current_tx(
-                            &tx,
-                            project_root,
-                            graph_version,
-                            &state.jobpack_id,
-                            change_set_id,
-                        );
-                        tx.commit()?;
-                        if let Err(error) = current {
-                            return Ok(ResumeDecision {
-                                classification: RecoveryClassification::SourceDiverged,
-                                action: ResumeAction::BlockedNeedsHuman,
-                                graph_version: Some(graph_version),
-                                milestone_id: self
-                                    .current_active_work()?
-                                    .map(|work| work.milestone_id),
-                                jobpack_id: Some(state.jobpack_id),
-                                change_set_id: Some(change_set_id.to_owned()),
-                                checkpoint_id: None,
-                                attempt_id: None,
-                                reason: format!(
-                                    "source diverged from durable change set: {error:#}"
-                                ),
-                            });
-                        }
-                    }
-                }
-
                 let active = self.current_active_work()?;
                 let milestone_id = active.as_ref().map(|work| work.milestone_id.clone());
                 let action = match state.status.as_str() {
@@ -4777,13 +4778,13 @@ fn build_tester_target_tx(
     Ok(Some(target))
 }
 
-fn assert_code_change_set_current_tx(
+fn reconcile_code_change_set_source_tx(
     tx: &Transaction<'_>,
     project_root: &Path,
     graph_version: i64,
     jobpack_id: &str,
     change_set_id: &str,
-) -> Result<()> {
+) -> Result<(RecoveryClassification, String)> {
     let journal_json: Option<String> = tx
         .query_row(
             r#"
@@ -4802,36 +4803,121 @@ fn assert_code_change_set_current_tx(
         .as_array()
         .context("persisted mutation journal must be an array")?;
     let canonical_root = project_root.canonicalize()?;
+
+    let mut saw_stale = false;
+    let mut saw_ahead = false;
+    let mut saw_diverged = false;
+    let mut details = Vec::new();
+
     for entry in entries {
         let path = entry
             .get("path")
             .and_then(serde_json::Value::as_str)
             .context("mutation journal entry is missing path")?;
-        let expected = entry
+        let expected_after = entry
             .get("after_sha256")
             .and_then(serde_json::Value::as_str)
             .context("mutation journal entry is missing after_sha256")?;
+        let expected_before = entry
+            .get("before_sha256")
+            .and_then(serde_json::Value::as_str);
+
         let candidate = canonical_root.join(path);
-        let canonical = candidate
-            .canonicalize()
-            .with_context(|| format!("reviewed source path no longer exists: {path}"))?;
-        if !canonical.starts_with(&canonical_root) {
-            bail!("reviewed source path escaped project root: {path}");
-        }
-        let bytes = fs::read(&canonical)?;
+        let canonical = match candidate.canonicalize() {
+            Ok(canonical) if canonical.starts_with(&canonical_root) => canonical,
+            Ok(_) => {
+                saw_diverged = true;
+                details.push(format!("{path}: path escaped project root"));
+                continue;
+            }
+            Err(error) => {
+                saw_diverged = true;
+                details.push(format!("{path}: source path unavailable ({error})"));
+                continue;
+            }
+        };
+
+        let bytes = match fs::read(&canonical) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                saw_diverged = true;
+                details.push(format!("{path}: source unreadable ({error})"));
+                continue;
+            }
+        };
         let digest = Sha256::digest(bytes);
         let observed = digest
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>();
-        if observed != expected {
-            bail!(
-                "stale reviewed change set: {} expected {}, current {}",
-                path,
-                expected,
-                observed
-            );
+
+        if observed == expected_after {
+            continue;
         }
+
+        if expected_before.is_some_and(|before| observed == before) {
+            saw_stale = true;
+            details.push(format!(
+                "{path}: live source matches durable before-state instead of reviewed after-state"
+            ));
+        } else {
+            saw_ahead = true;
+            details.push(format!(
+                "{path}: live source is an unbound revision (expected after {expected_after}, observed {observed})"
+            ));
+        }
+    }
+
+    let classification = if saw_diverged || (saw_stale && saw_ahead) {
+        RecoveryClassification::SourceDiverged
+    } else if saw_ahead {
+        RecoveryClassification::SourceAhead
+    } else if saw_stale {
+        RecoveryClassification::SourceStale
+    } else {
+        RecoveryClassification::DurableExact
+    };
+
+    let reason = match classification {
+        RecoveryClassification::DurableExact => {
+            format!("live source exactly matches durable change set {change_set_id}")
+        }
+        RecoveryClassification::SourceStale => format!(
+            "live source is stale relative to durable change set {change_set_id}: {}",
+            details.join("; ")
+        ),
+        RecoveryClassification::SourceAhead => format!(
+            "live source is ahead or externally modified relative to durable change set {change_set_id}; automatic adoption is prohibited: {}",
+            details.join("; ")
+        ),
+        RecoveryClassification::SourceDiverged => format!(
+            "live source diverged ambiguously from durable change set {change_set_id}: {}",
+            details.join("; ")
+        ),
+        RecoveryClassification::Blocked | RecoveryClassification::NeedsHuman => {
+            unreachable!("source reconciliation never emits generic blocker classifications")
+        }
+    };
+
+    Ok((classification, reason))
+}
+
+fn assert_code_change_set_current_tx(
+    tx: &Transaction<'_>,
+    project_root: &Path,
+    graph_version: i64,
+    jobpack_id: &str,
+    change_set_id: &str,
+) -> Result<()> {
+    let (classification, reason) = reconcile_code_change_set_source_tx(
+        tx,
+        project_root,
+        graph_version,
+        jobpack_id,
+        change_set_id,
+    )?;
+    if classification != RecoveryClassification::DurableExact {
+        bail!("{reason}");
     }
     Ok(())
 }
