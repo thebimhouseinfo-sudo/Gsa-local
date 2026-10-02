@@ -1,4 +1,5 @@
 use gsa_local::{
+    checkpoint::{RecoveryClassification, ResumeAction},
     controller::MilestoneController,
     execution_graph::{
         CheckpointBoundaryKind, CheckpointPrerequisiteSpec, EvidenceOutputSpec,
@@ -1061,6 +1062,24 @@ fn rereresolve_preserves_prepared_resume_stage_and_attempt_identity() {
 }
 
 #[test]
+fn resume_decision_reuses_due_tester_attempt_identity() {
+    let (dir, registry, _version, _verification_run_id) = setup();
+    let decision = registry
+        .resolve_resume_decision(dir.path(), &["RUNTIME_PROBE".into()])
+        .unwrap();
+    assert_eq!(decision.classification, RecoveryClassification::DurableExact);
+    assert_eq!(decision.action, ResumeAction::ResumeTesterAttempt);
+    assert_eq!(decision.checkpoint_id.as_deref(), Some("CP1"));
+    assert!(decision.attempt_id.is_some());
+
+    let repeated = registry
+        .resolve_resume_decision(dir.path(), &["RUNTIME_PROBE".into()])
+        .unwrap();
+    assert_eq!(repeated.attempt_id, decision.attempt_id);
+    assert_eq!(repeated.checkpoint_id, decision.checkpoint_id);
+}
+
+#[test]
 fn uncertain_non_idempotent_execution_requires_human_after_restart() {
     let (dir, registry, version, verification_run_id) = setup();
     let artifact = workspace_artifact(&dir, version, "ATT-NON-IDEMPOTENT");
@@ -1121,6 +1140,11 @@ fn uncertain_non_idempotent_execution_requires_human_after_restart() {
     let recovery = registry.latest_tester_resume_state().unwrap().unwrap();
     assert_eq!(recovery.execution_id.as_deref(), Some(fence.as_str()));
     assert_eq!(recovery.stage, "RECOVERY_REQUIRED");
+
+    let decision = registry.resolve_resume_decision(dir.path(), &[]).unwrap();
+    assert_eq!(decision.action, ResumeAction::BlockedNeedsHuman);
+    assert_eq!(decision.classification, RecoveryClassification::NeedsHuman);
+    assert_eq!(decision.attempt_id.as_deref(), Some("ATT-NON-IDEMPOTENT"));
 }
 
 #[test]
