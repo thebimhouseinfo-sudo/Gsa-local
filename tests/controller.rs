@@ -355,10 +355,7 @@ fn controller_activates_deterministically_and_never_jumps_milestones() {
     );
     assert_eq!(registry.active_jobpack_count(version).unwrap(), 0);
 
-    assert!(controller
-        .mark_verified_milestone_complete("M1")
-        .unwrap()
-        .is_none());
+    assert!(controller.resolve_next(&[]).unwrap().is_none());
     assert_eq!(
         registry.milestone_status(version, "M1").unwrap().as_deref(),
         Some("COMPLETE")
@@ -834,6 +831,9 @@ fn resume_decision_fails_closed_when_review_target_source_is_ahead() {
         RecoveryClassification::SourceAhead
     );
     assert!(decision.reason.contains("automatic adoption is prohibited"));
+
+    let error = controller.resolve_next(&[]).unwrap_err();
+    assert!(format!("{error:#}").contains("automatic adoption is prohibited"));
 }
 
 #[test]
