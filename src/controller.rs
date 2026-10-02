@@ -1,4 +1,5 @@
 use crate::{
+    checkpoint::ResumeAction,
     execution_graph::{PrerequisiteState, TestCheckpointSpec},
     registry::{
         ActiveWorkRecord, CodeCrBoundaryWork, Registry, ResolvedTesterEvidence,
@@ -6,7 +7,7 @@ use crate::{
     },
     tester_evidence::TesterTargetBinding,
 };
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,6 +83,39 @@ impl<'a> MilestoneController<'a> {
     }
 
     pub fn resolve_next(&self, available_capabilities: &[String]) -> Result<Option<NextWork>> {
+        let resume = self
+            .registry
+            .resolve_resume_decision(self.project_root, available_capabilities)?;
+        match resume.action {
+            ResumeAction::BlockedNeedsHuman => {
+                bail!("resume blocked: {}", resume.reason);
+            }
+            ResumeAction::WaitExplicitNextMilestoneStart | ResumeAction::ExecutionComplete => {
+                return Ok(None);
+            }
+            ResumeAction::CompleteMilestone => {
+                let milestone_id = resume
+                    .milestone_id
+                    .as_deref()
+                    .context("COMPLETE_MILESTONE resume action is missing milestone identity")?;
+                self.registry.complete_verified_milestone(
+                    self.project_root,
+                    self.lease_owner,
+                    milestone_id,
+                )?;
+                return Ok(None);
+            }
+            ResumeAction::ActivateInitialMilestone => {
+                return self.resolve_or_activate().map(|work| work.map(NextWork::Coder));
+            }
+            ResumeAction::ResumeCoder
+            | ResumeAction::ResumeReviewer
+            | ResumeAction::ResumeInternalFix
+            | ResumeAction::ResumeTesterAttempt
+            | ResumeAction::ResumeLocalCr
+            | ResumeAction::RunRequiredVerification => {}
+        }
+
         if let Some(mut checkpoint) = self
             .registry
             .resolve_tester_checkpoint(available_capabilities)?
