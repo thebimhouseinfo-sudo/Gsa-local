@@ -106,7 +106,9 @@ impl<'a> MilestoneController<'a> {
                 return Ok(None);
             }
             ResumeAction::ActivateInitialMilestone => {
-                return self.resolve_or_activate().map(|work| work.map(NextWork::Coder));
+                return self
+                    .resolve_or_activate()
+                    .map(|work| work.map(NextWork::Coder));
             }
             ResumeAction::ResumeCoder
             | ResumeAction::ResumeReviewer
