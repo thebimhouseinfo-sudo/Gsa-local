@@ -1166,7 +1166,10 @@ fn uncertain_non_idempotent_execution_requires_human_after_restart() {
     assert_eq!(recovery.execution_id.as_deref(), Some(fence.as_str()));
     assert_eq!(recovery.stage, "RECOVERY_REQUIRED");
 
-    let decision = registry.resolve_resume_decision(dir.path(), &[]).unwrap();
+    drop(resumed);
+    drop(registry);
+    let reopened = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    let decision = reopened.resolve_resume_decision(dir.path(), &[]).unwrap();
     assert_eq!(decision.action, ResumeAction::BlockedNeedsHuman);
     assert_eq!(decision.classification, RecoveryClassification::NeedsHuman);
     assert_eq!(decision.attempt_id.as_deref(), Some("ATT-NON-IDEMPOTENT"));
