@@ -784,6 +784,40 @@ fn resume_decision_tracks_code_stages_without_reinitializing() {
 }
 
 #[test]
+fn paused_code_workflow_remains_blocked_after_registry_reopen() {
+    let dir = tempdir().unwrap();
+    let registry = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    let (_revision, _hash, version) = approve_and_register(&registry);
+    registry
+        .acquire_lease(dir.path(), "owner-a", Duration::from_secs(3600))
+        .unwrap();
+    let controller = MilestoneController::new(&registry, dir.path(), "owner-a");
+    controller.resolve_or_activate().unwrap();
+
+    registry
+        .begin_code_workflow(dir.path(), "owner-a", version, "JP-B")
+        .unwrap();
+    submit_code_checkpoint(&dir, &registry, version, "JP-B", "T-B", "paused-change");
+    registry
+        .pause_code_workflow(
+            dir.path(),
+            "owner-a",
+            version,
+            "JP-B",
+            1,
+            0,
+            "wait for explicit recovery",
+        )
+        .unwrap();
+
+    let reopened = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    let decision = reopened.resolve_resume_decision(dir.path(), &[]).unwrap();
+    assert_eq!(decision.action, ResumeAction::BlockedNeedsHuman);
+    assert_eq!(decision.classification, RecoveryClassification::Blocked);
+    assert_eq!(decision.change_set_id.as_deref(), Some("paused-change"));
+}
+
+#[test]
 fn reviewer_resume_decision_survives_registry_reopen() {
     let dir = tempdir().unwrap();
     let registry = Registry::open_at(&dir.path().join("state.db")).unwrap();
