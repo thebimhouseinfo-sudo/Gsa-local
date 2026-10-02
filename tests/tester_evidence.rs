@@ -1049,7 +1049,7 @@ fn rereresolve_preserves_prepared_resume_stage_and_attempt_identity() {
     assert_eq!(before.stage, "EXECUTION_PREPARED");
     assert_eq!(before.execution_id.as_deref(), Some(fence.as_str()));
 
-    let reopened = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    let reopened = Registry::open(dir.path()).unwrap();
     let resolved_again = reopened
         .resolve_tester_checkpoint(&["RUNTIME_PROBE".into()])
         .unwrap()
@@ -1094,7 +1094,7 @@ fn due_tester_resume_identity_survives_registry_reopen() {
     let expected_attempt = before.attempt_id.clone();
 
     drop(registry);
-    let reopened = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    let reopened = Registry::open(dir.path()).unwrap();
     let after = reopened
         .resolve_resume_decision(dir.path(), &["RUNTIME_PROBE".into()])
         .unwrap();
@@ -1169,7 +1169,7 @@ fn uncertain_non_idempotent_execution_requires_human_after_restart() {
 
     drop(resumed);
     drop(registry);
-    let reopened = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    let reopened = Registry::open(dir.path()).unwrap();
     let decision = reopened.resolve_resume_decision(dir.path(), &[]).unwrap();
     assert_eq!(decision.action, ResumeAction::BlockedNeedsHuman);
     assert_eq!(decision.classification, RecoveryClassification::NeedsHuman);
@@ -1355,7 +1355,7 @@ fn nonterminal_local_cr_continuation_preserves_reviewed_checklist_progress() {
     let stale_error = registry
         .begin_code_workflow(dir.path(), "owner-a", version, "JP1")
         .unwrap_err();
-    assert!(format!("{stale_error:#}").contains("stale reviewed change set"));
+    assert!(format!("{stale_error:#}").contains("automatic adoption is prohibited"));
     std::fs::write(dir.path().join("src/session.rs"), "after").unwrap();
 
     assert_eq!(
