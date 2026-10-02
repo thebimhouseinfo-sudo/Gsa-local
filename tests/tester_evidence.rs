@@ -1049,7 +1049,8 @@ fn rereresolve_preserves_prepared_resume_stage_and_attempt_identity() {
     assert_eq!(before.stage, "EXECUTION_PREPARED");
     assert_eq!(before.execution_id.as_deref(), Some(fence.as_str()));
 
-    let resolved_again = registry
+    let reopened = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    let resolved_again = reopened
         .resolve_tester_checkpoint(&["RUNTIME_PROBE".into()])
         .unwrap()
         .unwrap();
@@ -1057,7 +1058,7 @@ fn rereresolve_preserves_prepared_resume_stage_and_attempt_identity() {
         resolved_again.next_attempt_id.as_deref(),
         Some("attempt-0001")
     );
-    let after = registry.latest_tester_resume_state().unwrap().unwrap();
+    let after = reopened.latest_tester_resume_state().unwrap().unwrap();
     assert_eq!(after, before);
 }
 
