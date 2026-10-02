@@ -3252,3 +3252,199 @@ blocked lifecycle mutation must not be rewritten as PASS
 a healthy workflow needs a canonical reconciliation path between the two
 ```
 
+
+
+---
+
+# 54. LLC — Agent selection currently forces workflow execution, and Planner workflow tool invocation fails on real Ollama models
+
+**lesson_id:** LLC-GSA-LOCAL-AGENT-ROUTING-PLANNER-TOOL-20261002  
+**date:** 2026-10-02  
+**project:** Gsa-local  
+**job:** J-7222 / Phase 12 runtime validation context  
+**trigger:** `WORKAROUND_REQUIRED`  
+**classification:** `WORKFLOW_GAP`  
+**subclassification:** `ROUTING_GAP / CONTRACT_GAP / LOCAL_MODEL_INTEGRATION_GAP`
+
+## 54.1 Canonical path
+
+Interactive Agent mode should allow ordinary Human-Agent conversation/intake without automatically creating a workflow transition.
+
+For an actual planning request, the expected path is:
+
+```text
+Human discusses / clarifies with Planner
+-> planning intent is established
+-> Planner invokes the required planning workflow tool
+-> Reviewer
+-> Local CR when required
+```
+
+Selecting the Planner role should not itself mean that every subsequent user message is a planning workflow execution request.
+
+## 54.2 Observed failure A — ordinary conversation is routed into the planning workflow
+
+Real local runtime test on MacBook, repository state beginning from:
+
+```text
+main@763b20c
+./scripts/ci.sh -> CI_EXIT=0
+```
+
+The user selected:
+
+```text
+/agent
+2. Planner
+```
+
+A real planning prompt produced:
+
+```text
+Planning workflow: Planner -> Reviewer -> Local CR
+error: Planner did not call the required workflow tool
+```
+
+After that, an ordinary conversational input:
+
+```text
+hello?
+```
+
+also immediately produced:
+
+```text
+Planning workflow: Planner -> Reviewer -> Local CR
+```
+
+This shows that the current interactive routing conflates:
+
+```text
+active agent identity
+```
+
+with:
+
+```text
+workflow execution intent
+```
+
+The defect is architectural because it prevents normal clarification/intake conversation with an Agent and can cause lifecycle/workflow machinery to activate on non-workflow messages.
+
+## 54.3 Observed failure B — real Planner workflow does not invoke the required workflow tool
+
+The same real planning prompt was tested against two different locally installed Ollama models that both advertise tool capability:
+
+```text
+qwen38t:latest
+gemma4u:latest
+```
+
+Both runs reached:
+
+```text
+Planning workflow: Planner -> Reviewer -> Local CR
+```
+
+and both failed with:
+
+```text
+error: Planner did not call the required workflow tool
+```
+
+Because the same failure reproduced across two distinct tool-capable models, this occurrence should not be treated as evidence that one specific model is defective.
+
+The integration path requiring future inspection includes:
+
+- Agent/workflow intent routing;
+- Planner system/harness instructions;
+- tool schema supplied to Ollama;
+- Ollama tool-call response shape;
+- local response parsing;
+- required-workflow validation.
+
+LLC does not decide which of these is the root cause.
+
+## 54.4 Workaround / current operational decision
+
+No workflow gate was weakened and no prompt workaround was accepted.
+
+The temporary operational decision is:
+
+```text
+record the real-project failure
+-> do not repair it inside the current Phase 12 resume task
+-> continue the already approved Phase 12 work
+-> return to Agent/Ollama interaction repair in a dedicated later task
+```
+
+Testing additional models was stopped because repeated model swapping would not resolve the routing defect and had already reproduced the Planner tool-call failure across two tool-capable models.
+
+## 54.5 Why this is a workflow lesson
+
+This matches the LLC trigger because the canonical interactive path cannot currently support both:
+
+```text
+normal Agent conversation
+and
+explicit workflow execution
+```
+
+as distinct operations.
+
+It also exposes a second contract gap where a correctly routed planning task cannot progress because the required tool invocation is not observed by the runtime.
+
+These failures were not discovered by repository CI. They appeared only when GSA Local was exercised against a real Ollama service and real locally installed models.
+
+## 54.6 Reproducibility
+
+Environment observed:
+
+```text
+GSA Local interactive shell starts successfully
+Ollama API reachable on localhost:11434
+/model discovers 5 installed models
+/agent exposes General, Planner, Job Builder, Reviewer, Coder, Tester, CR
+qwen38t:latest -> Planner required-workflow failure
+gemma4u:latest -> same Planner required-workflow failure
+Planner + "hello?" -> planning workflow activates
+```
+
+The source baseline had already passed the repository canonical CI on the same MacBook before this runtime interaction test.
+
+## 54.7 Impact
+
+- ordinary clarification/chat with a selected specialist Agent is not possible without unintended workflow activation;
+- workflow transitions can be attempted for messages with no workflow intent;
+- local tool-capable models cannot currently complete the observed Planner contract;
+- synthetic/unit CI can report green while the real Ollama-Agent path remains unusable;
+- debugging by relaxing the required-tool gate would risk hiding the actual integration defect.
+
+## 54.8 Future review target
+
+LLC records only the failure and evidence.
+
+A future dedicated workflow task should determine the correct contract for:
+
+```text
+conversation/intake
+vs
+workflow invocation
+```
+
+and separately trace the exact Planner-to-Ollama tool-calling path before any gate behavior is changed.
+
+The repair should be validated with a real local model, not only mocked tool responses.
+
+## 54.9 Key invariants
+
+```text
+selecting an Agent != invoking that Agent's workflow
+
+ordinary conversation must not create lifecycle work by default
+
+required workflow tool missing
+!= permission to bypass the required workflow tool
+
+real local-model integration evidence must be part of acceptance
+```
