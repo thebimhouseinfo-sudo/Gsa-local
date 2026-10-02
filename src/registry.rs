@@ -1891,7 +1891,9 @@ impl Registry {
                             classification,
                             action: ResumeAction::BlockedNeedsHuman,
                             graph_version: Some(graph_version),
-                            milestone_id: active_work.as_ref().map(|work| work.milestone_id.clone()),
+                            milestone_id: active_work
+                                .as_ref()
+                                .map(|work| work.milestone_id.clone()),
                             jobpack_id: Some(state.jobpack_id.clone()),
                             change_set_id: Some(change_set_id.to_owned()),
                             checkpoint_id: None,
