@@ -1067,7 +1067,10 @@ fn resume_decision_reuses_due_tester_attempt_identity() {
     let decision = registry
         .resolve_resume_decision(dir.path(), &["RUNTIME_PROBE".into()])
         .unwrap();
-    assert_eq!(decision.classification, RecoveryClassification::DurableExact);
+    assert_eq!(
+        decision.classification,
+        RecoveryClassification::DurableExact
+    );
     assert_eq!(decision.action, ResumeAction::ResumeTesterAttempt);
     assert_eq!(decision.checkpoint_id.as_deref(), Some("CP1"));
     assert!(decision.attempt_id.is_some());
