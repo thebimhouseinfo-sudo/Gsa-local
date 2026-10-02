@@ -716,6 +716,17 @@ fn satisfied_milestone_gate_allows_completion_but_not_implicit_next_activation()
         "milestone_ready_explicit_start"
     );
 
+    let reopened = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    let restart = reopened.resolve_resume_decision(dir.path(), &[]).unwrap();
+    assert_eq!(
+        restart.action,
+        ResumeAction::WaitExplicitNextMilestoneStart
+    );
+    assert_eq!(
+        registry.milestone_status(version, "M2").unwrap().as_deref(),
+        Some("LOCKED")
+    );
+
     let next = controller.start_next_milestone().unwrap().unwrap();
     assert_eq!(next.milestone_id, "M2");
     assert_eq!(next.jobpack_id, "JP-D");
@@ -761,6 +772,42 @@ fn resume_decision_tracks_code_stages_without_reinitializing() {
     let fix = registry.resolve_resume_decision(dir.path(), &[]).unwrap();
     assert_eq!(fix.action, ResumeAction::ResumeInternalFix);
     assert_eq!(fix.change_set_id.as_deref(), Some("resume-change"));
+}
+
+#[test]
+fn reviewer_resume_decision_survives_registry_reopen() {
+    let dir = tempdir().unwrap();
+    let registry = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    let (_revision, _hash, version) = approve_and_register(&registry);
+    registry
+        .acquire_lease(dir.path(), "owner-a", Duration::from_secs(3600))
+        .unwrap();
+    let controller = MilestoneController::new(&registry, dir.path(), "owner-a");
+    controller.resolve_or_activate().unwrap();
+
+    registry
+        .begin_code_workflow(dir.path(), "owner-a", version, "JP-B")
+        .unwrap();
+    submit_code_checkpoint(
+        &dir,
+        &registry,
+        version,
+        "JP-B",
+        "T-B",
+        "restart-reviewer",
+    );
+
+    let reopened = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    let decision = reopened.resolve_resume_decision(dir.path(), &[]).unwrap();
+    assert_eq!(decision.action, ResumeAction::ResumeReviewer);
+    assert_eq!(
+        decision.classification,
+        RecoveryClassification::DurableExact
+    );
+    assert_eq!(
+        decision.change_set_id.as_deref(),
+        Some("restart-reviewer")
+    );
 }
 
 #[test]
