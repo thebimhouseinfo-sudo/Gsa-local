@@ -1867,9 +1867,15 @@ impl Registry {
             });
         };
 
+        let active_work = self.current_active_work()?;
         let persisted_code_state = self.code_workflow_state()?;
         if let Some(state) = persisted_code_state.as_ref() {
-            if state.graph_version == graph_version && state.status != "CODER" {
+            if state.graph_version == graph_version
+                && active_work
+                    .as_ref()
+                    .is_some_and(|work| work.jobpack_id == state.jobpack_id)
+                && state.status != "CODER"
+            {
                 if let Some(change_set_id) = state.change_set_id.as_deref() {
                     let tx = self.conn.unchecked_transaction()?;
                     let (classification, reason) = reconcile_code_change_set_source_tx(
@@ -1885,7 +1891,9 @@ impl Registry {
                             classification,
                             action: ResumeAction::BlockedNeedsHuman,
                             graph_version: Some(graph_version),
-                            milestone_id: self.current_active_work()?.map(|work| work.milestone_id),
+                            milestone_id: active_work
+                                .as_ref()
+                                .map(|work| work.milestone_id.clone()),
                             jobpack_id: Some(state.jobpack_id.clone()),
                             change_set_id: Some(change_set_id.to_owned()),
                             checkpoint_id: None,
@@ -1988,9 +1996,14 @@ impl Registry {
         }
 
         if let Some(state) = persisted_code_state {
-            if state.graph_version == graph_version {
-                let active = self.current_active_work()?;
-                let milestone_id = active.as_ref().map(|work| work.milestone_id.clone());
+            if state.graph_version == graph_version
+                && active_work
+                    .as_ref()
+                    .is_some_and(|work| work.jobpack_id == state.jobpack_id)
+            {
+                let milestone_id = active_work
+                    .as_ref()
+                    .map(|work| work.milestone_id.clone());
                 let action = match state.status.as_str() {
                     "CODER" => ResumeAction::ResumeCoder,
                     "REVIEWER" => ResumeAction::ResumeReviewer,
