@@ -88,6 +88,30 @@ impl<'a> MilestoneController<'a> {
             .resolve_resume_decision(self.project_root, available_capabilities)?;
         match resume.action {
             ResumeAction::BlockedNeedsHuman => {
+                let unresolved_tester_resume = self
+                    .registry
+                    .latest_tester_resume_state()?
+                    .is_some_and(|state| {
+                        state.graph_version == resume.graph_version.unwrap_or_default()
+                            && state.stage != "ATTEMPT_RECORDED"
+                    });
+                if unresolved_tester_resume {
+                    bail!("resume blocked: {}", resume.reason);
+                }
+                if let Some(checkpoint) = self
+                    .registry
+                    .resolve_tester_checkpoint(available_capabilities)?
+                {
+                    if matches!(
+                        checkpoint.disposition,
+                        TesterCheckpointDisposition::Blocked
+                            | TesterCheckpointDisposition::NeedsHuman
+                            | TesterCheckpointDisposition::IntegrationNotReady
+                            | TesterCheckpointDisposition::SpecGap
+                    ) {
+                        return Ok(Some(NextWork::Tester(checkpoint)));
+                    }
+                }
                 bail!("resume blocked: {}", resume.reason);
             }
             ResumeAction::WaitExplicitNextMilestoneStart | ResumeAction::ExecutionComplete => {
