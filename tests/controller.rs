@@ -846,8 +846,13 @@ fn review_pass_resume_requests_verification_before_other_gates() {
         )
         .unwrap();
 
-    let decision = registry.resolve_resume_decision(dir.path(), &[]).unwrap();
+    let reopened = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    let decision = reopened.resolve_resume_decision(dir.path(), &[]).unwrap();
     assert_eq!(decision.action, ResumeAction::RunRequiredVerification);
+    assert_eq!(
+        decision.classification,
+        RecoveryClassification::DurableExact
+    );
     assert_eq!(
         decision.change_set_id.as_deref(),
         Some("review-pass-change")
