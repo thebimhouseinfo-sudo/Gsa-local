@@ -13,6 +13,7 @@ use gsa_local::{
     verification::{DiscoveryStatus, VerificationCapability, VerificationProfile},
 };
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::time::Duration;
 use tempfile::tempdir;
 
@@ -119,6 +120,18 @@ fn setup(required_capabilities: Vec<String>) -> (tempfile::TempDir, Registry, i6
     registry
         .begin_code_workflow(dir.path(), "owner-a", version, "JP1")
         .unwrap();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    let before = "before";
+    let after = "change-1";
+    let before_sha256 = Sha256::digest(before.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let after_sha256 = Sha256::digest(after.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    std::fs::write(dir.path().join("src/example.rs"), after).unwrap();
     registry
         .record_code_checkpoint(
             dir.path(),
@@ -129,7 +142,11 @@ fn setup(required_capabilities: Vec<String>) -> (tempfile::TempDir, Registry, i6
             "review target",
             &[],
             &[],
-            &json!([{"path":"src/example.rs","before_sha256":"a","after_sha256":"b"}]),
+            &json!([{
+                "path":"src/example.rs",
+                "before_sha256":before_sha256,
+                "after_sha256":after_sha256
+            }]),
             1,
             0,
         )
@@ -215,6 +232,17 @@ fn review_repair_target(
     registry
         .begin_code_workflow(dir.path(), "owner-a", version, "JP1")
         .unwrap();
+    let source_path = dir.path().join("src/example.rs");
+    let before = std::fs::read(&source_path).unwrap();
+    let before_sha256 = Sha256::digest(&before)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let after_sha256 = Sha256::digest(change_set_id.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    std::fs::write(&source_path, change_set_id).unwrap();
     registry
         .record_code_checkpoint(
             dir.path(),
@@ -225,7 +253,11 @@ fn review_repair_target(
             "repair product failure",
             &[],
             &["recheck failed Tester criterion".into()],
-            &json!([{"path":"src/example.rs","before_sha256":"old","after_sha256":change_set_id}]),
+            &json!([{
+                "path":"src/example.rs",
+                "before_sha256":before_sha256,
+                "after_sha256":after_sha256
+            }]),
             1,
             0,
         )
