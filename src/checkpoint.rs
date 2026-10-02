@@ -29,6 +29,8 @@ impl Checkpoint {
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum RecoveryClassification {
     DurableExact,
+    SourceStale,
+    SourceAhead,
     SourceDiverged,
     Blocked,
     NeedsHuman,
