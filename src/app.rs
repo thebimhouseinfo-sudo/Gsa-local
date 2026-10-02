@@ -74,6 +74,15 @@ impl App {
 
     pub async fn run(&mut self) -> Result<()> {
         self.print_welcome();
+        let startup_profile = discover_profile(&self.project_root)?;
+        let startup_capabilities = tester_capability_catalog(&startup_profile);
+        let startup_resume = self
+            .registry
+            .resolve_resume_decision(&self.project_root, &startup_capabilities)?;
+        println!(
+            "Resume: {:?} -> {:?} ({})",
+            startup_resume.classification, startup_resume.action, startup_resume.reason
+        );
         let stdin = io::stdin();
 
         loop {
