@@ -718,10 +718,7 @@ fn satisfied_milestone_gate_allows_completion_but_not_implicit_next_activation()
 
     let reopened = Registry::open_at(&dir.path().join("state.db")).unwrap();
     let restart = reopened.resolve_resume_decision(dir.path(), &[]).unwrap();
-    assert_eq!(
-        restart.action,
-        ResumeAction::WaitExplicitNextMilestoneStart
-    );
+    assert_eq!(restart.action, ResumeAction::WaitExplicitNextMilestoneStart);
     assert_eq!(
         registry.milestone_status(version, "M2").unwrap().as_deref(),
         Some("LOCKED")
@@ -831,14 +828,7 @@ fn reviewer_resume_decision_survives_registry_reopen() {
     registry
         .begin_code_workflow(dir.path(), "owner-a", version, "JP-B")
         .unwrap();
-    submit_code_checkpoint(
-        &dir,
-        &registry,
-        version,
-        "JP-B",
-        "T-B",
-        "restart-reviewer",
-    );
+    submit_code_checkpoint(&dir, &registry, version, "JP-B", "T-B", "restart-reviewer");
 
     let reopened = Registry::open_at(&dir.path().join("state.db")).unwrap();
     let decision = reopened.resolve_resume_decision(dir.path(), &[]).unwrap();
@@ -847,10 +837,7 @@ fn reviewer_resume_decision_survives_registry_reopen() {
         decision.classification,
         RecoveryClassification::DurableExact
     );
-    assert_eq!(
-        decision.change_set_id.as_deref(),
-        Some("restart-reviewer")
-    );
+    assert_eq!(decision.change_set_id.as_deref(), Some("restart-reviewer"));
 }
 
 #[test]
@@ -922,10 +909,7 @@ fn resume_decision_fails_closed_when_review_target_source_is_ahead() {
     let reopened = Registry::open_at(&dir.path().join("state.db")).unwrap();
     let decision = reopened.resolve_resume_decision(dir.path(), &[]).unwrap();
     assert_eq!(decision.action, ResumeAction::BlockedNeedsHuman);
-    assert_eq!(
-        decision.classification,
-        RecoveryClassification::SourceAhead
-    );
+    assert_eq!(decision.classification, RecoveryClassification::SourceAhead);
     assert!(decision.reason.contains("automatic adoption is prohibited"));
 
     let error = controller.resolve_next(&[]).unwrap_err();
@@ -988,10 +972,7 @@ fn resume_decision_distinguishes_source_stale_from_source_ahead() {
     let reopened = Registry::open_at(&dir.path().join("state.db")).unwrap();
     let decision = reopened.resolve_resume_decision(dir.path(), &[]).unwrap();
     assert_eq!(decision.action, ResumeAction::BlockedNeedsHuman);
-    assert_eq!(
-        decision.classification,
-        RecoveryClassification::SourceStale
-    );
+    assert_eq!(decision.classification, RecoveryClassification::SourceStale);
     assert!(decision.reason.contains("matches durable before-state"));
 }
 
