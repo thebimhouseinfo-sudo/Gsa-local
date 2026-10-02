@@ -811,7 +811,7 @@ fn review_pass_resume_requests_verification_before_other_gates() {
 }
 
 #[test]
-fn resume_decision_fails_closed_when_review_target_source_diverged() {
+fn resume_decision_fails_closed_when_review_target_source_is_ahead() {
     let dir = tempdir().unwrap();
     let registry = Registry::open_at(&dir.path().join("state.db")).unwrap();
     let (_revision, _hash, version) = approve_and_register(&registry);
@@ -831,7 +831,95 @@ fn resume_decision_fails_closed_when_review_target_source_diverged() {
     assert_eq!(decision.action, ResumeAction::BlockedNeedsHuman);
     assert_eq!(
         decision.classification,
+        RecoveryClassification::SourceAhead
+    );
+    assert!(decision.reason.contains("automatic adoption is prohibited"));
+}
+
+#[test]
+fn resume_decision_distinguishes_source_stale_from_source_ahead() {
+    let dir = tempdir().unwrap();
+    let registry = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    let (_revision, _hash, version) = approve_and_register(&registry);
+    registry
+        .acquire_lease(dir.path(), "owner-a", Duration::from_secs(3600))
+        .unwrap();
+    let controller = MilestoneController::new(&registry, dir.path(), "owner-a");
+    controller.resolve_or_activate().unwrap();
+
+    registry
+        .begin_code_workflow(dir.path(), "owner-a", version, "JP-B")
+        .unwrap();
+
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    let before = "before-state";
+    let after = "after-state";
+    let before_sha256 = Sha256::digest(before.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let after_sha256 = Sha256::digest(after.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    std::fs::write(dir.path().join("src/controller.rs"), after).unwrap();
+
+    registry
+        .record_code_checkpoint(
+            dir.path(),
+            "owner-a",
+            version,
+            "JP-B",
+            "stale-change",
+            "resume target",
+            &[ChecklistClaim {
+                todo_id: "T-B".into(),
+                position: 1,
+            }],
+            &["resume exact state".into()],
+            &json!([{
+                "path":"src/controller.rs",
+                "before_sha256":before_sha256,
+                "after_sha256":after_sha256
+            }]),
+            1,
+            0,
+        )
+        .unwrap();
+
+    std::fs::write(dir.path().join("src/controller.rs"), before).unwrap();
+
+    let decision = registry.resolve_resume_decision(dir.path(), &[]).unwrap();
+    assert_eq!(decision.action, ResumeAction::BlockedNeedsHuman);
+    assert_eq!(
+        decision.classification,
+        RecoveryClassification::SourceStale
+    );
+    assert!(decision.reason.contains("matches durable before-state"));
+}
+
+#[test]
+fn resume_decision_classifies_missing_reviewed_source_as_diverged() {
+    let dir = tempdir().unwrap();
+    let registry = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    let (_revision, _hash, version) = approve_and_register(&registry);
+    registry
+        .acquire_lease(dir.path(), "owner-a", Duration::from_secs(3600))
+        .unwrap();
+    let controller = MilestoneController::new(&registry, dir.path(), "owner-a");
+    controller.resolve_or_activate().unwrap();
+
+    registry
+        .begin_code_workflow(dir.path(), "owner-a", version, "JP-B")
+        .unwrap();
+    submit_code_checkpoint(&dir, &registry, version, "JP-B", "T-B", "stable-source");
+    std::fs::remove_file(dir.path().join("src/controller.rs")).unwrap();
+
+    let decision = registry.resolve_resume_decision(dir.path(), &[]).unwrap();
+    assert_eq!(decision.action, ResumeAction::BlockedNeedsHuman);
+    assert_eq!(
+        decision.classification,
         RecoveryClassification::SourceDiverged
     );
-    assert!(decision.reason.contains("source diverged"));
+    assert!(decision.reason.contains("source path unavailable"));
 }
