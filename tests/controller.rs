@@ -876,7 +876,8 @@ fn resume_decision_fails_closed_when_review_target_source_is_ahead() {
     submit_code_checkpoint(&dir, &registry, version, "JP-B", "T-B", "stable-source");
     std::fs::write(dir.path().join("src/controller.rs"), "source-ahead").unwrap();
 
-    let decision = registry.resolve_resume_decision(dir.path(), &[]).unwrap();
+    let reopened = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    let decision = reopened.resolve_resume_decision(dir.path(), &[]).unwrap();
     assert_eq!(decision.action, ResumeAction::BlockedNeedsHuman);
     assert_eq!(
         decision.classification,
@@ -941,7 +942,8 @@ fn resume_decision_distinguishes_source_stale_from_source_ahead() {
 
     std::fs::write(dir.path().join("src/controller.rs"), before).unwrap();
 
-    let decision = registry.resolve_resume_decision(dir.path(), &[]).unwrap();
+    let reopened = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    let decision = reopened.resolve_resume_decision(dir.path(), &[]).unwrap();
     assert_eq!(decision.action, ResumeAction::BlockedNeedsHuman);
     assert_eq!(
         decision.classification,
@@ -967,7 +969,8 @@ fn resume_decision_classifies_missing_reviewed_source_as_diverged() {
     submit_code_checkpoint(&dir, &registry, version, "JP-B", "T-B", "stable-source");
     std::fs::remove_file(dir.path().join("src/controller.rs")).unwrap();
 
-    let decision = registry.resolve_resume_decision(dir.path(), &[]).unwrap();
+    let reopened = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    let decision = reopened.resolve_resume_decision(dir.path(), &[]).unwrap();
     assert_eq!(decision.action, ResumeAction::BlockedNeedsHuman);
     assert_eq!(
         decision.classification,
