@@ -747,12 +747,18 @@ fn resume_decision_tracks_code_stages_without_reinitializing() {
     registry
         .begin_code_workflow(dir.path(), "owner-a", version, "JP-B")
         .unwrap();
-    let coder = registry.resolve_resume_decision(dir.path(), &[]).unwrap();
+    let reopened_coder = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    let coder = reopened_coder
+        .resolve_resume_decision(dir.path(), &[])
+        .unwrap();
     assert_eq!(coder.action, ResumeAction::ResumeCoder);
     assert_eq!(coder.classification, RecoveryClassification::DurableExact);
 
     submit_code_checkpoint(&dir, &registry, version, "JP-B", "T-B", "resume-change");
-    let reviewer = registry.resolve_resume_decision(dir.path(), &[]).unwrap();
+    let reopened_reviewer = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    let reviewer = reopened_reviewer
+        .resolve_resume_decision(dir.path(), &[])
+        .unwrap();
     assert_eq!(reviewer.action, ResumeAction::ResumeReviewer);
     assert_eq!(reviewer.change_set_id.as_deref(), Some("resume-change"));
 
@@ -769,7 +775,10 @@ fn resume_decision_tracks_code_stages_without_reinitializing() {
             1,
         )
         .unwrap();
-    let fix = registry.resolve_resume_decision(dir.path(), &[]).unwrap();
+    let reopened_fix = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    let fix = reopened_fix
+        .resolve_resume_decision(dir.path(), &[])
+        .unwrap();
     assert_eq!(fix.action, ResumeAction::ResumeInternalFix);
     assert_eq!(fix.change_set_id.as_deref(), Some("resume-change"));
 }
