@@ -15,7 +15,7 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::{fs, path::Path};
+use std::{fs, path::Path, time::Instant};
 
 const DEFAULT_MAX_ATTEMPTS: u32 = 5;
 const MAX_CONTEXT_PATHS: usize = 500;
@@ -199,6 +199,8 @@ impl<'a> PlanningWorkflow<'a> {
         let mut project_context = build_project_context(self.project_root)?;
         project_context.tester_evidence = self.registry.current_tester_evidence_catalog()?;
 
+        println!("PLAN_STAGE Planner START");
+        let stage_started = Instant::now();
         let (artifact, mut source_evidence) = self
             .invoke_plan_agent(
                 AgentId::Planner,
@@ -210,6 +212,11 @@ impl<'a> PlanningWorkflow<'a> {
                 "Create the first Implementation Plan revision.",
             )
             .await?;
+        println!(
+            "PLAN_STAGE Planner DONE elapsed_ms={} source_evidence={}",
+            stage_started.elapsed().as_millis(),
+            source_evidence.len()
+        );
         let mut current = self.registry.persist_plan_revision(&artifact)?;
 
         loop {
@@ -218,9 +225,16 @@ impl<'a> PlanningWorkflow<'a> {
             }
             self.persist_route(&route, Some(current.revision))?;
 
+            println!("PLAN_STAGE Reviewer START revision={}", current.revision);
+            let stage_started = Instant::now();
             let review = self
                 .invoke_reviewer(requirement, &current, &project_context, &source_evidence)
                 .await?;
+            println!(
+                "PLAN_STAGE Reviewer DONE revision={} elapsed_ms={}",
+                current.revision,
+                stage_started.elapsed().as_millis()
+            );
             let review_verdict = if review.verdict == "PASS" {
                 ReviewVerdict::Pass
             } else if review.verdict == "CHANGES_REQUIRED" {
@@ -266,9 +280,16 @@ impl<'a> PlanningWorkflow<'a> {
             }
             self.persist_route(&route, Some(current.revision))?;
 
+            println!("PLAN_STAGE LocalCR START revision={}", current.revision);
+            let stage_started = Instant::now();
             let cr = self
                 .invoke_cr(requirement, &current, &project_context, &source_evidence)
                 .await?;
+            println!(
+                "PLAN_STAGE LocalCR DONE revision={} elapsed_ms={}",
+                current.revision,
+                stage_started.elapsed().as_millis()
+            );
             let cr_verdict = if cr.verdict == "PASS" {
                 ReviewVerdict::Pass
             } else if cr.verdict == "REVISE" {
@@ -292,10 +313,17 @@ impl<'a> PlanningWorkflow<'a> {
                     route.cr_attempts,
                     "JOB_BUILDER",
                 )?;
-                match self
+                println!("PLAN_STAGE JobBuilder START revision={}", current.revision);
+                let stage_started = Instant::now();
+                let job_builder = self
                     .invoke_job_builder(requirement, &current, &project_context, &source_evidence)
-                    .await?
-                {
+                    .await?;
+                println!(
+                    "PLAN_STAGE JobBuilder DONE revision={} elapsed_ms={}",
+                    current.revision,
+                    stage_started.elapsed().as_millis()
+                );
+                match job_builder {
                     JobBuilderOutcome::Ready(graph) => {
                         let binding = self
                             .registry
