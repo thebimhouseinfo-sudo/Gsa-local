@@ -541,8 +541,39 @@ impl<'a> PlanningWorkflow<'a> {
                 execution_graph_tool(),
             )
             .await?;
+
         let submission: JobBuilderSubmission =
-            extract_tool_args(&response, "submit_execution_graph")?;
+            match extract_tool_args(&response, "submit_execution_graph") {
+                Ok(submission) => submission,
+                Err(error) => {
+                    let validation_error = format!("{error:#}");
+                    println!(
+                        "PLAN_JOB_BUILDER_REPAIR validation_error={:?}",
+                        validation_error
+                    );
+                    let repair_packet = json!({
+                        "original_requirement": requirement,
+                        "project_context": project_context,
+                        "source_evidence": source_evidence,
+                        "approved_plan": {
+                            "revision": current.revision,
+                            "hash": current.hash,
+                            "plan": current.artifact
+                        },
+                        "validation_error": validation_error,
+                        "instruction": "Your previous submit_execution_graph call had invalid structured arguments. Repair only the structured payload so it satisfies the supplied submit_execution_graph schema and the approved plan. Do not redesign the plan. Call submit_execution_graph as the only tool call."
+                    });
+                    let repaired = self
+                        .invoke_submission_only(
+                            AgentId::JobBuilder,
+                            vec![ChatMessage::user(repair_packet.to_string())],
+                            execution_graph_tool(),
+                        )
+                        .await?;
+                    extract_tool_args(&repaired, "submit_execution_graph")
+                        .context("Job Builder submit_execution_graph remained invalid after one structured repair")?
+                }
+            };
 
         match submission.status.as_str() {
             "READY" => {
