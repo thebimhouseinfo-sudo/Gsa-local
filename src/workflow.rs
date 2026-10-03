@@ -15,13 +15,10 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::{fs, io::Read, path::Path};
+use std::{fs, path::Path};
 
 const DEFAULT_MAX_ATTEMPTS: u32 = 5;
 const MAX_CONTEXT_PATHS: usize = 500;
-const MAX_CONTEXT_FILES: usize = 200;
-const MAX_CONTEXT_BYTES: usize = 128 * 1024;
-const MAX_FILE_BYTES: usize = 16 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CodingOutcome {
@@ -145,15 +142,7 @@ impl PlanningRoute {
 #[derive(Debug, Clone, Serialize)]
 struct ProjectContext {
     paths: Vec<String>,
-    text_files: Vec<ProjectContextFile>,
     tester_evidence: Vec<crate::registry::ResolvedTesterEvidence>,
-    truncated: bool,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct ProjectContextFile {
-    path: String,
-    content: String,
     truncated: bool,
 }
 
@@ -516,24 +505,66 @@ impl<'a> PlanningWorkflow<'a> {
         tool: ToolDefinition,
     ) -> Result<ChatMessage> {
         let model = self.model_for(agent).await?;
+        let submission_name = tool.function.name.clone();
+        let mut project_tools = ProjectToolRuntime::new(self.project_root)?;
+        let mut definitions = project_tools.tool_definitions(agent);
+        definitions.push(tool);
+
         let mut system = self.harnesses.compose(agent)?;
         system.push_str(&format!(
-            "\n\nPROJECT ROOT: {}\nUse the provided function tool to submit the structured result. Do not claim completion without calling it.",
-            self.project_root.display()
+            "\n\nPROJECT ROOT: {}\nInspect live source with project_list/project_search/project_read as needed. Do not guess source facts from the file index. When the structured result is ready, call {} as the only tool call in that response.",
+            self.project_root.display(),
+            submission_name
         ));
         messages.insert(0, ChatMessage::system(system));
 
-        let response = self
-            .ollama
-            .chat_stream_with_tools(&model, &messages, &[tool], |_| {})
-            .await?;
-        if response.tool_calls.is_empty() {
-            bail!(
-                "{} did not call the required workflow tool",
-                agent.display_name()
-            );
+        for round in 0..8usize {
+            let response = self
+                .ollama
+                .chat_stream_with_tools(&model, &messages, &definitions, |_| {})
+                .await?;
+            let calls = response.tool_calls.clone();
+            messages.push(response.clone());
+
+            if calls.is_empty() {
+                bail!(
+                    "{} stopped without calling required workflow tool {}",
+                    agent.display_name(),
+                    submission_name
+                );
+            }
+
+            if calls
+                .iter()
+                .any(|call| call.function.name == submission_name)
+            {
+                if calls.len() != 1 || calls[0].function.name != submission_name {
+                    bail!(
+                        "{} must be the only tool call in its response",
+                        submission_name
+                    );
+                }
+                return Ok(response);
+            }
+
+            if round + 1 >= 8 {
+                bail!(
+                    "{} exceeded planning read-tool rounds before {}",
+                    agent.display_name(),
+                    submission_name
+                );
+            }
+
+            for call in calls {
+                messages.push(execute_project_tool_message(
+                    agent,
+                    &mut project_tools,
+                    &call,
+                ));
+            }
         }
-        Ok(response)
+
+        unreachable!("bounded planning tool loop must return or fail")
     }
 
     async fn model_for(&self, agent: AgentId) -> Result<String> {
@@ -1190,8 +1221,6 @@ fn build_project_context(root: &Path) -> Result<ProjectContext> {
     let root = root.canonicalize()?;
     let mut pending = vec![root.clone()];
     let mut paths = Vec::new();
-    let mut text_files = Vec::new();
-    let mut total_bytes = 0usize;
     let mut truncated = false;
 
     while let Some(dir) = pending.pop() {
@@ -1218,7 +1247,6 @@ fn build_project_context(root: &Path) -> Result<ProjectContext> {
             if should_skip(relative) {
                 continue;
             }
-            let relative_text = relative.to_string_lossy().replace('\\', "/");
 
             if file_type.is_dir() {
                 pending.push(path);
@@ -1229,56 +1257,16 @@ fn build_project_context(root: &Path) -> Result<ProjectContext> {
             }
 
             if paths.len() < MAX_CONTEXT_PATHS {
-                paths.push(relative_text.clone());
+                paths.push(relative.to_string_lossy().replace('\\', "/"));
             } else {
                 truncated = true;
             }
-
-            if text_files.len() >= MAX_CONTEXT_FILES || total_bytes >= MAX_CONTEXT_BYTES {
-                truncated = true;
-                continue;
-            }
-
-            let mut file = match fs::File::open(&path) {
-                Ok(file) => file,
-                Err(_) => continue,
-            };
-            let budget = MAX_FILE_BYTES.min(MAX_CONTEXT_BYTES.saturating_sub(total_bytes));
-            if budget == 0 {
-                truncated = true;
-                continue;
-            }
-            let mut bytes = Vec::new();
-            if file
-                .by_ref()
-                .take((budget + 1) as u64)
-                .read_to_end(&mut bytes)
-                .is_err()
-            {
-                continue;
-            }
-            let file_truncated = bytes.len() > budget;
-            if file_truncated {
-                bytes.truncate(budget);
-            }
-            let Ok(content) = String::from_utf8(bytes) else {
-                continue;
-            };
-            total_bytes += content.len();
-            text_files.push(ProjectContextFile {
-                path: relative_text,
-                content,
-                truncated: file_truncated,
-            });
-            truncated |= file_truncated;
         }
     }
 
     paths.sort();
-    text_files.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(ProjectContext {
         paths,
-        text_files,
         tester_evidence: vec![],
         truncated,
     })
@@ -1885,10 +1873,9 @@ mod tests {
         assert!(!context.paths.iter().any(|path| path.contains(".gsa")));
         assert!(!context.paths.iter().any(|path| path.contains("target")));
         assert!(!context.paths.iter().any(|path| path == ".env"));
-        assert!(context
-            .text_files
-            .iter()
-            .any(|file| file.path == "src/main.rs" && file.content.contains("fn main")));
+        let encoded = serde_json::to_string(&context).unwrap();
+        assert!(!encoded.contains("fn main() {}"));
+        assert!(!encoded.contains("secret"));
     }
 
     #[test]
