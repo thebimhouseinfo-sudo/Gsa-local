@@ -581,6 +581,10 @@ Do not edit Tester-owned artifacts as the product fix. Use the structured repair
     }
 
     async fn dispatch_planner_text(&mut self, text: String) -> Result<()> {
+        if is_explicit_planning_workflow_request(&text) {
+            return self.run_planning_workflow(&text).await;
+        }
+
         let agent = AgentId::Planner;
         let model = match self.session.resolved_model(&self.config, agent) {
             Some(model) => model.to_owned(),
@@ -835,6 +839,46 @@ impl Drop for App {
     }
 }
 
+fn is_explicit_planning_workflow_request(text: &str) -> bool {
+    let normalized = text.to_lowercase();
+
+    const NEGATIONS: &[&str] = &[
+        "do not create a plan",
+        "don't create a plan",
+        "do not create an implementation plan",
+        "don't create an implementation plan",
+        "không tạo plan",
+        "đừng tạo plan",
+        "không lập kế hoạch",
+        "đừng lập kế hoạch",
+    ];
+    if NEGATIONS.iter().any(|phrase| normalized.contains(phrase)) {
+        return false;
+    }
+
+    const EXPLICIT: &[&str] = &[
+        "create an implementation plan",
+        "create the implementation plan",
+        "make an implementation plan",
+        "produce an implementation plan",
+        "prepare an implementation plan",
+        "draft an implementation plan",
+        "start an implementation plan",
+        "revise the implementation plan",
+        "revise an implementation plan",
+        "update the implementation plan",
+        "lập kế hoạch triển khai",
+        "tạo kế hoạch triển khai",
+        "lên kế hoạch triển khai",
+        "hãy lên plan",
+        "lên plan",
+        "tạo plan",
+        "lập plan",
+    ];
+
+    EXPLICIT.iter().any(|phrase| normalized.contains(phrase))
+}
+
 fn planning_start_tool() -> ToolDefinition {
     ToolDefinition::function(
         "start_planning_workflow",
@@ -876,5 +920,32 @@ fn print_models(models: &[String]) {
     println!("MODELS");
     for (index, model) in models.iter().enumerate() {
         println!("{}. {}", index + 1, model);
+    }
+}
+
+
+#[cfg(test)]
+mod planner_routing_tests {
+    use super::is_explicit_planning_workflow_request;
+
+    #[test]
+    fn explicit_implementation_plan_request_fast_paths_workflow() {
+        assert!(is_explicit_planning_workflow_request(
+            "Create an implementation plan for a documentation-only improvement."
+        ));
+        assert!(is_explicit_planning_workflow_request(
+            "Hãy lên plan cho thay đổi này."
+        ));
+    }
+
+    #[test]
+    fn conversation_and_negative_requests_do_not_fast_path_workflow() {
+        assert!(!is_explicit_planning_workflow_request("hello?"));
+        assert!(!is_explicit_planning_workflow_request(
+            "Explain the current planning architecture."
+        ));
+        assert!(!is_explicit_planning_workflow_request(
+            "Do not create an implementation plan; just discuss options."
+        ));
     }
 }
