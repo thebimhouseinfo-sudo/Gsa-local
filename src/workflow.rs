@@ -566,21 +566,36 @@ impl<'a> PlanningWorkflow<'a> {
         let submission_name = tool.function.name.clone();
         let mut project_tools = ProjectToolRuntime::new(self.project_root)?;
         let mut definitions = project_tools.tool_definitions(agent);
-        definitions.push(tool);
+        definitions.push(tool.clone());
         let mut discovered = Vec::new();
 
         let mut system = self.harnesses.compose(agent)?;
         system.push_str(&format!(
-            "\n\nPROJECT ROOT: {}\nUse the supplied source_evidence first. Inspect additional live source only when the current requirement/findings need a fact that is not already in that evidence. Prefer project_search/project_list before project_read and keep discovery minimum-sufficient. When ready, call {} as the only tool call in that response.",
+            "\n\nPROJECT ROOT: {}\nUse the supplied source_evidence first. Inspect additional live source only when the current requirement/findings need a fact that is not already in that evidence. Prefer project_search/project_list before project_read and keep discovery minimum-sufficient. You have at most {} source-inspection rounds; after that the runtime exposes only {} and you must submit using the evidence already collected. When ready, call {} as the only tool call in that response.",
             self.project_root.display(),
+            MAX_PLANNING_SOURCE_TOOL_ROUNDS.saturating_sub(1),
+            submission_name,
             submission_name
         ));
         messages.insert(0, ChatMessage::system(system));
 
         for round in 0..MAX_PLANNING_SOURCE_TOOL_ROUNDS {
+            let final_submission_round = round + 1 == MAX_PLANNING_SOURCE_TOOL_ROUNDS;
+            let available_tools: &[ToolDefinition] = if final_submission_round {
+                std::slice::from_ref(&tool)
+            } else {
+                &definitions
+            };
+            if final_submission_round {
+                messages.push(ChatMessage::system(format!(
+                    "Discovery budget is exhausted. Do not inspect more source. Submit now with {} using the evidence already collected.",
+                    submission_name
+                )));
+            }
+
             let response = self
                 .ollama
-                .chat_stream_with_tools(&model, &messages, &definitions, |_| {})
+                .chat_stream_with_tools(&model, &messages, available_tools, |_| {})
                 .await?;
             let calls = response.tool_calls.clone();
             messages.push(response.clone());
@@ -606,15 +621,21 @@ impl<'a> PlanningWorkflow<'a> {
                 return Ok((response, discovered));
             }
 
-            if round + 1 >= MAX_PLANNING_SOURCE_TOOL_ROUNDS {
+            if final_submission_round {
                 bail!(
-                    "{} exceeded planning source-tool rounds before {}",
+                    "{} did not submit {} after the bounded source-discovery budget",
                     agent.display_name(),
                     submission_name
                 );
             }
 
             for call in calls {
+                println!(
+                    "PLAN_SOURCE_TOOL agent={} round={} tool={}",
+                    agent.display_name(),
+                    round + 1,
+                    call.function.name
+                );
                 let output = match project_tools.execute(
                     agent,
                     &call.function.name,
