@@ -1,10 +1,10 @@
 use crate::{
-    agent_runtime::run_with_project_tools,
+    agent_runtime::{dispatch_tool_calls, run_with_project_tools, MAX_TOOL_ROUNDS},
     cli::{self, InputLine, SlashCommand},
     config::AppConfig,
     controller::{ActiveWork, MilestoneController, NextWork},
     harness::{AgentId, HarnessRegistry},
-    ollama::{ChatMessage, OllamaClient},
+    ollama::{ChatMessage, OllamaClient, ToolDefinition},
     registry::{Registry, TesterCheckpointDisposition},
     session::Session,
     tester_execution::{tester_capability_catalog, TesterWorkflow},
@@ -580,45 +580,130 @@ Do not edit Tester-owned artifacts as the product fix. Use the structured repair
         }
     }
 
+    async fn dispatch_planner_text(&mut self, text: String) -> Result<()> {
+        let agent = AgentId::Planner;
+        let model = match self.session.resolved_model(&self.config, agent) {
+            Some(model) => model.to_owned(),
+            None => self
+                .ollama
+                .list_models()
+                .await?
+                .into_iter()
+                .next()
+                .context("no Ollama model is configured or installed")?,
+        };
+
+        let mut messages = self.history.get(&agent).cloned().unwrap_or_else(|| {
+            let mut system = self
+                .harnesses
+                .compose(agent)
+                .unwrap_or_else(|error| format!("Harness load error: {error}"));
+            system.push_str(&format!(
+                "\n\nPROJECT ROOT: {}\nYou are in interactive Planner conversation mode. Use project_list/project_search/project_read for read-only repository questions. Call start_planning_workflow only when the user explicitly asks you to create, revise, or start an implementation plan. Do not call it for greetings, status questions, explanations, or planning discussion.",
+                self.project_root.display()
+            ));
+            vec![ChatMessage::system(system)]
+        });
+        messages.push(ChatMessage::user(text.clone()));
+
+        let mut definitions = self.tool_runtime.tool_definitions(agent);
+        definitions.push(planning_start_tool());
+
+        print!("{} [{}]: ", agent.display_name(), model);
+        io::stdout().flush()?;
+
+        for round in 0..MAX_TOOL_ROUNDS {
+            let response = self
+                .ollama
+                .chat_stream_with_tools(&model, &messages, &definitions, |token| {
+                    print!("{token}");
+                    let _ = io::stdout().flush();
+                })
+                .await?;
+            let calls = response.tool_calls.clone();
+
+            if calls.is_empty() {
+                messages.push(response);
+                self.history.insert(agent, messages);
+                println!();
+                return Ok(());
+            }
+
+            if calls
+                .iter()
+                .any(|call| call.function.name == "start_planning_workflow")
+            {
+                if calls.len() != 1 || calls[0].function.name != "start_planning_workflow" {
+                    bail!("start_planning_workflow must be the only tool call in its response");
+                }
+                let requirement = calls[0].function.arguments["requirement"]
+                    .as_str()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .context("start_planning_workflow requires a non-empty requirement")?
+                    .to_owned();
+                self.history.insert(agent, messages);
+                println!();
+                return self.run_planning_workflow(&requirement).await;
+            }
+
+            messages.push(response);
+            if round + 1 >= MAX_TOOL_ROUNDS {
+                bail!("Planner exceeded interactive project-tool rounds");
+            }
+            messages.extend(dispatch_tool_calls(
+                agent,
+                &mut self.tool_runtime,
+                &calls,
+            ));
+        }
+
+        unreachable!("bounded Planner conversation loop must return or fail")
+    }
+
+    async fn run_planning_workflow(&mut self, requirement: &str) -> Result<()> {
+        println!("Planning workflow: Planner → Reviewer → Local CR");
+        let workflow = PlanningWorkflow::new(
+            &self.ollama,
+            &self.harnesses,
+            &self.registry,
+            &self.config,
+            &self.session,
+            &self.project_root,
+        );
+        match workflow.run(requirement).await? {
+            PlanningOutcome::Registered {
+                plan,
+                graph_version,
+            } => {
+                println!(
+                    "PLAN_APPROVED revision={} hash={}",
+                    plan.revision, plan.hash
+                );
+                println!("EXECUTION_GRAPH_REGISTERED version={graph_version}");
+                self.active_work = self.resolve_coder_work_after_testers().await?;
+                if let Some(work) = &self.active_work {
+                    println!(
+                        "ACTIVE_WORK milestone={} jobpack={}",
+                        work.milestone_id, work.jobpack_id
+                    );
+                }
+            }
+            PlanningOutcome::Paused { revision, .. } => {
+                println!(
+                    "Planning workflow PAUSED after bounded review attempts (revision={:?}).",
+                    revision
+                );
+            }
+        }
+        Ok(())
+    }
+
     async fn dispatch_user_text(&mut self, text: String) -> Result<()> {
         let agent = self.session.active_agent;
 
         if agent == AgentId::Planner {
-            println!("Planning workflow: Planner → Reviewer → Local CR");
-            let workflow = PlanningWorkflow::new(
-                &self.ollama,
-                &self.harnesses,
-                &self.registry,
-                &self.config,
-                &self.session,
-                &self.project_root,
-            );
-            match workflow.run(&text).await? {
-                PlanningOutcome::Registered {
-                    plan,
-                    graph_version,
-                } => {
-                    println!(
-                        "PLAN_APPROVED revision={} hash={}",
-                        plan.revision, plan.hash
-                    );
-                    println!("EXECUTION_GRAPH_REGISTERED version={graph_version}");
-                    self.active_work = self.resolve_coder_work_after_testers().await?;
-                    if let Some(work) = &self.active_work {
-                        println!(
-                            "ACTIVE_WORK milestone={} jobpack={}",
-                            work.milestone_id, work.jobpack_id
-                        );
-                    }
-                }
-                PlanningOutcome::Paused { revision, .. } => {
-                    println!(
-                        "Planning workflow PAUSED after bounded review attempts (revision={:?}).",
-                        revision
-                    );
-                }
-            }
-            return Ok(());
+            return self.dispatch_planner_text(text).await;
         }
 
         if agent == AgentId::Coder {
@@ -748,6 +833,24 @@ impl Drop for App {
             .registry
             .release_lease(&self.project_root, &self.lease_owner);
     }
+}
+
+fn planning_start_tool() -> ToolDefinition {
+    ToolDefinition::function(
+        "start_planning_workflow",
+        "Start the durable Planner -> Reviewer -> Local CR -> Job Builder workflow for an explicit implementation-planning request. Do not call this tool for greetings, status questions, explanations, or discussion.",
+        serde_json::json!({
+            "type": "object",
+            "required": ["requirement"],
+            "properties": {
+                "requirement": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The user's explicit implementation-planning requirement."
+                }
+            }
+        }),
+    )
 }
 
 fn prompt(label: &str) -> Result<String> {
