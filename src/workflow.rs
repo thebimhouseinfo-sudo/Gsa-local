@@ -199,6 +199,15 @@ impl<'a> PlanningWorkflow<'a> {
         let mut project_context = build_project_context(self.project_root)?;
         project_context.tester_evidence = self.registry.current_tester_evidence_catalog()?;
 
+        let planner_model = self.model_for(AgentId::Planner).await?;
+        let reviewer_model = self.model_for(AgentId::Reviewer).await?;
+        let cr_model = self.model_for(AgentId::LocalCr).await?;
+        let job_builder_model = self.model_for(AgentId::JobBuilder).await?;
+        println!(
+            "PLAN_MODELS Planner={} Reviewer={} LocalCR={} JobBuilder={}",
+            planner_model, reviewer_model, cr_model, job_builder_model
+        );
+
         println!("PLAN_STAGE Planner START");
         let stage_started = Instant::now();
         let (artifact, mut source_evidence) = self
