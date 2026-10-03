@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use futures_util::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -195,9 +195,16 @@ impl OllamaClient {
             .json(&body)
             .send()
             .await
-            .context("failed to connect to Ollama /api/chat")?
-            .error_for_status()
-            .context("Ollama /api/chat returned an error")?;
+            .context("failed to connect to Ollama /api/chat")?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let detail = response
+                .text()
+                .await
+                .unwrap_or_else(|error| format!("<failed to read Ollama error body: {error}>"));
+            bail!("Ollama /api/chat returned {status}: {detail}");
+        }
 
         let mut stream = response.bytes_stream();
         let mut pending = Vec::new();
