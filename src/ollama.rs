@@ -97,6 +97,7 @@ pub struct ToolFunctionDefinition {
 #[derive(Debug, Clone)]
 pub struct OllamaClient {
     base_url: String,
+    num_ctx: usize,
     http: Client,
 }
 
@@ -120,8 +121,13 @@ struct ChatChunk {
 
 impl OllamaClient {
     pub fn new(base_url: impl Into<String>) -> Self {
+        Self::with_num_ctx(base_url, 32 * 1024)
+    }
+
+    pub fn with_num_ctx(base_url: impl Into<String>, num_ctx: usize) -> Self {
         Self {
             base_url: base_url.into().trim_end_matches('/').to_owned(),
+            num_ctx,
             http: Client::new(),
         }
     }
@@ -183,7 +189,10 @@ impl OllamaClient {
         let mut body = json!({
             "model": model,
             "messages": messages,
-            "stream": true
+            "stream": true,
+            "options": {
+                "num_ctx": self.num_ctx
+            }
         });
         if !tools.is_empty() {
             body["tools"] = serde_json::to_value(tools)?;
