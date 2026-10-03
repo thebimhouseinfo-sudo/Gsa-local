@@ -19,6 +19,10 @@ use std::{fs, path::Path};
 
 const DEFAULT_MAX_ATTEMPTS: u32 = 5;
 const MAX_CONTEXT_PATHS: usize = 500;
+const MAX_PLANNING_SOURCE_TOOL_ROUNDS: usize = 4;
+const MAX_PLANNING_READ_CONTENT_BYTES: usize = 12 * 1024;
+const MAX_PLANNING_LIST_ITEMS: usize = 200;
+const MAX_PLANNING_SEARCH_MATCHES: usize = 50;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CodingOutcome {
@@ -146,6 +150,13 @@ struct ProjectContext {
     truncated: bool,
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct PlanningSourceEvidence {
+    tool: String,
+    arguments: serde_json::Value,
+    output: serde_json::Value,
+}
+
 pub struct PlanningWorkflow<'a> {
     ollama: &'a OllamaClient,
     harnesses: &'a HarnessRegistry,
@@ -188,13 +199,14 @@ impl<'a> PlanningWorkflow<'a> {
         let mut project_context = build_project_context(self.project_root)?;
         project_context.tester_evidence = self.registry.current_tester_evidence_catalog()?;
 
-        let artifact = self
+        let (artifact, mut source_evidence) = self
             .invoke_plan_agent(
                 AgentId::Planner,
                 requirement,
                 None,
                 &[],
                 &project_context,
+                &[],
                 "Create the first Implementation Plan revision.",
             )
             .await?;
@@ -207,7 +219,7 @@ impl<'a> PlanningWorkflow<'a> {
             self.persist_route(&route, Some(current.revision))?;
 
             let review = self
-                .invoke_reviewer(requirement, &current, &project_context)
+                .invoke_reviewer(requirement, &current, &project_context, &source_evidence)
                 .await?;
             let review_verdict = if review.verdict == "PASS" {
                 ReviewVerdict::Pass
@@ -229,16 +241,18 @@ impl<'a> PlanningWorkflow<'a> {
                 if route.reviewer_attempts >= route.max_attempts {
                     return self.pause(&route, Some(current.revision));
                 }
-                let revised = self
+                let (revised, discovered) = self
                     .invoke_plan_agent(
                         AgentId::Planner,
                         requirement,
                         Some(&current),
                         &review.findings,
                         &project_context,
+                        &source_evidence,
                         "Revise the plan to resolve Reviewer findings. Produce a new complete plan.",
                     )
                     .await?;
+                source_evidence = discovered;
                 if revised.hash()? == current.hash {
                     route.unchanged_revision();
                     return self.pause(&route, Some(current.revision));
@@ -253,7 +267,7 @@ impl<'a> PlanningWorkflow<'a> {
             self.persist_route(&route, Some(current.revision))?;
 
             let cr = self
-                .invoke_cr(requirement, &current, &project_context)
+                .invoke_cr(requirement, &current, &project_context, &source_evidence)
                 .await?;
             let cr_verdict = if cr.verdict == "PASS" {
                 ReviewVerdict::Pass
@@ -279,7 +293,7 @@ impl<'a> PlanningWorkflow<'a> {
                     "JOB_BUILDER",
                 )?;
                 match self
-                    .invoke_job_builder(requirement, &current, &project_context)
+                    .invoke_job_builder(requirement, &current, &project_context, &source_evidence)
                     .await?
                 {
                     JobBuilderOutcome::Ready(graph) => {
@@ -303,16 +317,18 @@ impl<'a> PlanningWorkflow<'a> {
                             route.cr_attempts,
                             "PLAN_GAP",
                         )?;
-                        let revised = self
+                        let (revised, discovered) = self
                             .invoke_plan_agent(
                                 AgentId::Planner,
                                 requirement,
                                 Some(&current),
                                 &findings,
                                 &project_context,
+                                &source_evidence,
                                 "Job Builder found a PLAN_GAP in the approved plan. Revise the plan to resolve only these decomposition gaps without inventing missing evidence. Produce a new complete plan revision.",
                             )
                             .await?;
+                        source_evidence = discovered;
                         if revised.hash()? == current.hash {
                             return self.pause(&route, Some(current.revision));
                         }
@@ -328,16 +344,18 @@ impl<'a> PlanningWorkflow<'a> {
             }
 
             self.persist_route(&route, Some(current.revision))?;
-            let fixed = self
+            let (fixed, discovered) = self
                 .invoke_plan_agent(
                     AgentId::InternalFix,
                     requirement,
                     Some(&current),
                     &cr.findings,
                     &project_context,
+                    &source_evidence,
                     "Repair only the CR findings inside the existing planning scope. Return a complete revised plan.",
                 )
                 .await?;
+            source_evidence = discovered;
             if fixed.hash()? == current.hash {
                 route.unchanged_revision();
                 return self.pause(&route, Some(current.revision));
@@ -376,27 +394,33 @@ impl<'a> PlanningWorkflow<'a> {
         current: Option<&PlanRevision>,
         findings: &[String],
         project_context: &ProjectContext,
+        source_evidence: &[PlanningSourceEvidence],
         instruction: &str,
-    ) -> Result<PlanArtifact> {
+    ) -> Result<(PlanArtifact, Vec<PlanningSourceEvidence>)> {
         let mut packet = json!({
             "original_requirement": requirement,
             "instruction": instruction,
             "project_root": self.project_root.display().to_string(),
             "project_context": project_context,
+            "source_evidence": source_evidence,
             "findings": findings,
         });
         if let Some(current) = current {
             packet["current_plan"] = serde_json::to_value(current)?;
         }
 
-        let response = self
-            .invoke_with_tool(
+        let (response, discovered) = self
+            .invoke_with_source_tools(
                 agent,
                 vec![ChatMessage::user(packet.to_string())],
                 plan_tool(),
             )
             .await?;
-        extract_tool_args(&response, "submit_plan")
+        let artifact = extract_tool_args(&response, "submit_plan")?;
+        Ok((
+            artifact,
+            merge_planning_source_evidence(source_evidence, discovered),
+        ))
     }
 
     async fn invoke_reviewer(
@@ -404,19 +428,21 @@ impl<'a> PlanningWorkflow<'a> {
         requirement: &str,
         current: &PlanRevision,
         project_context: &ProjectContext,
+        source_evidence: &[PlanningSourceEvidence],
     ) -> Result<ReviewDecision> {
         let packet = json!({
             "original_requirement": requirement,
             "project_context": project_context,
+            "source_evidence": source_evidence,
             "target": {
                 "revision": current.revision,
                 "hash": current.hash,
                 "plan": current.artifact
             },
-            "instruction": "Review only this exact plan revision. Return PASS or CHANGES_REQUIRED with actionable findings."
+            "instruction": "Review only this exact plan revision against the supplied exact source evidence. Do not repeat repository discovery. Return PASS or CHANGES_REQUIRED with actionable findings."
         });
         let response = self
-            .invoke_with_tool(
+            .invoke_submission_only(
                 AgentId::Reviewer,
                 vec![ChatMessage::user(packet.to_string())],
                 review_tool(),
@@ -430,19 +456,21 @@ impl<'a> PlanningWorkflow<'a> {
         requirement: &str,
         current: &PlanRevision,
         project_context: &ProjectContext,
+        source_evidence: &[PlanningSourceEvidence],
     ) -> Result<CrDecision> {
         let packet = json!({
             "original_requirement": requirement,
             "project_context": project_context,
+            "source_evidence": source_evidence,
             "target": {
                 "revision": current.revision,
                 "hash": current.hash,
                 "plan": current.artifact
             },
-            "instruction": "Form an independent verdict from this clean packet. Do not assume Reviewer PASS. Return PASS or REVISE."
+            "instruction": "Form an independent verdict from this clean packet and supplied exact source evidence. Do not repeat repository discovery and do not assume Reviewer PASS. Return PASS or REVISE."
         });
         let response = self
-            .invoke_with_tool(
+            .invoke_submission_only(
                 AgentId::LocalCr,
                 vec![ChatMessage::user(packet.to_string())],
                 cr_tool(),
@@ -456,19 +484,21 @@ impl<'a> PlanningWorkflow<'a> {
         requirement: &str,
         current: &PlanRevision,
         project_context: &ProjectContext,
+        source_evidence: &[PlanningSourceEvidence],
     ) -> Result<JobBuilderOutcome> {
         let packet = json!({
             "original_requirement": requirement,
             "project_context": project_context,
+            "source_evidence": source_evidence,
             "approved_plan": {
                 "revision": current.revision,
                 "hash": current.hash,
                 "plan": current.artifact
             },
-            "instruction": "Decompose this approved plan only. Do not redesign it. Return READY with a complete execution graph, or PLAN_GAP with explicit findings if the approved plan is insufficient."
+            "instruction": "Decompose this approved plan only using the supplied plan and exact source evidence. Do not repeat repository discovery or redesign the plan. Return READY with a complete execution graph, or PLAN_GAP with explicit findings if the approved plan is insufficient."
         });
         let response = self
-            .invoke_with_tool(
+            .invoke_submission_only(
                 AgentId::JobBuilder,
                 vec![ChatMessage::user(packet.to_string())],
                 execution_graph_tool(),
@@ -498,27 +528,28 @@ impl<'a> PlanningWorkflow<'a> {
         }
     }
 
-    async fn invoke_with_tool(
+    async fn invoke_with_source_tools(
         &self,
         agent: AgentId,
         mut messages: Vec<ChatMessage>,
         tool: ToolDefinition,
-    ) -> Result<ChatMessage> {
+    ) -> Result<(ChatMessage, Vec<PlanningSourceEvidence>)> {
         let model = self.model_for(agent).await?;
         let submission_name = tool.function.name.clone();
         let mut project_tools = ProjectToolRuntime::new(self.project_root)?;
         let mut definitions = project_tools.tool_definitions(agent);
         definitions.push(tool);
+        let mut discovered = Vec::new();
 
         let mut system = self.harnesses.compose(agent)?;
         system.push_str(&format!(
-            "\n\nPROJECT ROOT: {}\nInspect live source with project_list/project_search/project_read as needed. Do not guess source facts from the file index. When the structured result is ready, call {} as the only tool call in that response.",
+            "\n\nPROJECT ROOT: {}\nUse the supplied source_evidence first. Inspect additional live source only when the current requirement/findings need a fact that is not already in that evidence. Prefer project_search/project_list before project_read and keep discovery minimum-sufficient. When ready, call {} as the only tool call in that response.",
             self.project_root.display(),
             submission_name
         ));
         messages.insert(0, ChatMessage::system(system));
 
-        for round in 0..8usize {
+        for round in 0..MAX_PLANNING_SOURCE_TOOL_ROUNDS {
             let response = self
                 .ollama
                 .chat_stream_with_tools(&model, &messages, &definitions, |_| {})
@@ -544,27 +575,77 @@ impl<'a> PlanningWorkflow<'a> {
                         submission_name
                     );
                 }
-                return Ok(response);
+                return Ok((response, discovered));
             }
 
-            if round + 1 >= 8 {
+            if round + 1 >= MAX_PLANNING_SOURCE_TOOL_ROUNDS {
                 bail!(
-                    "{} exceeded planning read-tool rounds before {}",
+                    "{} exceeded planning source-tool rounds before {}",
                     agent.display_name(),
                     submission_name
                 );
             }
 
             for call in calls {
-                messages.push(execute_project_tool_message(
+                let output = match project_tools.execute(
                     agent,
-                    &mut project_tools,
-                    &call,
+                    &call.function.name,
+                    &call.function.arguments,
+                ) {
+                    Ok(result) => json!({
+                        "ok": true,
+                        "result": bound_planning_tool_result(&call.function.name, result)
+                    }),
+                    Err(error) => json!({
+                        "ok": false,
+                        "error": format!("{error:#}")
+                    }),
+                };
+                discovered.push(PlanningSourceEvidence {
+                    tool: call.function.name.clone(),
+                    arguments: call.function.arguments.clone(),
+                    output: output.clone(),
+                });
+                messages.push(ChatMessage::tool(
+                    call.function.name.clone(),
+                    output.to_string(),
                 ));
             }
         }
 
-        unreachable!("bounded planning tool loop must return or fail")
+        unreachable!("bounded planning source-tool loop must return or fail")
+    }
+
+    async fn invoke_submission_only(
+        &self,
+        agent: AgentId,
+        mut messages: Vec<ChatMessage>,
+        tool: ToolDefinition,
+    ) -> Result<ChatMessage> {
+        let model = self.model_for(agent).await?;
+        let submission_name = tool.function.name.clone();
+        let mut system = self.harnesses.compose(agent)?;
+        system.push_str(&format!(
+            "\n\nPROJECT ROOT: {}\nThe packet contains the exact plan and source evidence needed for this gate. Do not rescan the repository. Call {} as the only tool call in your response.",
+            self.project_root.display(),
+            submission_name
+        ));
+        messages.insert(0, ChatMessage::system(system));
+
+        let response = self
+            .ollama
+            .chat_stream_with_tools(&model, &messages, &[tool], |_| {})
+            .await?;
+        if response.tool_calls.len() != 1
+            || response.tool_calls[0].function.name != submission_name
+        {
+            bail!(
+                "{} must call exactly one required workflow tool {}",
+                agent.display_name(),
+                submission_name
+            );
+        }
+        Ok(response)
     }
 
     async fn model_for(&self, agent: AgentId) -> Result<String> {
@@ -1197,6 +1278,79 @@ fn execute_project_tool_message(
         Err(error) => json!({"ok": false, "error": format!("{error:#}")}),
     };
     ChatMessage::tool(call.function.name.clone(), payload.to_string())
+}
+
+fn merge_planning_source_evidence(
+    existing: &[PlanningSourceEvidence],
+    discovered: Vec<PlanningSourceEvidence>,
+) -> Vec<PlanningSourceEvidence> {
+    let mut merged = existing.to_vec();
+    for item in discovered {
+        let duplicate = merged.iter().any(|prior| {
+            prior.tool == item.tool && prior.arguments == item.arguments && prior.output == item.output
+        });
+        if !duplicate {
+            merged.push(item);
+        }
+    }
+    merged
+}
+
+fn bound_planning_tool_result(
+    tool_name: &str,
+    mut result: serde_json::Value,
+) -> serde_json::Value {
+    match tool_name {
+        "project_read" => {
+            if let Some(content) = result
+                .get_mut("content")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+            {
+                if content.len() > MAX_PLANNING_READ_CONTENT_BYTES {
+                    let excerpt = truncate_utf8(&content, MAX_PLANNING_READ_CONTENT_BYTES);
+                    result["content"] = serde_json::Value::String(excerpt);
+                    result["truncated"] = serde_json::Value::Bool(true);
+                    result["planning_excerpt"] = serde_json::Value::Bool(true);
+                }
+            }
+        }
+        "project_list" => {
+            if let Some(files) = result
+                .get_mut("files")
+                .and_then(serde_json::Value::as_array_mut)
+            {
+                if files.len() > MAX_PLANNING_LIST_ITEMS {
+                    files.truncate(MAX_PLANNING_LIST_ITEMS);
+                    result["truncated"] = serde_json::Value::Bool(true);
+                }
+            }
+        }
+        "project_search" => {
+            if let Some(matches) = result
+                .get_mut("matches")
+                .and_then(serde_json::Value::as_array_mut)
+            {
+                if matches.len() > MAX_PLANNING_SEARCH_MATCHES {
+                    matches.truncate(MAX_PLANNING_SEARCH_MATCHES);
+                    result["truncated"] = serde_json::Value::Bool(true);
+                }
+            }
+        }
+        _ => {}
+    }
+    result
+}
+
+fn truncate_utf8(text: &str, max_bytes: usize) -> String {
+    if text.len() <= max_bytes {
+        return text.to_owned();
+    }
+    let mut end = max_bytes;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text[..end].to_owned()
 }
 
 fn active_work_packet(active_work: &ActiveWork) -> serde_json::Value {
@@ -1876,6 +2030,34 @@ mod tests {
         let encoded = serde_json::to_string(&context).unwrap();
         assert!(!encoded.contains("fn main() {}"));
         assert!(!encoded.contains("secret"));
+    }
+
+    #[test]
+    fn planning_source_evidence_bounds_large_read_results() {
+        let result = serde_json::json!({
+            "path": "src/large.rs",
+            "content": "x".repeat(MAX_PLANNING_READ_CONTENT_BYTES + 1024),
+            "sha256": "abc",
+            "truncated": false
+        });
+        let bounded = bound_planning_tool_result("project_read", result);
+        assert_eq!(
+            bounded["content"].as_str().unwrap().len(),
+            MAX_PLANNING_READ_CONTENT_BYTES
+        );
+        assert_eq!(bounded["truncated"], true);
+        assert_eq!(bounded["planning_excerpt"], true);
+    }
+
+    #[test]
+    fn planning_source_evidence_deduplicates_exact_reads() {
+        let item = PlanningSourceEvidence {
+            tool: "project_read".into(),
+            arguments: serde_json::json!({"path":"src/main.rs"}),
+            output: serde_json::json!({"ok":true,"result":{"path":"src/main.rs"}}),
+        };
+        let merged = merge_planning_source_evidence(&[item.clone()], vec![item]);
+        assert_eq!(merged.len(), 1);
     }
 
     #[test]
