@@ -47,7 +47,10 @@ impl App {
             .canonicalize()
             .context("failed to canonicalize current directory")?;
         let config = AppConfig::load()?;
-        let ollama = OllamaClient::new(config.ollama_base_url.clone());
+        let ollama = OllamaClient::with_num_ctx(
+            config.ollama_base_url.clone(),
+            config.ollama_num_ctx,
+        );
         let tool_runtime = ProjectToolRuntime::new(&project_root)?;
         let registry = Registry::open(&project_root)?;
         let lease_owner = format!("pid:{}", std::process::id());
