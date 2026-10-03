@@ -692,10 +692,39 @@ impl<'a> PlanningWorkflow<'a> {
         ));
         messages.insert(0, ChatMessage::system(system));
 
-        let response = self
+        let mut response = self
             .ollama
-            .chat_stream_with_tools(&model, &messages, &[tool], |_| {})
+            .chat_stream_with_tools(&model, &messages, std::slice::from_ref(&tool), |_| {})
             .await?;
+
+        if response.tool_calls.len() != 1
+            || response.tool_calls[0].function.name != submission_name
+        {
+            let first_tool_names = response
+                .tool_calls
+                .iter()
+                .map(|call| call.function.name.clone())
+                .collect::<Vec<_>>();
+            let first_content_excerpt = truncate_utf8(response.content.trim(), 240);
+            println!(
+                "PLAN_SUBMISSION_RETRY agent={} model={} expected={} first_tool_calls={:?} first_content={:?}",
+                agent.display_name(),
+                model,
+                submission_name,
+                first_tool_names,
+                first_content_excerpt
+            );
+
+            messages.push(ChatMessage::user(format!(
+                "Your previous response did not satisfy the required structured submission contract. Call {} now as the only tool call. Do not answer with prose.",
+                submission_name
+            )));
+            response = self
+                .ollama
+                .chat_stream_with_tools(&model, &messages, std::slice::from_ref(&tool), |_| {})
+                .await?;
+        }
+
         if response.tool_calls.len() != 1
             || response.tool_calls[0].function.name != submission_name
         {
@@ -706,7 +735,7 @@ impl<'a> PlanningWorkflow<'a> {
                 .collect::<Vec<_>>();
             let content_excerpt = truncate_utf8(response.content.trim(), 400);
             bail!(
-                "{} must call exactly one required workflow tool {}; model={}; tool_calls={:?}; content={:?}",
+                "{} must call exactly one required workflow tool {} after one retry; model={}; tool_calls={:?}; content={:?}",
                 agent.display_name(),
                 submission_name,
                 model,
