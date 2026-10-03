@@ -563,6 +563,7 @@ impl<'a> PlanningWorkflow<'a> {
         tool: ToolDefinition,
     ) -> Result<(ChatMessage, Vec<PlanningSourceEvidence>)> {
         let model = self.model_for(agent).await?;
+        println!("PLAN_MODEL agent={} model={}", agent.display_name(), model);
         let submission_name = tool.function.name.clone();
         let mut project_tools = ProjectToolRuntime::new(self.project_root)?;
         let mut definitions = project_tools.tool_definitions(agent);
@@ -672,6 +673,7 @@ impl<'a> PlanningWorkflow<'a> {
         tool: ToolDefinition,
     ) -> Result<ChatMessage> {
         let model = self.model_for(agent).await?;
+        println!("PLAN_MODEL agent={} model={}", agent.display_name(), model);
         let submission_name = tool.function.name.clone();
         let mut system = self.harnesses.compose(agent)?;
         system.push_str(&format!(
@@ -688,10 +690,19 @@ impl<'a> PlanningWorkflow<'a> {
         if response.tool_calls.len() != 1
             || response.tool_calls[0].function.name != submission_name
         {
+            let tool_names = response
+                .tool_calls
+                .iter()
+                .map(|call| call.function.name.as_str())
+                .collect::<Vec<_>>();
+            let content_excerpt = truncate_utf8(response.content.trim(), 400);
             bail!(
-                "{} must call exactly one required workflow tool {}",
+                "{} must call exactly one required workflow tool {}; model={}; tool_calls={:?}; content={:?}",
                 agent.display_name(),
-                submission_name
+                submission_name,
+                model,
+                tool_names,
+                content_excerpt
             );
         }
         Ok(response)
