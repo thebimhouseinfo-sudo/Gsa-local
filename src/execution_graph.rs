@@ -271,7 +271,7 @@ impl ExecutionGraph {
 
         for checkpoint in &self.checkpoints {
             for need_id in &checkpoint.evidence_need_ids {
-                let Some(need) = needs.get(need_id.as_str()) else {
+                let Some(_need) = needs.get(need_id.as_str()) else {
                     bail!(
                         "checkpoint {} references unknown evidence_need {}",
                         checkpoint.id,
