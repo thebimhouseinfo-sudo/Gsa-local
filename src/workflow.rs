@@ -587,7 +587,7 @@ impl<'a> PlanningWorkflow<'a> {
                 &definitions
             };
             if final_submission_round {
-                messages.push(ChatMessage::system(format!(
+                messages.push(ChatMessage::user(format!(
                     "Discovery budget is exhausted. Do not inspect more source. Submit now with {} using the evidence already collected.",
                     submission_name
                 )));
