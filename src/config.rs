@@ -11,6 +11,8 @@ use std::{
 pub struct AppConfig {
     #[serde(default = "default_ollama_url")]
     pub ollama_base_url: String,
+    #[serde(default = "default_ollama_num_ctx")]
+    pub ollama_num_ctx: usize,
     #[serde(default)]
     pub default_model: Option<String>,
     #[serde(default)]
@@ -21,10 +23,15 @@ fn default_ollama_url() -> String {
     "http://127.0.0.1:11434".to_owned()
 }
 
+fn default_ollama_num_ctx() -> usize {
+    32 * 1024
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             ollama_base_url: default_ollama_url(),
+            ollama_num_ctx: default_ollama_num_ctx(),
             default_model: None,
             agent_models: HashMap::new(),
         }
