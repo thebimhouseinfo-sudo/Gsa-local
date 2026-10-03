@@ -1331,7 +1331,7 @@ fn bound_planning_tool_result(
     match tool_name {
         "project_read" => {
             if let Some(content) = result
-                .get_mut("content")
+                .get("content")
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_owned)
             {
