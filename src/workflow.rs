@@ -1,4 +1,5 @@
 use crate::{
+    agent_runtime::resolve_model_name,
     config::AppConfig,
     controller::ActiveWork,
     execution_graph::ExecutionGraph,
@@ -778,15 +779,7 @@ impl<'a> PlanningWorkflow<'a> {
     }
 
     async fn model_for(&self, agent: AgentId) -> Result<String> {
-        if let Some(model) = self.session.resolved_model(self.config, agent) {
-            return Ok(model.to_owned());
-        }
-        self.ollama
-            .list_models()
-            .await?
-            .into_iter()
-            .next()
-            .context("no Ollama model is configured or installed")
+        resolve_model_name(self.ollama, self.session, self.config, agent).await
     }
 }
 
@@ -1376,15 +1369,7 @@ impl<'a> CodingWorkflow<'a> {
     }
 
     async fn model_for(&self, agent: AgentId) -> Result<String> {
-        if let Some(model) = self.session.resolved_model(self.config, agent) {
-            return Ok(model.to_owned());
-        }
-        self.ollama
-            .list_models()
-            .await?
-            .into_iter()
-            .next()
-            .context("no Ollama model is configured or installed")
+        resolve_model_name(self.ollama, self.session, self.config, agent).await
     }
 }
 
@@ -1698,17 +1683,8 @@ impl<'a> CodeCrWorkflow<'a> {
             tester_attempts.push(attempt);
         }
 
-        let model = if let Some(model) = self.session.resolved_model(self.config, AgentId::LocalCr)
-        {
-            model.to_owned()
-        } else {
-            self.ollama
-                .list_models()
-                .await?
-                .into_iter()
-                .next()
-                .context("no Ollama model is configured or installed")?
-        };
+        let model =
+            resolve_model_name(self.ollama, self.session, self.config, AgentId::LocalCr).await?;
         let mut system = self.harnesses.compose(AgentId::LocalCr)?;
         system.push_str(&format!(
             "\n\nPROJECT ROOT: {}\nThis is a fresh read-only code boundary review. Inspect live source with read tools as needed. Do not repair source. Submit exactly one code CR verdict bound to the supplied boundary key.",
