@@ -79,6 +79,14 @@ impl LocalProcessRunner {
         }
     }
 
+    pub fn is_available(&self) -> bool {
+        !matches!(self.backend, SandboxBackend::Unavailable(_))
+    }
+
+    pub fn executable_available(&self, program: &str) -> bool {
+        self.is_available() && resolve_executable(program).is_ok()
+    }
+
     pub fn run(
         &self,
         project_root: &Path,
@@ -238,6 +246,14 @@ impl TesterSandboxRunner {
         Self {
             backend: SandboxBackend::DirectTest,
         }
+    }
+
+    pub fn is_available(&self) -> bool {
+        !matches!(self.backend, SandboxBackend::Unavailable(_))
+    }
+
+    pub fn executable_available(&self, program: &str) -> bool {
+        self.is_available() && resolve_executable(program).is_ok()
     }
 
     pub fn run(
