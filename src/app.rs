@@ -1,5 +1,7 @@
 use crate::{
-    agent_runtime::{dispatch_tool_calls, run_with_project_tools, MAX_TOOL_ROUNDS},
+    agent_runtime::{
+        dispatch_tool_calls, resolve_model_name, run_with_project_tools, MAX_TOOL_ROUNDS,
+    },
     cli::{self, InputLine, SlashCommand},
     config::AppConfig,
     controller::{ActiveWork, MilestoneController, NextWork},
@@ -188,12 +190,15 @@ impl App {
         }
         print_models(&models);
 
-        if self.config.default_model.is_none() {
-            self.config.default_model = Some(models[0].clone());
-        }
+        let current_default = self.config.default_model.as_deref().unwrap_or("<none>");
+        let default_choice = prompt(&format!(
+            "Default model [current: {}] (number, blank=keep, none=clear)",
+            current_default
+        ))?;
+        apply_default_model_choice(&mut self.config, &models, &default_choice)?;
 
         for agent in AgentId::user_selectable() {
-            let current = self.config.model_for(*agent).unwrap_or("<none>");
+            let current = self.config.agent_model(*agent).unwrap_or("<none>");
             let choice = prompt(&format!(
                 "{} model [current: {}] (number, blank=keep)",
                 agent.display_name(),
@@ -586,16 +591,7 @@ Do not edit Tester-owned artifacts as the product fix. Use the structured repair
         }
 
         let agent = AgentId::Planner;
-        let model = match self.session.resolved_model(&self.config, agent) {
-            Some(model) => model.to_owned(),
-            None => self
-                .ollama
-                .list_models()
-                .await?
-                .into_iter()
-                .next()
-                .context("no Ollama model is configured or installed")?,
-        };
+        let model = resolve_model_name(&self.ollama, &self.session, &self.config, agent).await?;
 
         let mut messages = self.history.get(&agent).cloned().unwrap_or_else(|| {
             let mut system = self
@@ -782,16 +778,7 @@ Do not edit Tester-owned artifacts as the product fix. Use the structured repair
             bail!("Tester is orchestration-owned and may run only from a declared Test Checkpoint");
         }
 
-        let model = match self.session.resolved_model(&self.config, agent) {
-            Some(model) => model.to_owned(),
-            None => self
-                .ollama
-                .list_models()
-                .await?
-                .into_iter()
-                .next()
-                .context("no Ollama model is configured or installed")?,
-        };
+        let model = resolve_model_name(&self.ollama, &self.session, &self.config, agent).await?;
 
         let history = self.history.entry(agent).or_insert_with(|| {
             let mut system = self
@@ -916,6 +903,24 @@ fn parse_index(value: &str, len: usize) -> Result<usize> {
     Ok(selected - 1)
 }
 
+fn apply_default_model_choice(
+    config: &mut AppConfig,
+    models: &[String],
+    choice: &str,
+) -> Result<()> {
+    let choice = choice.trim();
+    if choice.is_empty() {
+        return Ok(());
+    }
+    if choice.eq_ignore_ascii_case("none") || choice.eq_ignore_ascii_case("clear") {
+        config.set_default_model(None);
+        return Ok(());
+    }
+    let model = models[parse_index(choice, models.len())?].clone();
+    config.set_default_model(Some(model));
+    Ok(())
+}
+
 fn print_models(models: &[String]) {
     println!("MODELS");
     for (index, model) in models.iter().enumerate() {
@@ -936,6 +941,28 @@ mod planner_routing_tests {
         assert!(is_explicit_planning_workflow_request(
             "Hãy lên plan cho thay đổi này."
         ));
+    }
+
+    #[test]
+    fn blank_default_choice_does_not_invent_a_model() {
+        let mut config = AppConfig::default();
+        let models = vec!["one".to_owned(), "two".to_owned()];
+
+        apply_default_model_choice(&mut config, &models, "").unwrap();
+
+        assert_eq!(config.default_model, None);
+    }
+
+    #[test]
+    fn default_model_requires_explicit_selection_and_can_be_cleared() {
+        let mut config = AppConfig::default();
+        let models = vec!["one".to_owned(), "two".to_owned()];
+
+        apply_default_model_choice(&mut config, &models, "2").unwrap();
+        assert_eq!(config.default_model.as_deref(), Some("two"));
+
+        apply_default_model_choice(&mut config, &models, "none").unwrap();
+        assert_eq!(config.default_model, None);
     }
 
     #[test]
