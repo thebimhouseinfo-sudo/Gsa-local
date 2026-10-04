@@ -1,4 +1,5 @@
 use crate::{
+    agent_runtime::resolve_model_name,
     config::AppConfig,
     execution_graph::TestCheckpointSpec,
     harness::{AgentId, HarnessRegistry},
@@ -870,15 +871,7 @@ impl<'a> TesterWorkflow<'a> {
     }
 
     async fn model_for(&self, agent: AgentId) -> Result<String> {
-        if let Some(model) = self.session.resolved_model(self.config, agent) {
-            return Ok(model.to_owned());
-        }
-        self.ollama
-            .list_models()
-            .await?
-            .into_iter()
-            .next()
-            .context("no Ollama model is configured or installed")
+        resolve_model_name(self.ollama, self.session, self.config, agent).await
     }
 }
 
