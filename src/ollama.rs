@@ -237,17 +237,41 @@ impl OllamaClient {
         model: &str,
         messages: &[ChatMessage],
         tools: &[ToolDefinition],
+        on_token: F,
+    ) -> Result<OllamaChatResponse>
+    where
+        F: FnMut(&str),
+    {
+        self.chat_stream_with_tools_response_with_num_ctx(
+            model,
+            messages,
+            tools,
+            self.num_ctx,
+            on_token,
+        )
+        .await
+    }
+
+    pub async fn chat_stream_with_tools_response_with_num_ctx<F>(
+        &self,
+        model: &str,
+        messages: &[ChatMessage],
+        tools: &[ToolDefinition],
+        num_ctx: usize,
         mut on_token: F,
     ) -> Result<OllamaChatResponse>
     where
         F: FnMut(&str),
     {
+        if num_ctx == 0 {
+            bail!("Ollama num_ctx must be greater than zero");
+        }
         let mut body = json!({
             "model": model,
             "messages": messages,
             "stream": true,
             "options": {
-                "num_ctx": self.num_ctx
+                "num_ctx": num_ctx
             }
         });
         if !tools.is_empty() {
@@ -275,7 +299,7 @@ impl OllamaClient {
         let mut pending = Vec::new();
         let mut assistant = ChatMessage::assistant("");
         let mut telemetry = OllamaChatTelemetry {
-            requested_num_ctx: self.num_ctx,
+            requested_num_ctx: num_ctx,
             ..OllamaChatTelemetry::default()
         };
 
