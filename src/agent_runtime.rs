@@ -128,21 +128,12 @@ pub struct RuntimePolicy {
     pub num_ctx: usize,
 }
 
-impl Default for RuntimePolicy {
-    fn default() -> Self {
-        Self {
-            max_action_rounds: MAX_TOOL_ROUNDS,
-            max_terminal_repairs: 2,
-            num_ctx: 32 * 1024,
-        }
-    }
-}
-
 impl RuntimePolicy {
     pub fn for_client(ollama: &OllamaClient) -> Self {
         Self {
+            max_action_rounds: MAX_TOOL_ROUNDS,
+            max_terminal_repairs: 2,
             num_ctx: ollama.num_ctx(),
-            ..Self::default()
         }
     }
 }
@@ -153,6 +144,7 @@ pub struct StructuredRunResult {
     pub requested_num_ctx: usize,
     pub terminal_arguments: Value,
     pub action_rounds: usize,
+    pub action_calls: usize,
     pub terminal_repairs: usize,
     pub elapsed_ms: u128,
     pub invocations: Vec<OllamaChatTelemetry>,
@@ -201,6 +193,7 @@ impl<'a> StructuredAgentRuntime<'a> {
 
         let started = Instant::now();
         let mut action_rounds = 0usize;
+        let mut action_calls = 0usize;
         let mut terminal_repairs = 0usize;
         let mut invocations = Vec::new();
 
@@ -223,6 +216,7 @@ impl<'a> StructuredAgentRuntime<'a> {
                 terminal_name,
                 self.policy,
                 &mut action_rounds,
+                &mut action_calls,
                 &mut terminal_repairs,
                 &mut execute_action,
                 &mut validate_terminal,
@@ -232,6 +226,7 @@ impl<'a> StructuredAgentRuntime<'a> {
                     requested_num_ctx: self.policy.num_ctx,
                     terminal_arguments: arguments,
                     action_rounds,
+                    action_calls,
                     terminal_repairs,
                     elapsed_ms: started.elapsed().as_millis(),
                     invocations,
@@ -312,6 +307,7 @@ fn process_structured_response<E, V>(
     terminal_name: &str,
     policy: RuntimePolicy,
     action_rounds: &mut usize,
+    action_calls: &mut usize,
     terminal_repairs: &mut usize,
     execute_action: &mut E,
     validate_terminal: &mut V,
@@ -344,6 +340,7 @@ where
                 );
             }
             *action_rounds += 1;
+            *action_calls += calls.len();
             for call in calls {
                 let name = call.function.name;
                 let payload = match execute_action(&name, &call.function.arguments) {
@@ -499,6 +496,14 @@ mod tests {
     use serde_json::json;
     use tempfile::tempdir;
 
+    fn test_policy() -> RuntimePolicy {
+        RuntimePolicy {
+            max_action_rounds: MAX_TOOL_ROUNDS,
+            max_terminal_repairs: 2,
+            num_ctx: 32 * 1024,
+        }
+    }
+
     fn call(name: &str, arguments: Value) -> ToolCall {
         ToolCall {
             kind: Some("function".into()),
@@ -587,6 +592,10 @@ mod tests {
             ModelSelectionSource::SingleInstalledBootstrap
         );
 
+        let none =
+            resolve_model_from_installed(&session, &config, AgentId::Planner, &[]).unwrap_err();
+        assert!(none.to_string().contains("MODEL_SELECTION_REQUIRED"));
+
         let many = resolve_model_from_installed(
             &session,
             &config,
@@ -622,6 +631,7 @@ mod tests {
             call("project_search", json!({"query":"x"})),
         ]);
         let mut action_rounds = 0;
+        let mut action_calls = 0;
         let mut repairs = 0;
         let mut executed = Vec::new();
         let mut executor = |name: &str, _args: &Value| {
@@ -634,8 +644,9 @@ mod tests {
             &mut messages,
             response,
             "submit_plan",
-            RuntimePolicy::default(),
+            test_policy(),
             &mut action_rounds,
+            &mut action_calls,
             &mut repairs,
             &mut executor,
             &mut validator,
@@ -644,8 +655,47 @@ mod tests {
 
         assert!(result.is_none());
         assert_eq!(action_rounds, 1);
+        assert_eq!(action_calls, 2);
         assert_eq!(repairs, 0);
         assert_eq!(executed, vec!["project_read", "project_search"]);
+    }
+
+    #[test]
+    fn action_executor_error_is_returned_once_without_consuming_terminal_repair_budget() {
+        let mut messages = vec![ChatMessage::system("root")];
+        let response =
+            response_with_calls(vec![call("project_read", json!({"path":"missing"}))]);
+        let mut action_rounds = 0;
+        let mut action_calls = 0;
+        let mut repairs = 0;
+        let mut executions = 0;
+        let mut executor = |_name: &str, _args: &Value| -> Result<Value> {
+            executions += 1;
+            bail!("read failed")
+        };
+        let mut validator = |_args: &Value| Ok(());
+
+        let result = process_structured_response(
+            &mut messages,
+            response,
+            "submit_plan",
+            test_policy(),
+            &mut action_rounds,
+            &mut action_calls,
+            &mut repairs,
+            &mut executor,
+            &mut validator,
+        )
+        .unwrap();
+
+        assert!(result.is_none());
+        assert_eq!(executions, 1);
+        assert_eq!(action_rounds, 1);
+        assert_eq!(action_calls, 1);
+        assert_eq!(repairs, 0);
+        let tool = messages.last().unwrap();
+        assert_eq!(tool.role, "tool");
+        assert!(tool.content.contains("read failed"));
     }
 
     #[test]
@@ -656,6 +706,7 @@ mod tests {
             call("submit_plan", json!({"goal":"x"})),
         ]);
         let mut action_rounds = 0;
+        let mut action_calls = 0;
         let mut repairs = 0;
         let mut executed = 0;
         let mut executor = |_name: &str, _args: &Value| {
@@ -668,8 +719,9 @@ mod tests {
             &mut messages,
             response,
             "submit_plan",
-            RuntimePolicy::default(),
+            test_policy(),
             &mut action_rounds,
+            &mut action_calls,
             &mut repairs,
             &mut executor,
             &mut validator,
@@ -679,6 +731,7 @@ mod tests {
         assert!(result.is_none());
         assert_eq!(executed, 0);
         assert_eq!(action_rounds, 0);
+        assert_eq!(action_calls, 0);
         assert_eq!(repairs, 1);
         assert_eq!(
             messages.iter().rev().take(2).filter(|m| m.role == "tool").count(),
@@ -690,6 +743,7 @@ mod tests {
     fn invalid_terminal_payload_uses_tool_feedback_then_valid_payload_completes() {
         let mut messages = vec![ChatMessage::system("root")];
         let mut action_rounds = 0;
+        let mut action_calls = 0;
         let mut repairs = 0;
         let mut executor = |_name: &str, _args: &Value| Ok(Value::Null);
         let mut validator = |args: &Value| {
@@ -704,8 +758,9 @@ mod tests {
             &mut messages,
             response_with_calls(vec![call("submit_graph", json!({"status":"READY"}))]),
             "submit_graph",
-            RuntimePolicy::default(),
+            test_policy(),
             &mut action_rounds,
+            &mut action_calls,
             &mut repairs,
             &mut executor,
             &mut validator,
@@ -720,8 +775,9 @@ mod tests {
             &mut messages,
             response_with_calls(vec![call("submit_graph", valid_args.clone())]),
             "submit_graph",
-            RuntimePolicy::default(),
+            test_policy(),
             &mut action_rounds,
+            &mut action_calls,
             &mut repairs,
             &mut executor,
             &mut validator,
@@ -739,6 +795,7 @@ mod tests {
             telemetry: OllamaChatTelemetry::default(),
         };
         let mut action_rounds = 0;
+        let mut action_calls = 0;
         let mut repairs = 0;
         let mut executor = |_name: &str, _args: &Value| Ok(Value::Null);
         let mut validator = |_args: &Value| Ok(());
@@ -750,9 +807,10 @@ mod tests {
             RuntimePolicy {
                 max_action_rounds: 1,
                 max_terminal_repairs: 1,
-                ..RuntimePolicy::default()
+                num_ctx: test_policy().num_ctx,
             },
             &mut action_rounds,
+            &mut action_calls,
             &mut repairs,
             &mut executor,
             &mut validator,
@@ -773,9 +831,10 @@ mod tests {
             RuntimePolicy {
                 max_action_rounds: 1,
                 max_terminal_repairs: 1,
-                ..RuntimePolicy::default()
+                num_ctx: test_policy().num_ctx,
             },
             &mut action_rounds,
+            &mut action_calls,
             &mut repairs,
             &mut executor,
             &mut validator,
@@ -789,9 +848,10 @@ mod tests {
         let policy = RuntimePolicy {
             max_action_rounds: 1,
             max_terminal_repairs: 1,
-            ..RuntimePolicy::default()
+            ..test_policy()
         };
         let mut action_rounds = 0;
+        let mut action_calls = 0;
         let mut repairs = 0;
         let mut executed = 0;
         let mut executor = |_name: &str, _args: &Value| {
@@ -806,6 +866,7 @@ mod tests {
             "submit_plan",
             policy,
             &mut action_rounds,
+            &mut action_calls,
             &mut repairs,
             &mut executor,
             &mut validator,
@@ -824,6 +885,7 @@ mod tests {
             "submit_plan",
             policy,
             &mut action_rounds,
+            &mut action_calls,
             &mut repairs,
             &mut executor,
             &mut validator,
