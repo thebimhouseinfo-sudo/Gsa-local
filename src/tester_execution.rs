@@ -5,7 +5,7 @@ use crate::{
     harness::{AgentId, HarnessRegistry},
     ollama::{ChatMessage, OllamaClient, ToolCall, ToolDefinition},
     plan::EvidenceNeed,
-    process_runner::{ProcessObservation, TesterSandboxRunner},
+    process_runner::{LocalProcessRunner, ProcessObservation, TesterSandboxRunner},
     registry::{Registry, TesterExecutionStepRecord, TesterRetestContext},
     session::Session,
     tester_evidence::{
@@ -15,7 +15,7 @@ use crate::{
     },
     tester_workspace::TesterWorkspaceRuntime,
     tools::ProjectToolRuntime,
-    verification::{VerificationController, VerificationProfile, VerificationResult},
+    verification::{DiscoveryStatus, VerificationController, VerificationProfile, VerificationResult},
 };
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -31,23 +31,71 @@ const MAX_TESTER_TOOL_ROUNDS: usize = 16;
 const MAX_TESTER_EXECUTIONS: usize = 8;
 const DEFAULT_TESTER_TIMEOUT: Duration = Duration::from_secs(120);
 
-pub fn tester_capability_catalog(profile: &VerificationProfile) -> Vec<String> {
-    let mut capabilities = profile
-        .capabilities
-        .iter()
-        .map(|capability| capability.as_str().to_owned())
-        .collect::<BTreeSet<_>>();
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TesterCapabilityAvailability {
+    workspace_python: bool,
+    workspace_node: bool,
+    project_verification: bool,
+}
 
-    for capability in [
-        "PROJECT_VERIFICATION",
-        "WORKSPACE_PYTHON",
-        "WORKSPACE_NODE",
-        "RUNTIME_PROBE",
-    ] {
-        capabilities.insert(capability.to_owned());
+impl TesterCapabilityAvailability {
+    fn names(&self, profile: &VerificationProfile) -> Vec<String> {
+        let mut capabilities = BTreeSet::new();
+
+        if self.workspace_python {
+            capabilities.insert("WORKSPACE_PYTHON".to_owned());
+        }
+        if self.workspace_node {
+            capabilities.insert("WORKSPACE_NODE".to_owned());
+        }
+        if self.project_verification {
+            capabilities.insert("PROJECT_VERIFICATION".to_owned());
+            capabilities.extend(
+                profile
+                    .capabilities
+                    .iter()
+                    .map(|capability| capability.as_str().to_owned()),
+            );
+        }
+
+        let project_runtime_capable = self.project_verification
+            && profile
+                .capabilities
+                .iter()
+                .any(|capability| {
+                    matches!(
+                        capability.as_str(),
+                        "INTEGRATION" | "BROWSER"
+                    )
+                });
+        if self.workspace_python || self.workspace_node || project_runtime_capable {
+            capabilities.insert("RUNTIME_PROBE".to_owned());
+        }
+
+        capabilities.into_iter().collect()
     }
+}
 
-    capabilities.into_iter().collect()
+pub fn available_tester_capabilities(profile: &VerificationProfile) -> Vec<String> {
+    let tester_runner = TesterSandboxRunner::production();
+    let verification_runner = LocalProcessRunner::production();
+
+    let project_verification = verification_runner.is_available()
+        && profile.status == DiscoveryStatus::Applicable
+        && !profile.commands.is_empty()
+        && profile.commands.iter().all(|command| {
+            command
+                .argv
+                .first()
+                .is_some_and(|program| verification_runner.executable_available(program))
+        });
+
+    TesterCapabilityAvailability {
+        workspace_python: tester_runner.executable_available("python3"),
+        workspace_node: tester_runner.executable_available("node"),
+        project_verification,
+    }
+    .names(profile)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1029,6 +1077,69 @@ fn hex_digest(digest: impl AsRef<[u8]>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capability_catalog_does_not_overclaim_unavailable_runtimes() {
+        let profile = VerificationProfile {
+            status: DiscoveryStatus::Applicable,
+            capabilities: vec![crate::verification::VerificationCapability::Integration],
+            commands: vec![],
+            reason: None,
+        };
+        let names = TesterCapabilityAvailability {
+            workspace_python: false,
+            workspace_node: false,
+            project_verification: false,
+        }
+        .names(&profile);
+
+        assert!(!names.iter().any(|name| name == "RUNTIME_PROBE"));
+        assert!(!names.iter().any(|name| name == "WORKSPACE_PYTHON"));
+        assert!(!names.iter().any(|name| name == "WORKSPACE_NODE"));
+        assert!(!names.iter().any(|name| name == "PROJECT_VERIFICATION"));
+        assert!(!names.iter().any(|name| name == "INTEGRATION"));
+    }
+
+    #[test]
+    fn build_only_project_verification_does_not_imply_runtime_probe() {
+        let profile = VerificationProfile {
+            status: DiscoveryStatus::Applicable,
+            capabilities: vec![crate::verification::VerificationCapability::BuildOnly],
+            commands: vec![],
+            reason: None,
+        };
+        let names = TesterCapabilityAvailability {
+            workspace_python: false,
+            workspace_node: false,
+            project_verification: true,
+        }
+        .names(&profile);
+
+        assert!(names.iter().any(|name| name == "PROJECT_VERIFICATION"));
+        assert!(names.iter().any(|name| name == "BUILD_ONLY"));
+        assert!(!names.iter().any(|name| name == "RUNTIME_PROBE"));
+    }
+
+    #[test]
+    fn grounded_execution_capability_enables_runtime_probe() {
+        let profile = VerificationProfile {
+            status: DiscoveryStatus::Applicable,
+            capabilities: vec![crate::verification::VerificationCapability::Integration],
+            commands: vec![],
+            reason: None,
+        };
+        let names = TesterCapabilityAvailability {
+            workspace_python: true,
+            workspace_node: false,
+            project_verification: true,
+        }
+        .names(&profile);
+
+        assert!(names.iter().any(|name| name == "WORKSPACE_PYTHON"));
+        assert!(names.iter().any(|name| name == "PROJECT_VERIFICATION"));
+        assert!(names.iter().any(|name| name == "INTEGRATION"));
+        assert!(names.iter().any(|name| name == "RUNTIME_PROBE"));
+    }
 
     #[test]
     fn project_verification_is_observe_only() {
