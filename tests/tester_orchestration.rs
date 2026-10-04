@@ -9,7 +9,6 @@ use gsa_local::{
     tester_evidence::{
         TesterAttemptEvidence, TesterClassification, TesterModeOutcome, TesterModeResult,
     },
-    verification::{DiscoveryStatus, VerificationCapability, VerificationProfile},
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
