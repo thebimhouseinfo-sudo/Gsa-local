@@ -94,6 +94,26 @@ pub struct ToolFunctionDefinition {
     pub parameters: Value,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OllamaChatTelemetry {
+    pub model: Option<String>,
+    pub requested_num_ctx: usize,
+    pub done: bool,
+    pub done_reason: Option<String>,
+    pub total_duration_ns: Option<u64>,
+    pub load_duration_ns: Option<u64>,
+    pub prompt_eval_count: Option<u64>,
+    pub prompt_eval_duration_ns: Option<u64>,
+    pub eval_count: Option<u64>,
+    pub eval_duration_ns: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct OllamaChatResponse {
+    pub message: ChatMessage,
+    pub telemetry: OllamaChatTelemetry,
+}
+
 #[derive(Debug, Clone)]
 pub struct OllamaClient {
     base_url: String,
@@ -117,6 +137,22 @@ struct ChatChunk {
     message: Option<ChatMessage>,
     #[serde(default)]
     done: bool,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    done_reason: Option<String>,
+    #[serde(default)]
+    total_duration: Option<u64>,
+    #[serde(default)]
+    load_duration: Option<u64>,
+    #[serde(default)]
+    prompt_eval_count: Option<u64>,
+    #[serde(default)]
+    prompt_eval_duration: Option<u64>,
+    #[serde(default)]
+    eval_count: Option<u64>,
+    #[serde(default)]
+    eval_duration: Option<u64>,
 }
 
 impl OllamaClient {
@@ -130,6 +166,10 @@ impl OllamaClient {
             num_ctx,
             http: Client::new(),
         }
+    }
+
+    pub fn num_ctx(&self) -> usize {
+        self.num_ctx
     }
 
     pub async fn list_models(&self) -> Result<Vec<String>> {
@@ -181,8 +221,24 @@ impl OllamaClient {
         model: &str,
         messages: &[ChatMessage],
         tools: &[ToolDefinition],
-        mut on_token: F,
+        on_token: F,
     ) -> Result<ChatMessage>
+    where
+        F: FnMut(&str),
+    {
+        Ok(self
+            .chat_stream_with_tools_response(model, messages, tools, on_token)
+            .await?
+            .message)
+    }
+
+    pub async fn chat_stream_with_tools_response<F>(
+        &self,
+        model: &str,
+        messages: &[ChatMessage],
+        tools: &[ToolDefinition],
+        mut on_token: F,
+    ) -> Result<OllamaChatResponse>
     where
         F: FnMut(&str),
     {
@@ -218,24 +274,38 @@ impl OllamaClient {
         let mut stream = response.bytes_stream();
         let mut pending = Vec::new();
         let mut assistant = ChatMessage::assistant("");
+        let mut telemetry = OllamaChatTelemetry {
+            requested_num_ctx: self.num_ctx,
+            ..OllamaChatTelemetry::default()
+        };
 
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.context("failed while reading Ollama stream")?;
             pending.extend_from_slice(&chunk);
-            consume_complete_lines(&mut pending, &mut assistant, &mut on_token)?;
+            consume_complete_lines(
+                &mut pending,
+                &mut assistant,
+                &mut telemetry,
+                &mut on_token,
+            )?;
         }
 
         if !pending.is_empty() {
-            consume_chat_bytes(&pending, &mut assistant, &mut on_token)?;
+            consume_chat_bytes(&pending, &mut assistant, &mut telemetry, &mut on_token)?;
         }
 
-        Ok(assistant)
+        Ok(OllamaChatResponse {
+            message: assistant,
+            telemetry,
+        })
     }
+}
 }
 
 fn consume_complete_lines<F>(
     pending: &mut Vec<u8>,
     assistant: &mut ChatMessage,
+    telemetry: &mut OllamaChatTelemetry,
     on_token: &mut F,
 ) -> Result<()>
 where
@@ -248,13 +318,18 @@ where
             line.pop();
         }
         if !line.iter().all(|byte| byte.is_ascii_whitespace()) {
-            consume_chat_bytes(&line, assistant, on_token)?;
+            consume_chat_bytes(&line, assistant, telemetry, on_token)?;
         }
     }
     Ok(())
 }
 
-fn consume_chat_bytes<F>(line: &[u8], assistant: &mut ChatMessage, on_token: &mut F) -> Result<()>
+fn consume_chat_bytes<F>(
+    line: &[u8],
+    assistant: &mut ChatMessage,
+    telemetry: &mut OllamaChatTelemetry,
+    on_token: &mut F,
+) -> Result<()>
 where
     F: FnMut(&str),
 {
@@ -266,6 +341,33 @@ where
 
     let chunk: ChatChunk = serde_json::from_str(line)
         .with_context(|| format!("invalid Ollama stream line: {line}"))?;
+
+    if let Some(model) = chunk.model {
+        telemetry.model = Some(model);
+    }
+    telemetry.done |= chunk.done;
+    if chunk.done_reason.is_some() {
+        telemetry.done_reason = chunk.done_reason;
+    }
+    if chunk.total_duration.is_some() {
+        telemetry.total_duration_ns = chunk.total_duration;
+    }
+    if chunk.load_duration.is_some() {
+        telemetry.load_duration_ns = chunk.load_duration;
+    }
+    if chunk.prompt_eval_count.is_some() {
+        telemetry.prompt_eval_count = chunk.prompt_eval_count;
+    }
+    if chunk.prompt_eval_duration.is_some() {
+        telemetry.prompt_eval_duration_ns = chunk.prompt_eval_duration;
+    }
+    if chunk.eval_count.is_some() {
+        telemetry.eval_count = chunk.eval_count;
+    }
+    if chunk.eval_duration.is_some() {
+        telemetry.eval_duration_ns = chunk.eval_duration;
+    }
+
     if let Some(message) = chunk.message {
         if !message.content.is_empty() {
             on_token(&message.content);
@@ -279,7 +381,6 @@ where
             assistant.tool_name = message.tool_name;
         }
     }
-    let _ = chunk.done;
     Ok(())
 }
 
@@ -305,17 +406,18 @@ mod tests {
 
         let mut pending = Vec::new();
         let mut assistant = ChatMessage::assistant("");
+        let mut telemetry = OllamaChatTelemetry::default();
         let mut emitted = String::new();
 
         pending.extend_from_slice(&bytes[..split_inside_multibyte]);
-        consume_complete_lines(&mut pending, &mut assistant, &mut |token| {
+        consume_complete_lines(&mut pending, &mut assistant, &mut telemetry, &mut |token| {
             emitted.push_str(token)
         })
         .unwrap();
         assert!(assistant.content.is_empty());
 
         pending.extend_from_slice(&bytes[split_inside_multibyte..]);
-        consume_complete_lines(&mut pending, &mut assistant, &mut |token| {
+        consume_complete_lines(&mut pending, &mut assistant, &mut telemetry, &mut |token| {
             emitted.push_str(token)
         })
         .unwrap();
@@ -349,13 +451,14 @@ mod tests {
         let split = framed.len() / 2;
         let mut pending = Vec::new();
         let mut assistant = ChatMessage::assistant("");
+        let mut telemetry = OllamaChatTelemetry::default();
 
         pending.extend_from_slice(&framed[..split]);
-        consume_complete_lines(&mut pending, &mut assistant, &mut |_| {}).unwrap();
+        consume_complete_lines(&mut pending, &mut assistant, &mut telemetry, &mut |_| {}).unwrap();
         assert!(assistant.tool_calls.is_empty());
 
         pending.extend_from_slice(&framed[split..]);
-        consume_complete_lines(&mut pending, &mut assistant, &mut |_| {}).unwrap();
+        consume_complete_lines(&mut pending, &mut assistant, &mut telemetry, &mut |_| {}).unwrap();
 
         assert_eq!(assistant.tool_calls.len(), 1);
         assert_eq!(assistant.tool_calls[0].function.name, "submit_plan");
@@ -363,6 +466,41 @@ mod tests {
             assistant.tool_calls[0].function.arguments["goal"],
             "Build workflow"
         );
+    }
+
+    #[test]
+    fn final_stream_chunk_preserves_inference_telemetry() {
+        let line = serde_json::to_vec(&json!({
+            "model": "qwen38t:latest",
+            "message": {
+                "role": "assistant",
+                "content": ""
+            },
+            "done": true,
+            "done_reason": "stop",
+            "total_duration": 1000,
+            "load_duration": 100,
+            "prompt_eval_count": 42,
+            "prompt_eval_duration": 200,
+            "eval_count": 7,
+            "eval_duration": 300
+        }))
+        .unwrap();
+
+        let mut assistant = ChatMessage::assistant("");
+        let mut telemetry = OllamaChatTelemetry {
+            requested_num_ctx: 32768,
+            ..OllamaChatTelemetry::default()
+        };
+        consume_chat_bytes(&line, &mut assistant, &mut telemetry, &mut |_| {}).unwrap();
+
+        assert_eq!(telemetry.model.as_deref(), Some("qwen38t:latest"));
+        assert_eq!(telemetry.requested_num_ctx, 32768);
+        assert!(telemetry.done);
+        assert_eq!(telemetry.done_reason.as_deref(), Some("stop"));
+        assert_eq!(telemetry.prompt_eval_count, Some(42));
+        assert_eq!(telemetry.eval_count, Some(7));
+        assert_eq!(telemetry.total_duration_ns, Some(1000));
     }
 
     #[test]
