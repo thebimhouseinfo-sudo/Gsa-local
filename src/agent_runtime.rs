@@ -543,6 +543,33 @@ mod tests {
     }
 
     #[test]
+    fn model_resolution_precedence_covers_agent_config_internal_fix_fallback_and_default() {
+        let mut config = AppConfig::default();
+        config.set_default_model(Some("default".into()));
+        config.set_agent_model(AgentId::Reviewer, "reviewer-config".into());
+        config.set_agent_model(AgentId::Coder, "coder-config".into());
+        let session = Session::default();
+
+        let reviewer =
+            resolve_model_from_installed(&session, &config, AgentId::Reviewer, &[]).unwrap();
+        assert_eq!(reviewer.name, "reviewer-config");
+        assert_eq!(reviewer.source, ModelSelectionSource::AgentConfig);
+
+        let internal =
+            resolve_model_from_installed(&session, &config, AgentId::InternalFix, &[]).unwrap();
+        assert_eq!(internal.name, "coder-config");
+        assert_eq!(
+            internal.source,
+            ModelSelectionSource::InternalFixCoderConfig
+        );
+
+        let planner =
+            resolve_model_from_installed(&session, &config, AgentId::Planner, &[]).unwrap();
+        assert_eq!(planner.name, "default");
+        assert_eq!(planner.source, ModelSelectionSource::DefaultConfig);
+    }
+
+    #[test]
     fn model_resolution_bootstraps_only_one_installed_model() {
         let config = AppConfig::default();
         let session = Session::default();
@@ -754,6 +781,57 @@ mod tests {
             &mut validator,
         )
         .is_err());
+    }
+
+    #[test]
+    fn action_and_terminal_repair_budgets_are_independent() {
+        let mut messages = vec![ChatMessage::system("root")];
+        let policy = RuntimePolicy {
+            max_action_rounds: 1,
+            max_terminal_repairs: 1,
+            ..RuntimePolicy::default()
+        };
+        let mut action_rounds = 0;
+        let mut repairs = 0;
+        let mut executed = 0;
+        let mut executor = |_name: &str, _args: &Value| {
+            executed += 1;
+            Ok(Value::Null)
+        };
+        let mut validator = |_args: &Value| Ok(());
+
+        process_structured_response(
+            &mut messages,
+            response_with_calls(vec![call("project_read", json!({"path":"a"}))]),
+            "submit_plan",
+            policy,
+            &mut action_rounds,
+            &mut repairs,
+            &mut executor,
+            &mut validator,
+        )
+        .unwrap();
+        assert_eq!(action_rounds, 1);
+        assert_eq!(repairs, 0);
+        assert_eq!(executed, 1);
+
+        process_structured_response(
+            &mut messages,
+            OllamaChatResponse {
+                message: ChatMessage::assistant("prose"),
+                telemetry: OllamaChatTelemetry::default(),
+            },
+            "submit_plan",
+            policy,
+            &mut action_rounds,
+            &mut repairs,
+            &mut executor,
+            &mut validator,
+        )
+        .unwrap();
+        assert_eq!(action_rounds, 1);
+        assert_eq!(repairs, 1);
+        assert_eq!(executed, 1);
     }
 
     #[test]
