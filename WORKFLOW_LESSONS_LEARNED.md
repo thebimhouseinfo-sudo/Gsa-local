@@ -3448,3 +3448,230 @@ required workflow tool missing
 
 real local-model integration evidence must be part of acceptance
 ```
+
+
+---
+
+# 55. LLC — Branch/commit fragmentation causes source-truth drift and implementation-plan incompleteness
+
+**lesson_id:** LLC-GSA-ONLINE-SOURCE-TRUTH-BRANCH-RECONCILIATION-20261004  
+**date:** 2026-10-04  
+**project:** Gsa-local  
+**trigger:** `WORKAROUND_REQUIRED / SOURCE_RECONCILIATION_REQUIRED`  
+**classification:** `WORKFLOW_GAP`  
+**subclassification:** `SOURCE_TRUTH_GAP / BRANCH_RECONCILIATION_GAP / PLAN_IMPLEMENTATION_DRIFT`
+
+## 55.1 Canonical path
+
+An active Job needs one explicit **source-of-truth branch/ref**.
+
+Accepted implementation work must converge into that source-of-truth continuously:
+
+```text
+task starts from source_truth_ref
+-> Coder may use a temporary working branch if required
+-> accepted change is reviewed/verified
+-> accepted commit is integrated into source_truth_ref
+-> source_truth_ref advances
+-> next task/checkpoint starts from that exact ref
+```
+
+A task is not operationally complete while accepted code exists only on an unmerged side branch.
+
+## 55.2 Observed failure
+
+During Gsa-local work, multiple development lines were left alive while `main` continued advancing.
+
+Observed repository state during reconciliation:
+
+```text
+main = active executable source truth
+
+upgrade-v3
+  -> no commits ahead of main
+  -> 207 commits behind main
+
+migrated-plan
+  -> 18 commits ahead of its old merge-base
+  -> 207 commits behind current main
+  -> open WIP PR still present
+```
+
+The 18 commits were not one coherent change that could safely be merged.
+
+They contained both:
+
+- older Tester orchestration already superseded by richer Phase-12/main architecture; and
+- later grounded Tester capability checks that were still useful and had never reached main.
+
+Therefore recovery required a manual branch/commit archaeology pass:
+
+```text
+enumerate branches
+-> compare each branch to main
+-> inspect every unique commit
+-> map old implementation to current architecture
+-> port only surviving logic
+-> reject superseded logic
+-> close/reset stale integration branches
+```
+
+This is expensive and unsafe work that should not be required at the end of a Job.
+
+## 55.3 Impact
+
+Branch/commit fragmentation creates several workflow failures:
+
+- accepted code can be absent from the branch used by later tasks;
+- implementation can become incomplete relative to the approved plan;
+- Reviewer/Tester may verify a different source line from the one later considered canonical;
+- later Agents cannot know whether an unmerged commit is required, superseded, experimental, or abandoned;
+- large branch divergence makes direct merging unsafe even when some commits remain useful;
+- final cleanup becomes semantic code archaeology instead of deterministic reconciliation;
+- source history becomes a poor substitute for durable workflow state.
+
+The practical symptom is:
+
+```text
+plan says task X was implemented
+but source_truth_ref does not contain all of task X
+```
+
+That must be treated as workflow failure, not routine cleanup.
+
+## 55.4 Required workflow contract
+
+Every active Job should carry an explicit:
+
+```text
+source_truth_ref
+source_truth_revision
+```
+
+For normal Gsa-local development the source truth is:
+
+```text
+branch = main
+```
+
+unless Human explicitly establishes another integration branch for the whole Job.
+
+Temporary branches may exist, but they are subordinate working refs, never competing source truths.
+
+At each task/checkpoint boundary the control plane should perform a **Branch Reconciliation Gate**:
+
+```text
+for every Run that produced accepted source:
+    output revision must be reachable from source_truth_ref
+
+for every temporary branch:
+    accepted commits -> integrated
+    superseded/rejected commits -> explicitly classified
+    unresolved commits -> BLOCK next task/checkpoint
+
+source_truth_ref HEAD
+    -> exact input revision for next task
+```
+
+## 55.5 Accepted-code invariant
+
+A commit is not considered integrated implementation evidence merely because it exists in the repository.
+
+Required invariant:
+
+```text
+accepted source commit
+=> reachable from source_truth_ref
+```
+
+If not reachable:
+
+```text
+task status != complete
+checkpoint progression = blocked
+```
+
+This prevents later tasks from silently starting from incomplete source.
+
+## 55.6 Plan/source completeness check
+
+Before advancing a task or milestone, GSA should compare:
+
+```text
+approved implementation plan
++ completed task outputs
++ accepted Run output revisions
+against
+current source_truth_ref
+```
+
+The gate should answer:
+
+```text
+all accepted implementation present?
+all planned task outputs represented?
+any accepted commits stranded on side branches?
+any source changes present that are not attributable to the active plan/Run lineage?
+```
+
+A mismatch becomes `SOURCE_RECONCILIATION_REQUIRED`, not an implicit assumption that the latest branch is correct.
+
+## 55.7 Temporary branch lifecycle
+
+A temporary branch must have:
+
+```text
+owner Run/Task
+base source_truth_revision
+merge target = source_truth_ref
+status = ACTIVE | INTEGRATED | SUPERSEDED
+```
+
+When its accepted changes are integrated:
+
+```text
+temporary branch -> INTEGRATED
+PR -> merge/close as appropriate
+branch may be deleted/reset
+```
+
+When its work is obsolete:
+
+```text
+temporary branch -> SUPERSEDED
+unique commits explicitly classified as rejected/superseded
+PR closed
+branch removed/reset
+```
+
+Long-lived anonymous WIP branches are not durable workflow state.
+
+## 55.8 Reproducibility signal
+
+The LLC trigger should fire when any of these occur:
+
+- a side branch is ahead of source truth after its owning task is considered complete;
+- a later task starts before prior accepted commits are reachable from source truth;
+- Humans/Agents must manually search old branches to discover missing implementation;
+- a plan-completion review finds code claimed as done but absent from the canonical branch;
+- multiple branches are treated as plausible versions of current source;
+- an open WIP PR survives beyond the task/milestone that created it without an explicit unresolved dependency.
+
+## 55.9 Key invariants
+
+```text
+one active Job -> one explicit source-of-truth branch/ref
+
+accepted code must converge to source truth continuously
+
+task complete
+=> all accepted task commits reachable from source truth
+
+next task input
+= exact current source-truth revision
+
+temporary branch != alternate source of truth
+
+unmerged accepted commits
+= workflow block, not end-of-project cleanup
+```
