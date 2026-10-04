@@ -931,7 +931,8 @@ fn print_models(models: &[String]) {
 
 #[cfg(test)]
 mod planner_routing_tests {
-    use super::is_explicit_planning_workflow_request;
+    use super::{apply_default_model_choice, is_explicit_planning_workflow_request};
+    use crate::config::AppConfig;
 
     #[test]
     fn explicit_implementation_plan_request_fast_paths_workflow() {
