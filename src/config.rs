@@ -71,11 +71,16 @@ impl AppConfig {
         fs::write(path, text).with_context(|| format!("failed to write config {}", path.display()))
     }
 
+    pub fn agent_model(&self, agent: AgentId) -> Option<&str> {
+        self.agent_models.get(agent.key()).map(String::as_str)
+    }
+
     pub fn model_for(&self, agent: AgentId) -> Option<&str> {
-        self.agent_models
-            .get(agent.key())
-            .map(String::as_str)
-            .or(self.default_model.as_deref())
+        self.agent_model(agent).or(self.default_model.as_deref())
+    }
+
+    pub fn set_default_model(&mut self, model: Option<String>) {
+        self.default_model = model;
     }
 
     pub fn set_agent_model(&mut self, agent: AgentId, model: String) {
@@ -97,6 +102,19 @@ mod tests {
         config.save_to(&path).unwrap();
 
         let loaded = AppConfig::load_from(&path).unwrap();
+        assert_eq!(loaded.agent_model(AgentId::Coder), Some("qwen-local"));
         assert_eq!(loaded.model_for(AgentId::Coder), Some("qwen-local"));
+    }
+
+    #[test]
+    fn exact_agent_model_is_distinct_from_default_model() {
+        let mut config = AppConfig::default();
+        config.set_default_model(Some("default".into()));
+        config.set_agent_model(AgentId::Reviewer, "reviewer".into());
+
+        assert_eq!(config.agent_model(AgentId::Coder), None);
+        assert_eq!(config.model_for(AgentId::Coder), Some("default"));
+        assert_eq!(config.agent_model(AgentId::Reviewer), Some("reviewer"));
+        assert_eq!(config.model_for(AgentId::Reviewer), Some("reviewer"));
     }
 }
