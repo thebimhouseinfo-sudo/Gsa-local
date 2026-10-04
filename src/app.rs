@@ -9,7 +9,7 @@ use crate::{
     ollama::{ChatMessage, OllamaClient, ToolDefinition},
     registry::{Registry, TesterCheckpointDisposition},
     session::Session,
-    tester_execution::{tester_capability_catalog, TesterWorkflow},
+    tester_execution::{available_tester_capabilities, TesterWorkflow},
     tools::ProjectToolRuntime,
     verification::{discover_profile, VerificationController},
     workflow::{
@@ -80,7 +80,7 @@ impl App {
     pub async fn run(&mut self) -> Result<()> {
         self.print_welcome();
         let startup_profile = discover_profile(&self.project_root)?;
-        let startup_capabilities = tester_capability_catalog(&startup_profile);
+        let startup_capabilities = available_tester_capabilities(&startup_profile);
         let startup_resume = self
             .registry
             .resolve_resume_decision(&self.project_root, &startup_capabilities)?;
@@ -222,7 +222,7 @@ impl App {
         let mut cr_repairs = 0usize;
         loop {
             let profile = discover_profile(&self.project_root)?;
-            let available_capabilities = tester_capability_catalog(&profile);
+            let available_capabilities = available_tester_capabilities(&profile);
             let next =
                 MilestoneController::new(&self.registry, &self.project_root, &self.lease_owner)
                     .resolve_next(&available_capabilities)?;
