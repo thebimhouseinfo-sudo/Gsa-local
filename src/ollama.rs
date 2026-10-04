@@ -300,7 +300,6 @@ impl OllamaClient {
         })
     }
 }
-}
 
 fn consume_complete_lines<F>(
     pending: &mut Vec<u8>,
