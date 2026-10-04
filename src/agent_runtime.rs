@@ -125,6 +125,7 @@ pub async fn resolve_model_name(
 pub struct RuntimePolicy {
     pub max_action_rounds: usize,
     pub max_terminal_repairs: usize,
+    pub num_ctx: usize,
 }
 
 impl Default for RuntimePolicy {
@@ -132,12 +133,24 @@ impl Default for RuntimePolicy {
         Self {
             max_action_rounds: MAX_TOOL_ROUNDS,
             max_terminal_repairs: 2,
+            num_ctx: 32 * 1024,
+        }
+    }
+}
+
+impl RuntimePolicy {
+    pub fn for_client(ollama: &OllamaClient) -> Self {
+        Self {
+            num_ctx: ollama.num_ctx(),
+            ..Self::default()
         }
     }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructuredRunResult {
+    pub model: String,
+    pub requested_num_ctx: usize,
     pub terminal_arguments: Value,
     pub action_rounds: usize,
     pub terminal_repairs: usize,
@@ -194,10 +207,11 @@ impl<'a> StructuredAgentRuntime<'a> {
         loop {
             let response = self
                 .ollama
-                .chat_stream_with_tools_response(
+                .chat_stream_with_tools_response_with_num_ctx(
                     self.model,
                     messages,
                     &definitions,
+                    self.policy.num_ctx,
                     &mut on_token,
                 )
                 .await?;
@@ -214,6 +228,8 @@ impl<'a> StructuredAgentRuntime<'a> {
                 &mut validate_terminal,
             )? {
                 return Ok(StructuredRunResult {
+                    model: self.model.to_owned(),
+                    requested_num_ctx: self.policy.num_ctx,
                     terminal_arguments: arguments,
                     action_rounds,
                     terminal_repairs,
@@ -555,6 +571,13 @@ mod tests {
     }
 
     #[test]
+    fn runtime_policy_uses_client_context_budget_explicitly() {
+        let client = OllamaClient::with_num_ctx("http://127.0.0.1:11434", 16384);
+        let policy = RuntimePolicy::for_client(&client);
+        assert_eq!(policy.num_ctx, 16384);
+    }
+
+    #[test]
     fn structured_runtime_rejects_late_system_messages() {
         let messages = vec![
             ChatMessage::system("root"),
@@ -646,7 +669,7 @@ mod tests {
             if args.get("required").is_some() {
                 Ok(())
             } else {
-                bail!("missing required")
+                anyhow::bail!("missing required")
             }
         };
 
@@ -700,6 +723,7 @@ mod tests {
             RuntimePolicy {
                 max_action_rounds: 1,
                 max_terminal_repairs: 1,
+                ..RuntimePolicy::default()
             },
             &mut action_rounds,
             &mut repairs,
@@ -722,6 +746,7 @@ mod tests {
             RuntimePolicy {
                 max_action_rounds: 1,
                 max_terminal_repairs: 1,
+                ..RuntimePolicy::default()
             },
             &mut action_rounds,
             &mut repairs,
