@@ -75,10 +75,6 @@ impl AppConfig {
         self.agent_models.get(agent.key()).map(String::as_str)
     }
 
-    pub fn model_for(&self, agent: AgentId) -> Option<&str> {
-        self.agent_model(agent).or(self.default_model.as_deref())
-    }
-
     pub fn set_default_model(&mut self, model: Option<String>) {
         self.default_model = model;
     }
@@ -103,7 +99,6 @@ mod tests {
 
         let loaded = AppConfig::load_from(&path).unwrap();
         assert_eq!(loaded.agent_model(AgentId::Coder), Some("qwen-local"));
-        assert_eq!(loaded.model_for(AgentId::Coder), Some("qwen-local"));
     }
 
     #[test]
@@ -113,8 +108,7 @@ mod tests {
         config.set_agent_model(AgentId::Reviewer, "reviewer".into());
 
         assert_eq!(config.agent_model(AgentId::Coder), None);
-        assert_eq!(config.model_for(AgentId::Coder), Some("default"));
+        assert_eq!(config.default_model.as_deref(), Some("default"));
         assert_eq!(config.agent_model(AgentId::Reviewer), Some("reviewer"));
-        assert_eq!(config.model_for(AgentId::Reviewer), Some("reviewer"));
     }
 }
