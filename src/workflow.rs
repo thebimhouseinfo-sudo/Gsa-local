@@ -543,38 +543,40 @@ impl<'a> PlanningWorkflow<'a> {
             )
             .await?;
 
-        let submission: JobBuilderSubmission =
-            match extract_tool_args(&response, "submit_execution_graph") {
-                Ok(submission) => submission,
-                Err(error) => {
-                    let validation_error = format!("{error:#}");
-                    println!(
-                        "PLAN_JOB_BUILDER_REPAIR validation_error={:?}",
-                        validation_error
-                    );
-                    let repair_packet = json!({
-                        "original_requirement": requirement,
-                        "project_context": project_context,
-                        "source_evidence": source_evidence,
-                        "approved_plan": {
-                            "revision": current.revision,
-                            "hash": current.hash,
-                            "plan": current.artifact
-                        },
-                        "validation_error": validation_error,
-                        "instruction": "Your previous submit_execution_graph call had invalid structured arguments. Repair only the structured payload so it satisfies the supplied submit_execution_graph schema and the approved plan. Do not redesign the plan. Call submit_execution_graph as the only tool call."
-                    });
-                    let repaired = self
-                        .invoke_submission_only(
-                            AgentId::JobBuilder,
-                            vec![ChatMessage::user(repair_packet.to_string())],
-                            execution_graph_tool(),
-                        )
-                        .await?;
-                    extract_tool_args(&repaired, "submit_execution_graph")
-                        .context("Job Builder submit_execution_graph remained invalid after one structured repair")?
-                }
-            };
+        let submission: JobBuilderSubmission = match extract_tool_args(
+            &response,
+            "submit_execution_graph",
+        ) {
+            Ok(submission) => submission,
+            Err(error) => {
+                let validation_error = format!("{error:#}");
+                println!(
+                    "PLAN_JOB_BUILDER_REPAIR validation_error={:?}",
+                    validation_error
+                );
+                let repair_packet = json!({
+                    "original_requirement": requirement,
+                    "project_context": project_context,
+                    "source_evidence": source_evidence,
+                    "approved_plan": {
+                        "revision": current.revision,
+                        "hash": current.hash,
+                        "plan": current.artifact
+                    },
+                    "validation_error": validation_error,
+                    "instruction": "Your previous submit_execution_graph call had invalid structured arguments. Repair only the structured payload so it satisfies the supplied submit_execution_graph schema and the approved plan. Do not redesign the plan. Call submit_execution_graph as the only tool call."
+                });
+                let repaired = self
+                    .invoke_submission_only(
+                        AgentId::JobBuilder,
+                        vec![ChatMessage::user(repair_packet.to_string())],
+                        execution_graph_tool(),
+                    )
+                    .await?;
+                extract_tool_args(&repaired, "submit_execution_graph")
+                    .context("Job Builder submit_execution_graph remained invalid after one structured repair")?
+            }
+        };
 
         match submission.status.as_str() {
             "READY" => {
@@ -729,8 +731,7 @@ impl<'a> PlanningWorkflow<'a> {
             .chat_stream_with_tools(&model, &messages, std::slice::from_ref(&tool), |_| {})
             .await?;
 
-        if response.tool_calls.len() != 1
-            || response.tool_calls[0].function.name != submission_name
+        if response.tool_calls.len() != 1 || response.tool_calls[0].function.name != submission_name
         {
             let first_tool_names = response
                 .tool_calls
@@ -1401,7 +1402,9 @@ fn merge_planning_source_evidence(
     let mut merged = existing.to_vec();
     for item in discovered {
         let duplicate = merged.iter().any(|prior| {
-            prior.tool == item.tool && prior.arguments == item.arguments && prior.output == item.output
+            prior.tool == item.tool
+                && prior.arguments == item.arguments
+                && prior.output == item.output
         });
         if !duplicate {
             merged.push(item);
@@ -1410,10 +1413,7 @@ fn merge_planning_source_evidence(
     merged
 }
 
-fn bound_planning_tool_result(
-    tool_name: &str,
-    mut result: serde_json::Value,
-) -> serde_json::Value {
+fn bound_planning_tool_result(tool_name: &str, mut result: serde_json::Value) -> serde_json::Value {
     match tool_name {
         "project_read" => {
             if let Some(content) = result
