@@ -15,7 +15,9 @@ use crate::{
     },
     tester_workspace::TesterWorkspaceRuntime,
     tools::ProjectToolRuntime,
-    verification::{DiscoveryStatus, VerificationController, VerificationProfile, VerificationResult},
+    verification::{
+        DiscoveryStatus, VerificationController, VerificationProfile, VerificationResult,
+    },
 };
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -62,12 +64,7 @@ impl TesterCapabilityAvailability {
             && profile
                 .capabilities
                 .iter()
-                .any(|capability| {
-                    matches!(
-                        capability.as_str(),
-                        "INTEGRATION" | "BROWSER"
-                    )
-                });
+                .any(|capability| matches!(capability.as_str(), "INTEGRATION" | "BROWSER"));
         if self.workspace_python || self.workspace_node || project_runtime_capable {
             capabilities.insert("RUNTIME_PROBE".to_owned());
         }
