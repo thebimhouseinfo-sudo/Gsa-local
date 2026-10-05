@@ -758,8 +758,7 @@ impl<'a> PlanningWorkflow<'a> {
                 .await?;
         }
 
-        if response.tool_calls.len() != 1
-            || response.tool_calls[0].function.name != submission_name
+        if response.tool_calls.len() != 1 || response.tool_calls[0].function.name != submission_name
         {
             let tool_names = response
                 .tool_calls
