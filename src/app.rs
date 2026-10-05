@@ -49,10 +49,8 @@ impl App {
             .canonicalize()
             .context("failed to canonicalize current directory")?;
         let config = AppConfig::load()?;
-        let ollama = OllamaClient::with_num_ctx(
-            config.ollama_base_url.clone(),
-            config.ollama_num_ctx,
-        );
+        let ollama =
+            OllamaClient::with_num_ctx(config.ollama_base_url.clone(), config.ollama_num_ctx);
         let tool_runtime = ProjectToolRuntime::new(&project_root)?;
         let registry = Registry::open(&project_root)?;
         let lease_owner = format!("pid:{}", std::process::id());
@@ -651,11 +649,7 @@ Do not edit Tester-owned artifacts as the product fix. Use the structured repair
             if round + 1 >= MAX_TOOL_ROUNDS {
                 bail!("Planner exceeded interactive project-tool rounds");
             }
-            messages.extend(dispatch_tool_calls(
-                agent,
-                &mut self.tool_runtime,
-                &calls,
-            ));
+            messages.extend(dispatch_tool_calls(agent, &mut self.tool_runtime, &calls));
         }
 
         unreachable!("bounded Planner conversation loop must return or fail")
@@ -927,7 +921,6 @@ fn print_models(models: &[String]) {
         println!("{}. {}", index + 1, model);
     }
 }
-
 
 #[cfg(test)]
 mod planner_routing_tests {
