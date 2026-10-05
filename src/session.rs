@@ -41,7 +41,10 @@ mod tests {
         session.set_model_override(AgentId::Reviewer, "reviewer-hot".into());
 
         assert_eq!(session.model_override(AgentId::Coder), Some("hot"));
-        assert_eq!(session.model_override(AgentId::Reviewer), Some("reviewer-hot"));
+        assert_eq!(
+            session.model_override(AgentId::Reviewer),
+            Some("reviewer-hot")
+        );
         assert_eq!(session.model_override(AgentId::Planner), None);
     }
 }
