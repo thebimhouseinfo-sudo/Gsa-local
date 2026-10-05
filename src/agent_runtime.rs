@@ -579,18 +579,11 @@ mod tests {
         let config = AppConfig::default();
         let session = Session::default();
 
-        let one = resolve_model_from_installed(
-            &session,
-            &config,
-            AgentId::Planner,
-            &["only".into()],
-        )
-        .unwrap();
+        let one =
+            resolve_model_from_installed(&session, &config, AgentId::Planner, &["only".into()])
+                .unwrap();
         assert_eq!(one.name, "only");
-        assert_eq!(
-            one.source,
-            ModelSelectionSource::SingleInstalledBootstrap
-        );
+        assert_eq!(one.source, ModelSelectionSource::SingleInstalledBootstrap);
 
         let none =
             resolve_model_from_installed(&session, &config, AgentId::Planner, &[]).unwrap_err();
@@ -663,8 +656,7 @@ mod tests {
     #[test]
     fn action_executor_error_is_returned_once_without_consuming_terminal_repair_budget() {
         let mut messages = vec![ChatMessage::system("root")];
-        let response =
-            response_with_calls(vec![call("project_read", json!({"path":"missing"}))]);
+        let response = response_with_calls(vec![call("project_read", json!({"path":"missing"}))]);
         let mut action_rounds = 0;
         let mut action_calls = 0;
         let mut repairs = 0;
@@ -734,7 +726,12 @@ mod tests {
         assert_eq!(action_calls, 0);
         assert_eq!(repairs, 1);
         assert_eq!(
-            messages.iter().rev().take(2).filter(|m| m.role == "tool").count(),
+            messages
+                .iter()
+                .rev()
+                .take(2)
+                .filter(|m| m.role == "tool")
+                .count(),
             2
         );
     }
