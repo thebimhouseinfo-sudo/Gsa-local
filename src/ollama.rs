@@ -306,12 +306,7 @@ impl OllamaClient {
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.context("failed while reading Ollama stream")?;
             pending.extend_from_slice(&chunk);
-            consume_complete_lines(
-                &mut pending,
-                &mut assistant,
-                &mut telemetry,
-                &mut on_token,
-            )?;
+            consume_complete_lines(&mut pending, &mut assistant, &mut telemetry, &mut on_token)?;
         }
 
         if !pending.is_empty() {
