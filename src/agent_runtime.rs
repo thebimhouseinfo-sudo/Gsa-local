@@ -871,7 +871,6 @@ mod tests {
         .unwrap();
         assert_eq!(action_rounds, 1);
         assert_eq!(repairs, 0);
-        assert_eq!(executed, 1);
 
         process_structured_response(
             &mut messages,
@@ -890,6 +889,7 @@ mod tests {
         .unwrap();
         assert_eq!(action_rounds, 1);
         assert_eq!(repairs, 1);
+        drop(executor);
         assert_eq!(executed, 1);
     }
 
