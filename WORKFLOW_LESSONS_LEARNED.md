@@ -3675,3 +3675,292 @@ temporary branch != alternate source of truth
 unmerged accepted commits
 = workflow block, not end-of-project cleanup
 ```
+
+---
+
+# 56. LLC — Individual Jobs do not consistently inherit a mandatory context-scan/workflow procedure even though Planner already builds bounded repository context
+
+**lesson_id:** LLC-GSA-WORKFLOW-TEMPLATE-SELECTION-CONTEXT-SCAN-20261005  
+**date:** 2026-10-05  
+**project:** Gsa-local  
+**trigger:** `WORKAROUND_REQUIRED / SPECIAL_DETECTION_REQUIRED`  
+**classification:** `WORKFLOW_GAP`  
+**subclassification:** `EXECUTION_TEMPLATE_GAP / CONTEXT_DISCOVERY_GAP / JOBPACK_WORKFLOW_BOUNDARY_GAP`
+
+## 56.1 Observed failure pattern
+
+GSA already has strong planning and execution structures, but the actual repository-discovery procedure is not consistently inherited by individual work stages.
+
+The practical symptom is:
+
+```text
+Planner performs bounded repository context discovery
+-> Plan / Job Pack is created
+-> later individual Job/role execution begins
+-> Coder / bug-fix / Tester path may inspect only the immediately obvious files
+-> broader related source tree / callers / tests / contracts are not consistently scanned
+-> latent relationship gaps are discovered later by Reviewer, CI, another model, or Human
+```
+
+This creates a recurring workflow smell:
+
+> the plan knows more about repository structure than the individual execution stage that is supposed to implement or verify it.
+
+The issue is not that every Agent must read the whole repository. The issue is that the runtime does not currently guarantee one declared, reusable **execution procedure** that tells each work type what context-discovery steps are mandatory before mutation or verdict.
+
+## 56.2 Source scan — existing mechanisms that must not be duplicated
+
+A source scan of current Gsa-local shows several existing layers.
+
+### Planner already has a bounded relative-tree context primitive
+
+`PlanningWorkflow::run()` calls:
+
+```text
+build_project_context(project_root)
+```
+
+before invoking Planner.
+
+The helper:
+
+- canonicalizes the project root;
+- recursively enumerates relative file paths;
+- skips `.git`, `.gsa`, `target`, `node_modules`, `.next`, `dist`, `build`;
+- skips sensitive files such as `.env*`, `.npmrc`, credentials and private keys;
+- bounds the number of paths;
+- stores them as a relative project context.
+
+Therefore **relative-tree discovery already exists as a real runtime primitive**. A future workflow-template design should reuse/generalize this primitive rather than inventing a second scanner.
+
+### Job Pack already defines work decomposition, not execution procedure
+
+Current Job Pack contract contains fields such as:
+
+```text
+goal
+todo_ids
+required_inputs
+expected_outputs
+acceptance
+verification_hints
+```
+
+Job Pack answers:
+
+```text
+WHAT bounded work is active?
+WHAT must it produce?
+WHAT acceptance must be met?
+```
+
+It does not fully answer:
+
+```text
+HOW must this class of work inspect the repository before acting?
+WHICH context scan is mandatory?
+WHICH mutation/review/test sequence must be followed?
+WHICH evidence must be collected at each procedural stage?
+```
+
+Therefore the proposed workflow-template concept should **not replace Job Pack** and should not duplicate its goal/TODO/input/output/acceptance responsibilities.
+
+### GSA already has role-specific workflow/state-machine logic
+
+Current source already contains dedicated workflow machinery including:
+
+- `PlanningWorkflow`;
+- `CodingWorkflow`;
+- Reviewer stages inside Coding workflow;
+- Internal Fix / corrective coding behavior;
+- `CodeCrWorkflow`;
+- Tester-related workflow/state/evidence paths;
+- role harnesses for Planner, Job Builder, Coder, Reviewer, Tester, Local CR.
+
+These are important prior art. A new “workflow template” layer must not blindly add another parallel state machine with the same responsibility.
+
+## 56.3 Gap after the scan
+
+The missing abstraction appears to be **between Job Pack and Agent freedom**.
+
+Current behavior is approximately:
+
+```text
+Job Pack selects bounded work
++ Harness defines role behavior
++ Workflow code controls some transitions
++ Agent still decides much of the concrete inspect/act procedure
+```
+
+For example, Coder is told to:
+
+```text
+Inspect live source before writing.
+```
+
+Reviewer is told to inspect source with read tools as needed.
+
+Those instructions are valid, but they are not equivalent to a deterministic reusable procedure such as:
+
+```text
+FEATURE_CODING
+1. bounded relative-tree scan
+2. identify direct target + callers + tests + contracts
+3. classify relevant / irrelevant relationships
+4. inspect exact affected files
+5. mutate
+6. inspect diff
+7. run declared verification
+8. goal recheck
+```
+
+Without such a procedure, two executions of the same Job class can perform materially different discovery depth even when using the same Job Pack and role.
+
+## 56.4 Candidate direction for future review — predefined workflow templates
+
+A possible future architecture is to require every execution to declare/select one canonical workflow template **before work starts**.
+
+Examples to investigate:
+
+```text
+PLANNING
+FEATURE_CODING
+BUG_FIX
+TESTING
+CODE_REVIEW
+INTERNAL_FIX
+RECOVERY / RESUME
+```
+
+Conceptually:
+
+```text
+active Job Pack
+-> classify work intent
+-> select one registered workflow template
+-> runtime provides that template's mandatory discovery / action / evidence stages
+-> Agent executes inside the selected workflow
+-> Job Pack still supplies the bounded goal and acceptance
+```
+
+The Agent should not silently invent a new work procedure per turn.
+
+However, LLC does **not** yet conclude that these exact template names, stages, or a new registry are the correct implementation.
+
+Before implementation, a dedicated architecture scan must map the proposal against:
+
+- existing `PlanningWorkflow`;
+- `CodingWorkflow` and Internal Fix loop;
+- Tester workflow/checkpoints;
+- `CodeCrWorkflow`;
+- Planner / Job Builder / Coder / Reviewer / Tester harness contracts;
+- Job Pack fields and execution graph;
+- Test Checkpoints / Evidence Requirements;
+- Resume/Recovery work already recorded in this lessons ledger.
+
+Any proposed template layer that duplicates one of those mechanisms should be rejected or collapsed into the existing owner.
+
+## 56.5 Required architectural question
+
+Future design should explicitly answer:
+
+```text
+Job Pack = WHAT work?
+Workflow Template = HOW this class of work must execute?
+Harness = WHO/role behavior?
+Execution Graph = WHEN/ordering/dependencies?
+Checkpoint/Evidence = WHAT proof is required?
+```
+
+If these ownership boundaries cannot be made non-overlapping, adding Workflow Templates would create another abstraction layer rather than fix the workflow gap.
+
+## 56.6 Context scan should be reusable, bounded, and workflow-owned
+
+The Planner's existing relative-tree scan is evidence that GSA already knows how to produce safe bounded repository context.
+
+A future review should test whether the correct direction is:
+
+```text
+one shared Project Context / Relationship Scan primitive
+-> parameterized by selected workflow
+-> available to Planner / Coder / Bug Fix / Tester / Reviewer as appropriate
+```
+
+rather than every Agent independently deciding whether to run `list/search/read`.
+
+The workflow should define the minimum scan obligation.
+
+Examples:
+
+```text
+Planning:
+  broad bounded tree + architecture/source evidence
+
+Feature coding:
+  affected subtree + callers/consumers + tests/contracts
+
+Bug fix:
+  reproduction path + implementation owner + callers + regression tests
+
+Testing:
+  changed surface + acceptance contract + relevant test/CI configuration
+
+Review:
+  exact change set + affected relationships + tests/contracts
+```
+
+These are **review hypotheses**, not yet accepted runtime requirements.
+
+## 56.7 Why this is a workflow lesson
+
+This is not a one-off missed file.
+
+The reusable failure pattern is:
+
+```text
+Agent has a valid bounded Job
+but no mandatory selected execution procedure
+-> context discovery varies by model/run
+-> important related files may be skipped
+-> later review/testing must recover missing context
+```
+
+The fact that Planner already has an automatic relative-tree scan while later work stages do not consistently inherit an equivalent context contract demonstrates that repository-awareness is currently **stage-specific rather than workflow-systematic**.
+
+## 56.8 Future validation target
+
+A future dedicated correction task should first perform an overlap inventory, then prove the chosen design on real repositories.
+
+Minimum negative cases:
+
+1. A Feature Coding Job where the target file has a direct caller in another directory.
+2. A Bug Fix where the visible failing function is not the actual owner of the defect.
+3. A Tester run where the relevant CI/config file is outside the changed subtree.
+4. A Reviewer run where the diff looks locally correct but violates a neighboring contract.
+5. A workflow resumed midway without repeating unnecessary broad discovery.
+6. A tiny isolated Job where the workflow remains bounded and does not over-scan.
+7. A Job Pack whose acceptance is complete but whose selected workflow has not completed its mandatory evidence stages.
+
+The design should demonstrate that mandatory workflow selection improves consistency without turning every Job into a full-repository scan.
+
+## 56.9 Key invariants / hypotheses to preserve during future design
+
+```text
+Job Pack != Workflow Template
+
+workflow template must not duplicate Job Pack goal/input/output/acceptance ownership
+
+workflow template must not duplicate existing workflow state machines without an explicit consolidation plan
+
+Agent must not silently invent its own execution procedure when a canonical workflow applies
+
+context discovery should be runtime/workflow-owned, bounded, and reusable
+
+broad scan is not mandatory for every Job
+but the selected workflow must define the minimum required scan
+
+existing Planner relative-tree primitive should be reused/generalized before creating a new scanner
+
+LLC records the gap only
+-> no workflow/runtime change is authorized by this lesson alone
+```
