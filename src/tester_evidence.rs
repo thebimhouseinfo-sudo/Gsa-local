@@ -4,11 +4,12 @@ use crate::{
     tester_workspace::TesterArtifactRef,
 };
 use anyhow::{bail, Result};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashSet};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum TesterClassification {
     ProductFailure,
@@ -19,7 +20,7 @@ pub enum TesterClassification {
     SpecGap,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum EvidenceProvenance {
     Observed,
@@ -27,7 +28,7 @@ pub enum EvidenceProvenance {
     Unresolved,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum TesterModeOutcome {
     Pass,
@@ -37,7 +38,7 @@ pub enum TesterModeOutcome {
     NeedsHuman,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TesterModeResult {
     pub mode: EvidenceMode,
     pub outcome: TesterModeOutcome,
@@ -96,7 +97,7 @@ impl TesterModeResult {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", content = "value", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ObservedValue {
     Text(String),
@@ -125,7 +126,7 @@ impl ObservedValue {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ReplaySafety {
     ObserveOnly,
@@ -143,7 +144,7 @@ impl ReplaySafety {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum AdapterObservationField {
     Stdout,
@@ -151,7 +152,7 @@ pub enum AdapterObservationField {
     ExitCode,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum VerificationObservationField {
     Stdout,
@@ -159,7 +160,7 @@ pub enum VerificationObservationField {
     ExitCode,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "kind", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum TesterEvidenceRef {
     WorkspaceArtifact {
@@ -229,7 +230,7 @@ impl TesterEvidenceRef {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ExperimentObservation {
     pub name: String,
     pub value: ObservedValue,
@@ -264,7 +265,7 @@ impl ExperimentObservation {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ExperimentSample {
     pub sample_index: u32,
     pub variables: BTreeMap<String, String>,
@@ -328,7 +329,7 @@ impl ExperimentSample {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ExperimentContext {
     pub dimensions: Vec<String>,
     pub samples: Vec<ExperimentSample>,
@@ -357,7 +358,7 @@ impl ExperimentContext {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ApplicabilityDimension {
     ProductRevision,
@@ -367,7 +368,7 @@ pub enum ApplicabilityDimension {
     EnvironmentFingerprint,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "matcher", rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ApplicabilityMatcher {
     ExactValue {
@@ -428,21 +429,21 @@ impl ApplicabilityMatcher {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum RevalidationPolicy {
     ReuseIfMatches,
     AlwaysRevalidate,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct EvidenceApplicability {
     pub policy: RevalidationPolicy,
     #[serde(default)]
     pub matchers: Vec<ApplicabilityMatcher>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
 pub struct ApplicabilityContext {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub product_revision: Option<String>,
@@ -535,7 +536,7 @@ fn scalar_dimension(
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TesterPrerequisiteTarget {
     pub jobpack_id: String,
     pub state: PrerequisiteState,
@@ -545,7 +546,7 @@ pub struct TesterPrerequisiteTarget {
     pub target_revision: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TesterTargetBinding {
     #[serde(default)]
     pub prerequisites: Vec<TesterPrerequisiteTarget>,
@@ -613,7 +614,7 @@ impl TesterTargetBinding {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TesterEvidenceOutputRecord {
     pub output_id: String,
     pub mode: EvidenceMode,
@@ -671,7 +672,7 @@ impl TesterEvidenceOutputRecord {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TesterAttemptEvidence {
     pub graph_version: i64,
     pub checkpoint_id: String,
