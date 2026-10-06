@@ -11,9 +11,11 @@ use crate::{
         ReviewVerdict,
     },
     session::Session,
+    terminal_schema::typed_terminal_tool,
     tools::ProjectToolRuntime,
 };
 use anyhow::{bail, Context, Result};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{fs, path::Path, time::Instant};
@@ -36,20 +38,20 @@ pub enum CodingOutcome {
     },
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 struct CodeCheckpointSubmission {
     summary: String,
     completed_checklist: Vec<ChecklistClaim>,
     goal_recheck: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 struct CodeReviewDecision {
     verdict: String,
     findings: Vec<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
 struct CodeCrDecision {
     verdict: String,
     findings: Vec<String>,
@@ -578,25 +580,7 @@ impl<'a> PlanningWorkflow<'a> {
             }
         };
 
-        match submission.status.as_str() {
-            "READY" => {
-                if !submission.gap_findings.is_empty() {
-                    bail!("Job Builder READY submission cannot include PLAN_GAP findings");
-                }
-                let graph = submission
-                    .graph
-                    .context("Job Builder READY submission is missing graph")?;
-                graph.validate_against_plan(&current.artifact)?;
-                Ok(JobBuilderOutcome::Ready(graph))
-            }
-            "PLAN_GAP" => {
-                if submission.gap_findings.is_empty() {
-                    bail!("Job Builder PLAN_GAP must include at least one finding");
-                }
-                Ok(JobBuilderOutcome::PlanGap(submission.gap_findings))
-            }
-            other => bail!("Job Builder returned unsupported status {other}"),
-        }
+        validate_job_builder_submission(submission, &current.artifact)
     }
 
     async fn invoke_with_source_tools(
@@ -1573,7 +1557,7 @@ enum JobBuilderOutcome {
     PlanGap(Vec<String>),
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 struct JobBuilderSubmission {
     status: String,
     #[serde(default)]
@@ -1582,18 +1566,46 @@ struct JobBuilderSubmission {
     graph: Option<ExecutionGraph>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 struct ReviewDecision {
     verdict: String,
     #[serde(default)]
     findings: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 struct CrDecision {
     verdict: String,
     #[serde(default)]
     findings: Vec<String>,
+}
+
+fn validate_job_builder_submission(
+    submission: JobBuilderSubmission,
+    plan: &PlanArtifact,
+) -> Result<JobBuilderOutcome> {
+    match submission.status.as_str() {
+        "READY" => {
+            if !submission.gap_findings.is_empty() {
+                bail!("Job Builder READY submission cannot include PLAN_GAP findings");
+            }
+            let graph = submission
+                .graph
+                .context("Job Builder READY submission is missing graph")?;
+            graph.validate_against_plan(plan)?;
+            Ok(JobBuilderOutcome::Ready(graph))
+        }
+        "PLAN_GAP" => {
+            if submission.gap_findings.is_empty() {
+                bail!("Job Builder PLAN_GAP must include at least one finding");
+            }
+            if submission.graph.is_some() {
+                bail!("Job Builder PLAN_GAP submission must not include graph");
+            }
+            Ok(JobBuilderOutcome::PlanGap(submission.gap_findings))
+        }
+        other => bail!("Job Builder returned unsupported status {other}"),
+    }
 }
 
 fn extract_tool_args<T>(message: &ChatMessage, name: &str) -> Result<T>
@@ -1760,324 +1772,51 @@ impl<'a> CodeCrWorkflow<'a> {
 }
 
 fn plan_tool() -> ToolDefinition {
-    ToolDefinition::function(
+    typed_terminal_tool::<PlanArtifact>(
         "submit_plan",
         "Submit one complete GSA Local Implementation Plan revision.",
-        json!({
-            "type": "object",
-            "required": [
-                "goal",
-                "current_architecture",
-                "required_changes",
-                "implementation_approach",
-                "dependencies",
-                "sequence",
-                "risks",
-                "acceptance_direction",
-                "evidence_needs"
-            ],
-            "properties": {
-                "goal": {"type": "string"},
-                "current_architecture": {"type": "string"},
-                "required_changes": {"type": "array", "items": {"type": "string"}},
-                "implementation_approach": {"type": "array", "items": {"type": "string"}},
-                "dependencies": {"type": "array", "items": {"type": "string"}},
-                "sequence": {"type": "array", "items": {"type": "string"}},
-                "risks": {"type": "array", "items": {"type": "string"}},
-                "acceptance_direction": {"type": "array", "items": {"type": "string"}},
-                "evidence_needs": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "required": [
-                            "id", "question", "purpose", "required",
-                            "consumer", "modes", "intent"
-                        ],
-                        "properties": {
-                            "id": {"type": "string", "minLength": 1},
-                            "question": {"type": "string", "minLength": 1},
-                            "purpose": {"type": "string", "minLength": 1},
-                            "required": {"type": "boolean"},
-                            "consumer": {"type": "string", "minLength": 1},
-                            "modes": {
-                                "type": "array",
-                                "minItems": 1,
-                                "items": {
-                                    "type": "string",
-                                    "enum": ["VERIFY", "MEASURE", "PROBE"]
-                                }
-                            },
-                            "intent": {"type": "string", "minLength": 1}
-                        }
-                    }
-                }
-            }
-        }),
     )
 }
 
 fn review_tool() -> ToolDefinition {
-    ToolDefinition::function(
+    typed_terminal_tool::<ReviewDecision>(
         "submit_review",
         "Submit the Reviewer verdict for one exact plan revision/hash.",
-        json!({
-            "type": "object",
-            "required": ["verdict", "findings"],
-            "properties": {
-                "verdict": {"type": "string", "enum": ["PASS", "CHANGES_REQUIRED"]},
-                "findings": {"type": "array", "items": {"type": "string"}}
-            }
-        }),
     )
 }
 
 fn cr_tool() -> ToolDefinition {
-    ToolDefinition::function(
+    typed_terminal_tool::<CrDecision>(
         "submit_cr_review",
         "Submit an independent Local CR verdict for one exact plan revision/hash.",
-        json!({
-            "type": "object",
-            "required": ["verdict", "findings"],
-            "properties": {
-                "verdict": {"type": "string", "enum": ["PASS", "REVISE"]},
-                "findings": {"type": "array", "items": {"type": "string"}}
-            }
-        }),
     )
 }
 
 fn code_checkpoint_tool() -> ToolDefinition {
-    ToolDefinition::function(
+    typed_terminal_tool::<CodeCheckpointSubmission>(
         "submit_code_checkpoint",
         "Submit the Coder/Internal Fix checkpoint after real project edits. Source identity is computed by runtime; do not provide hashes or change_set_id.",
-        json!({
-            "type": "object",
-            "required": ["summary", "completed_checklist", "goal_recheck"],
-            "properties": {
-                "summary": {"type": "string", "minLength": 1},
-                "completed_checklist": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "required": ["todo_id", "position"],
-                        "properties": {
-                            "todo_id": {"type": "string", "minLength": 1},
-                            "position": {"type": "integer", "minimum": 1}
-                        }
-                    }
-                },
-                "goal_recheck": {
-                    "type": "array",
-                    "items": {"type": "string"}
-                }
-            }
-        }),
     )
 }
 
 fn code_cr_review_tool() -> ToolDefinition {
-    ToolDefinition::function(
+    typed_terminal_tool::<CodeCrDecision>(
         "submit_code_cr_review",
         "Submit the read-only Local CR verdict for one exact mature code boundary.",
-        json!({
-            "type": "object",
-            "required": ["verdict", "findings"],
-            "properties": {
-                "verdict": {"type": "string", "enum": ["PASS", "REVISE"]},
-                "findings": {"type": "array", "items": {"type": "string"}}
-            }
-        }),
     )
 }
 
 fn code_review_tool() -> ToolDefinition {
-    ToolDefinition::function(
+    typed_terminal_tool::<CodeReviewDecision>(
         "submit_code_review",
         "Submit the read-only Reviewer verdict for the exact runtime-bound change set.",
-        json!({
-            "type": "object",
-            "required": ["verdict", "findings"],
-            "properties": {
-                "verdict": {
-                    "type": "string",
-                    "enum": ["PASS", "CHANGES_REQUIRED"]
-                },
-                "findings": {
-                    "type": "array",
-                    "items": {"type": "string"}
-                }
-            }
-        }),
     )
 }
 
 fn execution_graph_tool() -> ToolDefinition {
-    ToolDefinition::function(
+    typed_terminal_tool::<JobBuilderSubmission>(
         "submit_execution_graph",
         "Submit a Job Builder execution graph bound to the approved plan, or PLAN_GAP if the approved plan cannot be safely decomposed.",
-        json!({
-            "type": "object",
-            "required": ["status", "gap_findings"],
-            "properties": {
-                "status": {"type": "string", "enum": ["READY", "PLAN_GAP"]},
-                "gap_findings": {"type": "array", "items": {"type": "string"}},
-                "graph": {
-                    "type": "object",
-                    "properties": {
-                        "milestones": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "required": ["id", "title", "order"],
-                                "properties": {
-                                    "id": {"type": "string"},
-                                    "title": {"type": "string"},
-                                    "order": {"type": "integer", "minimum": 1}
-                                }
-                            }
-                        },
-                        "jobpacks": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "required": [
-                                    "id", "milestone_id", "title", "goal", "todo_ids",
-                                    "depends_on", "required_inputs", "expected_outputs",
-                                    "acceptance", "verification_hints"
-                                ],
-                                "properties": {
-                                    "id": {"type": "string"},
-                                    "milestone_id": {"type": "string"},
-                                    "title": {"type": "string"},
-                                    "goal": {"type": "string"},
-                                    "todo_ids": {"type": "array", "items": {"type": "string"}},
-                                    "depends_on": {"type": "array", "items": {"type": "string"}},
-                                    "required_inputs": {"type": "array", "items": {"type": "string"}},
-                                    "expected_outputs": {"type": "array", "items": {"type": "string"}},
-                                    "acceptance": {"type": "array", "items": {"type": "string"}},
-                                    "verification_hints": {"type": "array", "items": {"type": "string"}}
-                                }
-                            }
-                        },
-                        "todos": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "required": ["id", "jobpack_id", "title", "checklist"],
-                                "properties": {
-                                    "id": {"type": "string"},
-                                    "jobpack_id": {"type": "string"},
-                                    "title": {"type": "string"},
-                                    "checklist": {"type": "array", "items": {"type": "string"}}
-                                }
-                            }
-                        },
-                        "checkpoints": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "required": [
-                                    "id", "milestone_id", "boundary", "prerequisites",
-                                    "evidence_need_ids", "modes", "goal", "criteria",
-                                    "required_capabilities", "experiment_dimensions",
-                                    "evidence_outputs"
-                                ],
-                                "properties": {
-                                    "id": {"type": "string", "minLength": 1},
-                                    "milestone_id": {"type": "string", "minLength": 1},
-                                    "boundary": {
-                                        "type": "string",
-                                        "enum": ["AFTER_JOBPACK_SET", "BEFORE_JOBPACK", "MILESTONE_GATE"]
-                                    },
-                                    "prerequisites": {
-                                        "type": "array",
-                                        "items": {
-                                            "type": "object",
-                                            "required": ["jobpack_id", "state"],
-                                            "properties": {
-                                                "jobpack_id": {"type": "string", "minLength": 1},
-                                                "state": {
-                                                    "type": "string",
-                                                    "enum": ["REVIEW_PASS", "DONE"]
-                                                }
-                                            }
-                                        }
-                                    },
-                                    "before_jobpack_id": {"type": ["string", "null"]},
-                                    "cr_review_boundary": {"type": "boolean"},
-                                    "evidence_need_ids": {
-                                        "type": "array",
-                                        "items": {"type": "string", "minLength": 1}
-                                    },
-                                    "modes": {
-                                        "type": "array",
-                                        "minItems": 1,
-                                        "items": {
-                                            "type": "string",
-                                            "enum": ["VERIFY", "MEASURE", "PROBE"]
-                                        }
-                                    },
-                                    "goal": {"type": "string", "minLength": 1},
-                                    "criteria": {
-                                        "type": "array",
-                                        "minItems": 1,
-                                        "items": {"type": "string", "minLength": 1}
-                                    },
-                                    "required_capabilities": {
-                                        "type": "array",
-                                        "items": {"type": "string", "minLength": 1}
-                                    },
-                                    "experiment_dimensions": {
-                                        "type": "array",
-                                        "items": {"type": "string", "minLength": 1}
-                                    },
-                                    "evidence_outputs": {
-                                        "type": "array",
-                                        "minItems": 1,
-                                        "items": {
-                                            "type": "object",
-                                            "required": [
-                                                "id", "mode", "description", "required"
-                                            ],
-                                            "properties": {
-                                                "id": {"type": "string", "minLength": 1},
-                                                "mode": {
-                                                    "type": "string",
-                                                    "enum": ["VERIFY", "MEASURE", "PROBE"]
-                                                },
-                                                "description": {"type": "string", "minLength": 1},
-                                                "required": {"type": "boolean"},
-                                                "evidence_need_id": {"type": ["string", "null"]}
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        },
-                        "evidence_requirements": {
-                            "type": "array",
-                            "items": {
-                                "type": "object",
-                                "required": [
-                                    "consumer_jobpack_id", "checkpoint_id",
-                                    "output_id", "required"
-                                ],
-                                "properties": {
-                                    "consumer_jobpack_id": {"type": "string", "minLength": 1},
-                                    "checkpoint_id": {"type": "string", "minLength": 1},
-                                    "output_id": {"type": "string", "minLength": 1},
-                                    "required": {"type": "boolean"}
-                                }
-                            }
-                        }
-                    },
-                    "required": [
-                        "milestones", "jobpacks", "todos",
-                        "checkpoints", "evidence_requirements"
-                    ]
-                }
-            }
-        }),
     )
 }
 
@@ -2164,44 +1903,94 @@ mod tests {
         assert_eq!(merged.len(), 1);
     }
 
-    #[test]
-    fn submit_plan_contract_requires_structured_evidence_needs() {
-        let tool = plan_tool();
-        let parameters = &tool.function.parameters;
-        let required = parameters["required"].as_array().unwrap();
-        assert!(required.iter().any(|item| item == "evidence_needs"));
+    fn required_field_names(tool: &ToolDefinition) -> Vec<String> {
+        tool.function.parameters["required"]
+            .as_array()
+            .expect("terminal schema root must be an object")
+            .iter()
+            .map(|item| item.as_str().expect("required entry must be a string").to_owned())
+            .collect()
+    }
 
-        let evidence = &parameters["properties"]["evidence_needs"];
-        assert_eq!(evidence["type"], "array");
-        let item_required = evidence["items"]["required"].as_array().unwrap();
-        for field in [
-            "id", "question", "purpose", "required", "consumer", "modes", "intent",
-        ] {
-            assert!(item_required.iter().any(|item| item == field));
+    fn schema_fixture_plan() -> PlanArtifact {
+        PlanArtifact {
+            goal: "Goal".into(),
+            current_architecture: "Current".into(),
+            required_changes: vec!["Change".into()],
+            implementation_approach: vec!["Approach".into()],
+            dependencies: vec![],
+            sequence: vec!["Sequence".into()],
+            risks: vec!["Risk".into()],
+            acceptance_direction: vec!["Accept".into()],
+            evidence_needs: vec![],
         }
-        assert_eq!(
-            evidence["items"]["properties"]["modes"]["items"]["enum"],
-            serde_json::json!(["VERIFY", "MEASURE", "PROBE"])
-        );
     }
 
     #[test]
-    fn execution_graph_contract_requires_checkpoint_and_evidence_arrays() {
-        let tool = execution_graph_tool();
-        let graph = &tool.function.parameters["properties"]["graph"];
-        let required = graph["required"].as_array().unwrap();
-        assert!(required.iter().any(|item| item == "checkpoints"));
-        assert!(required.iter().any(|item| item == "evidence_requirements"));
+    fn terminal_schema_required_fields_follow_serde_defaults() {
+        let plan_required = required_field_names(&plan_tool());
+        for required in [
+            "goal",
+            "current_architecture",
+            "required_changes",
+            "implementation_approach",
+            "sequence",
+            "risks",
+            "acceptance_direction",
+        ] {
+            assert!(plan_required.iter().any(|field| field == required));
+        }
+        for defaulted in ["dependencies", "evidence_needs"] {
+            assert!(!plan_required.iter().any(|field| field == defaulted));
+        }
 
-        let checkpoint = &graph["properties"]["checkpoints"]["items"];
-        assert_eq!(
-            checkpoint["properties"]["boundary"]["enum"],
-            serde_json::json!(["AFTER_JOBPACK_SET", "BEFORE_JOBPACK", "MILESTONE_GATE"])
-        );
-        assert_eq!(
-            checkpoint["properties"]["prerequisites"]["items"]["properties"]["state"]["enum"],
-            serde_json::json!(["REVIEW_PASS", "DONE"])
-        );
+        let parsed: PlanArtifact = serde_json::from_value(serde_json::json!({
+            "goal":"Goal",
+            "current_architecture":"Current",
+            "required_changes":["Change"],
+            "implementation_approach":["Approach"],
+            "sequence":["Sequence"],
+            "risks":["Risk"],
+            "acceptance_direction":["Accept"]
+        }))
+        .unwrap();
+        assert!(parsed.dependencies.is_empty());
+        assert!(parsed.evidence_needs.is_empty());
+
+        let review_required = required_field_names(&review_tool());
+        assert!(review_required.iter().any(|field| field == "verdict"));
+        assert!(!review_required.iter().any(|field| field == "findings"));
+
+        let checkpoint_required = required_field_names(&code_checkpoint_tool());
+        for required in ["summary", "completed_checklist", "goal_recheck"] {
+            assert!(checkpoint_required.iter().any(|field| field == required));
+        }
+    }
+
+    #[test]
+    fn execution_graph_schema_is_typed_and_conditionals_are_runtime_validated() {
+        let tool = execution_graph_tool();
+        let required = required_field_names(&tool);
+        assert!(required.iter().any(|field| field == "status"));
+        assert!(!required.iter().any(|field| field == "gap_findings"));
+        assert!(!required.iter().any(|field| field == "graph"));
+        assert!(tool.function.parameters["definitions"]["ExecutionGraph"].is_object());
+
+        let ready_without_graph: JobBuilderSubmission =
+            serde_json::from_value(serde_json::json!({"status":"READY"})).unwrap();
+        assert!(validate_job_builder_submission(ready_without_graph, &schema_fixture_plan()).is_err());
+
+        let gap_without_findings: JobBuilderSubmission =
+            serde_json::from_value(serde_json::json!({"status":"PLAN_GAP"})).unwrap();
+        assert!(validate_job_builder_submission(gap_without_findings, &schema_fixture_plan()).is_err());
+
+        let gap_with_graph: JobBuilderSubmission = serde_json::from_value(serde_json::json!({
+            "status":"PLAN_GAP",
+            "gap_findings":["missing contract"],
+            "graph":{"milestones":[],"jobpacks":[],"todos":[]}
+        }))
+        .unwrap();
+        assert!(validate_job_builder_submission(gap_with_graph, &schema_fixture_plan()).is_err());
     }
 
     #[test]
