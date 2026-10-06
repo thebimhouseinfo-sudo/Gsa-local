@@ -984,7 +984,7 @@ fn tester_execute_tool() -> ToolDefinition {
     )
 }
 
-fn tester_report_tool() -> ToolDefinition {
+pub(crate) fn tester_report_tool() -> ToolDefinition {
     typed_terminal_tool::<TesterReportSubmission>(
         "submit_tester_report",
         "Submit the complete exact-target Tester report. Copy runtime evidence refs returned by tester_execute; do not invent ids or observed values. Runtime validates mode outcomes, provenance, evidence refs and applicability before persistence.",
