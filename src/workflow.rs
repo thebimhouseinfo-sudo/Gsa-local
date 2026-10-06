@@ -1988,7 +1988,6 @@ mod tests {
         assert!(
             validate_job_builder_submission(gap_without_findings, &schema_fixture_plan()).is_err()
         );
-
     }
 
     #[test]
