@@ -8,12 +8,12 @@ use crate::{
     process_runner::{LocalProcessRunner, ProcessObservation, TesterSandboxRunner},
     registry::{Registry, TesterExecutionStepRecord, TesterRetestContext},
     session::Session,
+    terminal_schema::typed_terminal_tool,
     tester_evidence::{
         AdapterObservationField, ExperimentContext, ReplaySafety, TesterAttemptEvidence,
         TesterClassification, TesterEvidenceOutputRecord, TesterEvidenceRef, TesterModeResult,
         TesterTargetBinding, VerificationObservationField,
     },
-    terminal_schema::typed_terminal_tool,
     tester_workspace::TesterWorkspaceRuntime,
     tools::ProjectToolRuntime,
     verification::{
