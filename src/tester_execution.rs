@@ -13,6 +13,7 @@ use crate::{
         TesterClassification, TesterEvidenceOutputRecord, TesterEvidenceRef, TesterModeResult,
         TesterTargetBinding, VerificationObservationField,
     },
+    terminal_schema::typed_terminal_tool,
     tester_workspace::TesterWorkspaceRuntime,
     tools::ProjectToolRuntime,
     verification::{
@@ -20,6 +21,7 @@ use crate::{
     },
 };
 use anyhow::{bail, Context, Result};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -687,7 +689,7 @@ impl<'a> TesterExecutionRuntime<'a> {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct TesterReportSubmission {
     pub mode_results: Vec<TesterModeResult>,
     #[serde(default)]
@@ -983,54 +985,9 @@ fn tester_execute_tool() -> ToolDefinition {
 }
 
 fn tester_report_tool() -> ToolDefinition {
-    ToolDefinition::function(
+    typed_terminal_tool::<TesterReportSubmission>(
         "submit_tester_report",
         "Submit the complete exact-target Tester report. Copy runtime evidence refs returned by tester_execute; do not invent ids or observed values. Runtime validates mode outcomes, provenance, evidence refs and applicability before persistence.",
-        json!({
-            "type":"object",
-            "required":["mode_results","classifications","outputs","limitations"],
-            "properties":{
-                "mode_results":{
-                    "type":"array",
-                    "items":{
-                        "type":"object",
-                        "required":["mode","outcome"],
-                        "properties":{
-                            "mode":{"type":"string","enum":["VERIFY","MEASURE","PROBE"]},
-                            "outcome":{"type":"string","enum":["PASS","FAIL","COMPLETE","BLOCKED","NEEDS_HUMAN"]},
-                            "reason":{"type":["string","null"]}
-                        }
-                    }
-                },
-                "classifications":{
-                    "type":"array",
-                    "items":{"type":"string","enum":["PRODUCT_FAILURE","TEST_FAILURE","ENVIRONMENT_FAILURE","NOT_READY","INTEGRATION_NOT_READY","SPEC_GAP"]}
-                },
-                "experiment":{
-                    "description":"For completed MEASURE/PROBE, provide dimensions and samples. Each sample contains variables, boundary_event/target/runtime identity when observed, and observations with copied runtime evidence_refs.",
-                    "type":["object","null"]
-                },
-                "outputs":{
-                    "type":"array",
-                    "description":"Named checkpoint outputs. OBSERVED outputs require value plus runtime-backed evidence_refs returned by tester_execute.",
-                    "items":{
-                        "type":"object",
-                        "required":["output_id","mode","provenance","evidence_refs","limitations","applicability"],
-                        "properties":{
-                            "output_id":{"type":"string","minLength":1},
-                            "mode":{"type":"string","enum":["VERIFY","MEASURE","PROBE"]},
-                            "provenance":{"type":"string","enum":["OBSERVED","IMPLICATION","UNRESOLVED"]},
-                            "value":{"type":["object","null"],"description":"ObservedValue uses {type: TEXT|INTEGER|DECIMAL|BOOLEAN, value: ...}."},
-                            "unit":{"type":["string","null"]},
-                            "evidence_refs":{"type":"array","items":{"type":"object"},"description":"Copy exact refs returned by tester_execute or other runtime-validated refs."},
-                            "limitations":{"type":"array","items":{"type":"string"}},
-                            "applicability":{"type":"object","description":"Provide policy REUSE_IF_MATCHES or ALWAYS_REVALIDATE plus finite matcher objects defined by the approved evidence contract."}
-                        }
-                    }
-                },
-                "limitations":{"type":"array","items":{"type":"string"}}
-            }
-        }),
     )
 }
 
@@ -1074,6 +1031,36 @@ fn hex_digest(digest: impl AsRef<[u8]>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tester_report_schema_follows_serde_defaults() {
+        let tool = tester_report_tool();
+        let required = tool.function.parameters["required"]
+            .as_array()
+            .expect("Tester report root schema must be an object");
+        assert!(required.iter().any(|field| field == "mode_results"));
+        for optional in ["classifications", "experiment", "outputs", "limitations"] {
+            assert!(!required.iter().any(|field| field == optional));
+        }
+
+        let report: TesterReportSubmission = serde_json::from_value(serde_json::json!({
+            "mode_results": []
+        }))
+        .unwrap();
+        assert!(report.classifications.is_empty());
+        assert!(report.experiment.is_none());
+        assert!(report.outputs.is_empty());
+        assert!(report.limitations.is_empty());
+    }
+
+    #[test]
+    fn tester_report_conditional_semantics_remain_runtime_validated() {
+        let report: TesterReportSubmission = serde_json::from_value(serde_json::json!({
+            "mode_results": [{"mode":"VERIFY","outcome":"COMPLETE"}]
+        }))
+        .unwrap();
+        assert!(report.mode_results[0].validate().is_err());
+    }
 
     #[test]
     fn capability_catalog_does_not_overclaim_unavailable_runtimes() {
