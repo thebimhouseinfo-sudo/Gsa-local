@@ -2004,10 +2004,9 @@ mod tests {
             OllamaClient::with_num_ctx(config.ollama_base_url.clone(), config.ollama_num_ctx);
         let session = Session::default();
 
-        let reviewer_model =
-            resolve_model_name(&ollama, &session, &config, AgentId::Reviewer)
-                .await
-                .unwrap();
+        let reviewer_model = resolve_model_name(&ollama, &session, &config, AgentId::Reviewer)
+            .await
+            .unwrap();
         let review_terminal = review_tool();
         let mut review_messages = vec![
             ChatMessage::system(
@@ -2065,10 +2064,9 @@ mod tests {
             review_result.invocations.len()
         );
 
-        let job_builder_model =
-            resolve_model_name(&ollama, &session, &config, AgentId::JobBuilder)
-                .await
-                .unwrap();
+        let job_builder_model = resolve_model_name(&ollama, &session, &config, AgentId::JobBuilder)
+            .await
+            .unwrap();
         let graph_terminal = execution_graph_tool();
         let fixture_plan = schema_fixture_plan();
         let mut graph_messages = vec![
@@ -2108,10 +2106,9 @@ mod tests {
             graph_result.invocations.len()
         );
 
-        let tester_model =
-            resolve_model_name(&ollama, &session, &config, AgentId::Tester)
-                .await
-                .unwrap();
+        let tester_model = resolve_model_name(&ollama, &session, &config, AgentId::Tester)
+            .await
+            .unwrap();
         let tester_terminal = tester_report_tool();
         let mut tester_messages = vec![
             ChatMessage::system(
@@ -2121,11 +2118,8 @@ mod tests {
                 "Submit one VERIFY mode result with outcome BLOCKED and reason 'schema compatibility probe'. Optional report fields may be omitted.",
             ),
         ];
-        let tester_runtime = StructuredAgentRuntime::new(
-            &ollama,
-            &tester_model,
-            RuntimePolicy::for_client(&ollama),
-        );
+        let tester_runtime =
+            StructuredAgentRuntime::new(&ollama, &tester_model, RuntimePolicy::for_client(&ollama));
         let tester_result = tester_runtime
             .run(
                 &mut tester_messages,
