@@ -3,8 +3,7 @@ use schemars::JsonSchema;
 use serde_json::Value;
 
 pub fn model_schema<T: JsonSchema>() -> Value {
-    serde_json::to_value(schemars::schema_for!(T))
-        .expect("JsonSchema root must serialize to JSON")
+    serde_json::to_value(schemars::schema_for!(T)).expect("JsonSchema root must serialize to JSON")
 }
 
 pub fn typed_terminal_tool<T: JsonSchema>(
