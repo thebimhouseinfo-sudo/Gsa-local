@@ -1990,6 +1990,170 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    #[ignore = "requires local Ollama plus configured Reviewer, JobBuilder, and Tester models"]
+    async fn real_ollama_generated_terminal_schema_probe() {
+        use crate::{
+            agent_runtime::{RuntimePolicy, StructuredAgentRuntime},
+            ollama::ToolFunctionCall,
+            tester_execution::{tester_report_tool, TesterReportSubmission},
+        };
+
+        let config = AppConfig::load().unwrap();
+        let ollama =
+            OllamaClient::with_num_ctx(config.ollama_base_url.clone(), config.ollama_num_ctx);
+        let session = Session::default();
+
+        let reviewer_model =
+            resolve_model_name(&ollama, &session, &config, AgentId::Reviewer)
+                .await
+                .unwrap();
+        let review_terminal = review_tool();
+        let mut review_messages = vec![
+            ChatMessage::system(
+                "You are a generated-schema compatibility probe. After the supplied tool error, repair the payload and call submit_review exactly once with verdict PASS. Do not answer with prose.",
+            ),
+            ChatMessage::user("Return a PASS verdict for this fixed compatibility fixture."),
+        ];
+        let mut invalid = ChatMessage::assistant("");
+        invalid.tool_calls.push(ToolCall {
+            kind: Some("function".into()),
+            function: ToolFunctionCall {
+                index: Some(0),
+                name: "submit_review".into(),
+                arguments: serde_json::json!({}),
+            },
+        });
+        review_messages.push(invalid);
+        review_messages.push(ChatMessage::tool(
+            "submit_review",
+            serde_json::json!({
+                "ok":false,
+                "error":"invalid payload: missing verdict; repair the same terminal payload and resubmit"
+            })
+            .to_string(),
+        ));
+        let reviewer_runtime = StructuredAgentRuntime::new(
+            &ollama,
+            &reviewer_model,
+            RuntimePolicy::for_client(&ollama),
+        );
+        let review_result = reviewer_runtime
+            .run(
+                &mut review_messages,
+                &[],
+                &review_terminal,
+                |name, _| -> Result<serde_json::Value> {
+                    bail!("unexpected action tool in verdict probe: {name}")
+                },
+                |args| {
+                    let decision: ReviewDecision = serde_json::from_value(args.clone())?;
+                    match decision.verdict.as_str() {
+                        "PASS" | "CHANGES_REQUIRED" => Ok(()),
+                        other => bail!("unsupported review verdict {other}"),
+                    }
+                },
+                |_| {},
+            )
+            .await
+            .unwrap();
+        println!(
+            "UAR2B_PROBE verdict model={} elapsed_ms={} repairs={} invocations={}",
+            review_result.model,
+            review_result.elapsed_ms,
+            review_result.terminal_repairs,
+            review_result.invocations.len()
+        );
+
+        let job_builder_model =
+            resolve_model_name(&ollama, &session, &config, AgentId::JobBuilder)
+                .await
+                .unwrap();
+        let graph_terminal = execution_graph_tool();
+        let fixture_plan = schema_fixture_plan();
+        let mut graph_messages = vec![
+            ChatMessage::system(
+                "You are a generated-schema compatibility probe. Call submit_execution_graph exactly once. Return READY and reproduce the small graph requested by the user. Do not answer with prose.",
+            ),
+            ChatMessage::user(
+                r#"Return READY with exactly this graph content: milestone M1 title Docs order 1; jobpack J1 in M1 title Docs goal Add clarification with todo_ids [T1], depends_on [], required_inputs [README], expected_outputs [updated README], acceptance [clarification present], verification_hints [inspect diff]; todo T1 in J1 title Add sentence checklist [add sentence]. No checkpoints or evidence requirements are needed."#,
+            ),
+        ];
+        let job_builder_runtime = StructuredAgentRuntime::new(
+            &ollama,
+            &job_builder_model,
+            RuntimePolicy::for_client(&ollama),
+        );
+        let graph_result = job_builder_runtime
+            .run(
+                &mut graph_messages,
+                &[],
+                &graph_terminal,
+                |name, _| -> Result<serde_json::Value> {
+                    bail!("unexpected action tool in JobBuilder probe: {name}")
+                },
+                |args| {
+                    let submission: JobBuilderSubmission = serde_json::from_value(args.clone())?;
+                    validate_job_builder_submission(submission, &fixture_plan).map(|_| ())
+                },
+                |_| {},
+            )
+            .await
+            .unwrap();
+        println!(
+            "UAR2B_PROBE job_builder model={} elapsed_ms={} repairs={} invocations={}",
+            graph_result.model,
+            graph_result.elapsed_ms,
+            graph_result.terminal_repairs,
+            graph_result.invocations.len()
+        );
+
+        let tester_model =
+            resolve_model_name(&ollama, &session, &config, AgentId::Tester)
+                .await
+                .unwrap();
+        let tester_terminal = tester_report_tool();
+        let mut tester_messages = vec![
+            ChatMessage::system(
+                "You are a generated-schema compatibility probe. Call submit_tester_report exactly once. This is only a schema fixture, not a product verdict. Do not answer with prose.",
+            ),
+            ChatMessage::user(
+                "Submit one VERIFY mode result with outcome BLOCKED and reason 'schema compatibility probe'. Optional report fields may be omitted.",
+            ),
+        ];
+        let tester_runtime = StructuredAgentRuntime::new(
+            &ollama,
+            &tester_model,
+            RuntimePolicy::for_client(&ollama),
+        );
+        let tester_result = tester_runtime
+            .run(
+                &mut tester_messages,
+                &[],
+                &tester_terminal,
+                |name, _| -> Result<serde_json::Value> {
+                    bail!("unexpected action tool in Tester probe: {name}")
+                },
+                |args| {
+                    let report: TesterReportSubmission = serde_json::from_value(args.clone())?;
+                    if report.mode_results.len() != 1 {
+                        bail!("Tester probe requires exactly one mode result");
+                    }
+                    report.mode_results[0].validate()
+                },
+                |_| {},
+            )
+            .await
+            .unwrap();
+        println!(
+            "UAR2B_PROBE tester model={} elapsed_ms={} repairs={} invocations={}",
+            tester_result.model,
+            tester_result.elapsed_ms,
+            tester_result.terminal_repairs,
+            tester_result.invocations.len()
+        );
+    }
+
     #[test]
     fn structured_submission_requires_exactly_one_total_tool_call() {
         use crate::ollama::{ToolCall, ToolFunctionCall};
