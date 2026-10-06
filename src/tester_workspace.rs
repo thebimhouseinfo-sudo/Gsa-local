@@ -1,5 +1,6 @@
 use crate::{harness::AgentId, ollama::ToolDefinition};
 use anyhow::{bail, Context, Result};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -14,7 +15,7 @@ const MAX_READ_BYTES: usize = 64 * 1024;
 const MAX_WRITE_BYTES: usize = MAX_READ_BYTES;
 const WORKSPACE_DIRS: &[&str] = &["plan", "tests", "fixtures", "artifacts", "reports"];
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TesterArtifactRef {
     pub graph_version: i64,
     pub checkpoint_id: String,
