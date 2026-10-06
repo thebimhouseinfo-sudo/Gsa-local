@@ -1,9 +1,10 @@
 use crate::plan::{EvidenceMode, PlanArtifact};
 use anyhow::{bail, Result};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ExecutionGraph {
     pub milestones: Vec<MilestoneSpec>,
     pub jobpacks: Vec<JobPackSpec>,
@@ -14,14 +15,14 @@ pub struct ExecutionGraph {
     pub evidence_requirements: Vec<EvidenceRequirementSpec>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct MilestoneSpec {
     pub id: String,
     pub title: String,
     pub order: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct JobPackSpec {
     pub id: String,
     pub milestone_id: String,
@@ -37,7 +38,7 @@ pub struct JobPackSpec {
     pub verification_hints: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TodoSpec {
     pub id: String,
     pub jobpack_id: String,
@@ -45,7 +46,7 @@ pub struct TodoSpec {
     pub checklist: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum CheckpointBoundaryKind {
     AfterJobpackSet,
@@ -53,20 +54,20 @@ pub enum CheckpointBoundaryKind {
     MilestoneGate,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum PrerequisiteState {
     ReviewPass,
     Done,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CheckpointPrerequisiteSpec {
     pub jobpack_id: String,
     pub state: PrerequisiteState,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct EvidenceOutputSpec {
     pub id: String,
     pub mode: EvidenceMode,
@@ -76,7 +77,7 @@ pub struct EvidenceOutputSpec {
     pub evidence_need_id: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TestCheckpointSpec {
     pub id: String,
     pub milestone_id: String,
@@ -99,7 +100,7 @@ pub struct TestCheckpointSpec {
     pub evidence_outputs: Vec<EvidenceOutputSpec>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct EvidenceRequirementSpec {
     pub consumer_jobpack_id: String,
     pub checkpoint_id: String,
