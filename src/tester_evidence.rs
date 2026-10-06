@@ -126,7 +126,7 @@ impl ObservedValue {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ReplaySafety {
     ObserveOnly,
@@ -443,7 +443,7 @@ pub struct EvidenceApplicability {
     pub matchers: Vec<ApplicabilityMatcher>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct ApplicabilityContext {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub product_revision: Option<String>,
@@ -536,7 +536,7 @@ fn scalar_dimension(
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TesterPrerequisiteTarget {
     pub jobpack_id: String,
     pub state: PrerequisiteState,
@@ -546,7 +546,7 @@ pub struct TesterPrerequisiteTarget {
     pub target_revision: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TesterTargetBinding {
     #[serde(default)]
     pub prerequisites: Vec<TesterPrerequisiteTarget>,
@@ -672,7 +672,7 @@ impl TesterEvidenceOutputRecord {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TesterAttemptEvidence {
     pub graph_version: i64,
     pub checkpoint_id: String,
