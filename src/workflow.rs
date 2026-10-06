@@ -1908,7 +1908,11 @@ mod tests {
             .as_array()
             .expect("terminal schema root must be an object")
             .iter()
-            .map(|item| item.as_str().expect("required entry must be a string").to_owned())
+            .map(|item| {
+                item.as_str()
+                    .expect("required entry must be a string")
+                    .to_owned()
+            })
             .collect()
     }
 
@@ -1978,11 +1982,15 @@ mod tests {
 
         let ready_without_graph: JobBuilderSubmission =
             serde_json::from_value(serde_json::json!({"status":"READY"})).unwrap();
-        assert!(validate_job_builder_submission(ready_without_graph, &schema_fixture_plan()).is_err());
+        assert!(
+            validate_job_builder_submission(ready_without_graph, &schema_fixture_plan()).is_err()
+        );
 
         let gap_without_findings: JobBuilderSubmission =
             serde_json::from_value(serde_json::json!({"status":"PLAN_GAP"})).unwrap();
-        assert!(validate_job_builder_submission(gap_without_findings, &schema_fixture_plan()).is_err());
+        assert!(
+            validate_job_builder_submission(gap_without_findings, &schema_fixture_plan()).is_err()
+        );
 
         let gap_with_graph: JobBuilderSubmission = serde_json::from_value(serde_json::json!({
             "status":"PLAN_GAP",
