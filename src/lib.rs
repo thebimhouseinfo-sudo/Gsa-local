@@ -13,6 +13,7 @@ pub mod plan;
 pub mod process_runner;
 pub mod registry;
 pub mod session;
+pub mod terminal_schema;
 pub mod tester_evidence;
 pub mod tester_execution;
 pub mod tester_workspace;
