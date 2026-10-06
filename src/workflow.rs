@@ -1599,9 +1599,6 @@ fn validate_job_builder_submission(
             if submission.gap_findings.is_empty() {
                 bail!("Job Builder PLAN_GAP must include at least one finding");
             }
-            if submission.graph.is_some() {
-                bail!("Job Builder PLAN_GAP submission must not include graph");
-            }
             Ok(JobBuilderOutcome::PlanGap(submission.gap_findings))
         }
         other => bail!("Job Builder returned unsupported status {other}"),
@@ -1992,13 +1989,6 @@ mod tests {
             validate_job_builder_submission(gap_without_findings, &schema_fixture_plan()).is_err()
         );
 
-        let gap_with_graph: JobBuilderSubmission = serde_json::from_value(serde_json::json!({
-            "status":"PLAN_GAP",
-            "gap_findings":["missing contract"],
-            "graph":{"milestones":[],"jobpacks":[],"todos":[]}
-        }))
-        .unwrap();
-        assert!(validate_job_builder_submission(gap_with_graph, &schema_fixture_plan()).is_err());
     }
 
     #[test]
