@@ -1995,7 +1995,6 @@ mod tests {
     async fn real_ollama_generated_terminal_schema_probe() {
         use crate::{
             agent_runtime::{RuntimePolicy, StructuredAgentRuntime},
-            ollama::ToolFunctionCall,
             tester_execution::{tester_report_tool, TesterReportSubmission},
         };
 
