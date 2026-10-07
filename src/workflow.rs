@@ -2010,33 +2010,16 @@ mod tests {
         let review_terminal = review_tool();
         let mut review_messages = vec![
             ChatMessage::system(
-                "You are a generated-schema compatibility probe. After the supplied tool error, repair the payload and call submit_review exactly once with verdict PASS. Do not answer with prose.",
+                "You are a generated-schema compatibility probe. Call submit_review with verdict PASS and no findings. If the tool reports a validation error, correct the same terminal payload and resubmit it. Do not answer with prose.",
             ),
             ChatMessage::user("Return a PASS verdict for this fixed compatibility fixture."),
         ];
-        let mut invalid = ChatMessage::assistant("");
-        invalid.tool_calls.push(ToolCall {
-            kind: Some("function".into()),
-            function: ToolFunctionCall {
-                index: Some(0),
-                name: "submit_review".into(),
-                arguments: serde_json::json!({}),
-            },
-        });
-        review_messages.push(invalid);
-        review_messages.push(ChatMessage::tool(
-            "submit_review",
-            serde_json::json!({
-                "ok":false,
-                "error":"invalid payload: missing verdict; repair the same terminal payload and resubmit"
-            })
-            .to_string(),
-        ));
         let reviewer_runtime = StructuredAgentRuntime::new(
             &ollama,
             &reviewer_model,
             RuntimePolicy::for_client(&ollama),
         );
+        let mut review_submissions = 0usize;
         let review_result = reviewer_runtime
             .run(
                 &mut review_messages,
@@ -2046,16 +2029,36 @@ mod tests {
                     bail!("unexpected action tool in verdict probe: {name}")
                 },
                 |args| {
+                    review_submissions += 1;
                     let decision: ReviewDecision = serde_json::from_value(args.clone())?;
-                    match decision.verdict.as_str() {
-                        "PASS" | "CHANGES_REQUIRED" => Ok(()),
-                        other => bail!("unsupported review verdict {other}"),
+                    if review_submissions == 1 {
+                        bail!(
+                            "intentional compatibility-probe rejection: repair the terminal payload and resubmit verdict PASS"
+                        );
                     }
+                    if decision.verdict != "PASS" {
+                        bail!(
+                            "review compatibility probe expected repaired verdict PASS, got {}",
+                            decision.verdict
+                        );
+                    }
+                    if !decision.findings.is_empty() {
+                        bail!("review compatibility probe expected no findings");
+                    }
+                    Ok(())
                 },
                 |_| {},
             )
             .await
             .unwrap();
+        assert_eq!(review_result.model, reviewer_model);
+        assert_eq!(review_submissions, 2);
+        assert_eq!(review_result.terminal_repairs, 1);
+        assert_eq!(review_result.terminal_arguments["verdict"], "PASS");
+        assert_eq!(
+            review_result.terminal_arguments["findings"],
+            serde_json::json!([])
+        );
         println!(
             "UAR2B_PROBE verdict model={} elapsed_ms={} repairs={} invocations={}",
             review_result.model,
@@ -2071,7 +2074,7 @@ mod tests {
         let fixture_plan = schema_fixture_plan();
         let mut graph_messages = vec![
             ChatMessage::system(
-                "You are a generated-schema compatibility probe. Call submit_execution_graph exactly once. Return READY and reproduce the small graph requested by the user. Do not answer with prose.",
+                "You are a generated-schema compatibility probe. Call submit_execution_graph exactly once. Return READY and reproduce the small graph requested by the user. If validation rejects any field, correct the graph and resubmit. Do not answer with prose.",
             ),
             ChatMessage::user(
                 r#"Return READY with exactly this graph content: milestone M1 title Docs order 1; jobpack J1 in M1 title Docs goal Add clarification with todo_ids [T1], depends_on [], required_inputs [README], expected_outputs [updated README], acceptance [clarification present], verification_hints [inspect diff]; todo T1 in J1 title Add sentence checklist [add sentence]. No checkpoints or evidence requirements are needed."#,
@@ -2092,12 +2095,58 @@ mod tests {
                 },
                 |args| {
                     let submission: JobBuilderSubmission = serde_json::from_value(args.clone())?;
-                    validate_job_builder_submission(submission, &fixture_plan).map(|_| ())
+                    let graph = match validate_job_builder_submission(submission, &fixture_plan)? {
+                        JobBuilderOutcome::Ready(graph) => graph,
+                        JobBuilderOutcome::PlanGap(findings) => {
+                            bail!("JobBuilder probe unexpectedly returned PLAN_GAP: {findings:?}")
+                        }
+                    };
+                    if graph.milestones.len() != 1
+                        || graph.milestones[0].id != "M1"
+                        || graph.milestones[0].title != "Docs"
+                        || graph.milestones[0].order != 1
+                    {
+                        bail!("JobBuilder probe milestone does not match the requested fixture");
+                    }
+                    if graph.jobpacks.len() != 1 {
+                        bail!("JobBuilder probe expected exactly one jobpack");
+                    }
+                    let jobpack = &graph.jobpacks[0];
+                    if jobpack.id != "J1"
+                        || jobpack.milestone_id != "M1"
+                        || jobpack.title != "Docs"
+                        || jobpack.goal != "Add clarification"
+                        || jobpack.todo_ids != vec!["T1"]
+                        || !jobpack.depends_on.is_empty()
+                        || jobpack.required_inputs != vec!["README"]
+                        || jobpack.expected_outputs != vec!["updated README"]
+                        || jobpack.acceptance != vec!["clarification present"]
+                        || jobpack.verification_hints != vec!["inspect diff"]
+                    {
+                        bail!("JobBuilder probe jobpack does not match the requested fixture");
+                    }
+                    if graph.todos.len() != 1 {
+                        bail!("JobBuilder probe expected exactly one todo");
+                    }
+                    let todo = &graph.todos[0];
+                    if todo.id != "T1"
+                        || todo.jobpack_id != "J1"
+                        || todo.title != "Add sentence"
+                        || todo.checklist != vec!["add sentence"]
+                    {
+                        bail!("JobBuilder probe todo does not match the requested fixture");
+                    }
+                    if !graph.checkpoints.is_empty() || !graph.evidence_requirements.is_empty() {
+                        bail!("JobBuilder probe expected no checkpoints or evidence requirements");
+                    }
+                    Ok(())
                 },
                 |_| {},
             )
             .await
             .unwrap();
+        assert_eq!(graph_result.model, job_builder_model);
+        assert_eq!(graph_result.terminal_arguments["status"], "READY");
         println!(
             "UAR2B_PROBE job_builder model={} elapsed_ms={} repairs={} invocations={}",
             graph_result.model,
@@ -2112,10 +2161,10 @@ mod tests {
         let tester_terminal = tester_report_tool();
         let mut tester_messages = vec![
             ChatMessage::system(
-                "You are a generated-schema compatibility probe. Call submit_tester_report exactly once. This is only a schema fixture, not a product verdict. Do not answer with prose.",
+                "You are a generated-schema compatibility probe. Call submit_tester_report exactly once. This is only a schema fixture, not a product verdict. If validation rejects the payload, correct it and resubmit. Do not answer with prose.",
             ),
             ChatMessage::user(
-                "Submit one VERIFY mode result with outcome BLOCKED and reason 'schema compatibility probe'. Optional report fields may be omitted.",
+                "Submit exactly one VERIFY mode result with outcome BLOCKED and reason 'schema compatibility probe'. Omit classifications, experiment, outputs, and limitations.",
             ),
         ];
         let tester_runtime =
@@ -2133,12 +2182,42 @@ mod tests {
                     if report.mode_results.len() != 1 {
                         bail!("Tester probe requires exactly one mode result");
                     }
-                    report.mode_results[0].validate()
+                    let mode_result = &report.mode_results[0];
+                    if mode_result.mode != crate::plan::EvidenceMode::Verify {
+                        bail!("Tester probe expected VERIFY mode");
+                    }
+                    if mode_result.outcome != crate::tester_evidence::TesterModeOutcome::Blocked {
+                        bail!("Tester probe expected BLOCKED outcome");
+                    }
+                    if mode_result.reason.as_deref() != Some("schema compatibility probe") {
+                        bail!("Tester probe reason does not match the requested fixture");
+                    }
+                    if !report.classifications.is_empty()
+                        || report.experiment.is_some()
+                        || !report.outputs.is_empty()
+                        || !report.limitations.is_empty()
+                    {
+                        bail!("Tester probe optional report fields must be omitted/defaulted");
+                    }
+                    mode_result.validate()
                 },
                 |_| {},
             )
             .await
             .unwrap();
+        assert_eq!(tester_result.model, tester_model);
+        assert_eq!(
+            tester_result.terminal_arguments["mode_results"][0]["mode"],
+            "VERIFY"
+        );
+        assert_eq!(
+            tester_result.terminal_arguments["mode_results"][0]["outcome"],
+            "BLOCKED"
+        );
+        assert_eq!(
+            tester_result.terminal_arguments["mode_results"][0]["reason"],
+            "schema compatibility probe"
+        );
         println!(
             "UAR2B_PROBE tester model={} elapsed_ms={} repairs={} invocations={}",
             tester_result.model,
