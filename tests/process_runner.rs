@@ -56,8 +56,7 @@ fn macos_production_runner_must_execute_real_successfully_sandboxed_command() {
         .expect("production runner should return observed process evidence");
 
     assert_eq!(
-        result.blocked_reason,
-        None,
+        result.blocked_reason, None,
         "sandbox must not block a valid command: {result:?}"
     );
     assert_eq!(
