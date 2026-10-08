@@ -55,8 +55,16 @@ fn macos_production_runner_must_execute_real_successfully_sandboxed_command() {
         .run(dir.path(), &command, Duration::from_secs(3))
         .expect("production runner should return observed process evidence");
 
-    assert_eq!(result.blocked_reason, None, "sandbox must not block a valid command: {result:?}");
-    assert_eq!(result.exit_code, Some(0), "real sandbox command did not succeed: {result:?}");
+    assert_eq!(
+        result.blocked_reason,
+        None,
+        "sandbox must not block a valid command: {result:?}"
+    );
+    assert_eq!(
+        result.exit_code,
+        Some(0),
+        "real sandbox command did not succeed: {result:?}"
+    );
     assert_eq!(result.stdout.trim(), "gsa-sandbox-observed");
     assert!(!result.timed_out);
 }
