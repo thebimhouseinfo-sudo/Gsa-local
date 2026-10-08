@@ -3,14 +3,33 @@ set -euo pipefail
 
 probe="workflow::tests::real_ollama_generated_terminal_schema_probe"
 
+count_exact() {
+  grep -Fxc "$2" "$1" || true
+}
+
+count_pattern() {
+  grep -Ec "$2" "$1" || true
+}
+
 verify_result() {
   local output="$1"
-  # An exit code of 0 alone is insufficient: cargo returns success when the
-  # requested filter matches zero tests. Verify both the exact test and summary.
-  local passed
-  passed="$(grep -Fxc "test ${probe} ... ok" "$output" || true)"
-  if [[ "$passed" != "1" ]] || ! grep -Eq '^test result: ok[.] 1 passed; 0 failed; 0 ignored; 0 measured; [0-9]+ filtered out; finished in ' "$output"; then
-    echo "UAR2B_PROBE_NOT_VERIFIED: expected exactly one executed PASS; zero filtered tests, other tests or failures cannot count." >&2
+  # Cargo can exit 0 with 0 selected tests. The probe is a single, exact
+  # --lib --exact test and must show all three real-model stages, not merely
+  # a matching PASS line copied from a different test invocation.
+  local summary='^test result: ok[.] 1 passed; 0 failed; 0 ignored; 0 measured; [0-9]+ filtered out; finished in [0-9]+([.][0-9]+)?s$'
+  local verdict='^UAR2B_PROBE verdict model=[^[:space:]]+ elapsed_ms=[0-9]+ repairs=1 invocations=[0-9]+$'
+  local job_builder='^UAR2B_PROBE job_builder model=[^[:space:]]+ elapsed_ms=[0-9]+ repairs=[0-9]+ invocations=[0-9]+$'
+  local tester='^UAR2B_PROBE tester model=[^[:space:]]+ elapsed_ms=[0-9]+ repairs=[0-9]+ invocations=[0-9]+$'
+
+  if [[ "$(count_exact "$output" 'running 1 test')" != "1" ]] ||
+     [[ "$(count_exact "$output" "test ${probe} ... ok")" != "1" ]] ||
+     [[ "$(count_pattern "$output" '^test result:')" != "1" ]] ||
+     [[ "$(count_pattern "$output" "$summary")" != "1" ]] ||
+     [[ "$(count_pattern "$output" "$verdict")" != "1" ]] ||
+     [[ "$(count_pattern "$output" "$job_builder")" != "1" ]] ||
+     [[ "$(count_pattern "$output" "$tester")" != "1" ]] ||
+     grep -Eq '^test [^[:space:]]+ [.]\.\. (FAILED|ignored)$|^error: test failed|^test result: FAILED[.]' "$output"; then
+    echo "UAR2B_PROBE_NOT_VERIFIED: require exactly one executed PASS and verdict/JobBuilder/Tester model evidence; reject zero tests and mixed/failed suites." >&2
     return 1
   fi
   echo "UAR2B_PROBE_EXECUTED_PASS=$probe"
@@ -19,18 +38,31 @@ verify_result() {
 if [[ "${1:-}" == "--self-test" ]]; then
   tmp="$(mktemp -d)"
   trap 'rm -rf "$tmp"' EXIT
-  printf 'running 1 test\ntest %s ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 72 filtered out; finished in 0.10s\n' "$probe" > "$tmp/good"
-  printf 'running 0 tests\ntest result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 72 filtered out; finished in 0.00s\n' > "$tmp/zero"
-  printf 'running 1 test\ntest %s ... FAILED\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 72 filtered out; finished in 0.01s\n' "$probe" > "$tmp/failed"
-  printf 'running 1 test\ntest other_test ... ok\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 72 filtered out; finished in 0.01s\n' > "$tmp/wrong"
+  printf '%s\n' \
+    'running 1 test' \
+    'UAR2B_PROBE verdict model=qwen38t:latest elapsed_ms=123 repairs=1 invocations=2' \
+    'UAR2B_PROBE job_builder model=qwen38t:latest elapsed_ms=456 repairs=0 invocations=1' \
+    'UAR2B_PROBE tester model=qwen38t:latest elapsed_ms=789 repairs=0 invocations=1' \
+    "test ${probe} ... ok" \
+    'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 72 filtered out; finished in 0.10s' > "$tmp/good"
+  printf '%s\n' \
+    'running 0 tests' \
+    'test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 72 filtered out; finished in 0.00s' > "$tmp/zero"
+  sed 's/ ... ok/ ... FAILED/; s/result: ok. 1 passed; 0 failed/result: FAILED. 0 passed; 1 failed/' "$tmp/good" > "$tmp/failed"
+  sed "s/test ${probe} ... ok/test other_test ... ok/" "$tmp/good" > "$tmp/wrong"
+  grep -v '^UAR2B_PROBE tester ' "$tmp/good" > "$tmp/missing_stage"
+  sed 's/repairs=1/repairs=0/' "$tmp/good" > "$tmp/no_repair"
+  cat "$tmp/good" "$tmp/good" > "$tmp/duplicate_suites"
+  { cat "$tmp/good"; echo 'test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s'; } > "$tmp/mixed_failure"
+
   verify_result "$tmp/good" > /dev/null
-  for case in zero failed wrong; do
+  for case in zero failed wrong missing_stage no_repair duplicate_suites mixed_failure; do
     if verify_result "$tmp/$case" > /dev/null 2>&1; then
       echo "TEST_GUARD_FALSE_GREEN: $case should not pass" >&2
       exit 1
     fi
   done
-  echo "TEST_GUARD_NEGATIVE_CONTROLS_PASS=zero,failed,wrong"
+  echo "TEST_GUARD_NEGATIVE_CONTROLS_PASS=zero,failed,wrong,missing_stage,no_repair,duplicate_suites,mixed_failure"
   exit 0
 fi
 
