@@ -28,9 +28,15 @@ for test_name in \
     exit 1
   fi
 done
-if [[ "$(uname -s)" == "Darwin" ]] && ! grep -Fxq 'macos_production_runner_cannot_falsely_pass_missing_executable: test' <<< "$all_tests"; then
-  echo "CI_REQUIRED_MAC_NEGATIVE_CONTROL_MISSING" >&2
-  exit 1
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  for test_name in \
+    macos_production_runner_cannot_falsely_pass_missing_executable \
+    macos_production_runner_must_execute_real_successfully_sandboxed_command; do
+    if ! grep -Fxq "$test_name: test" <<< "$all_tests"; then
+      echo "CI_REQUIRED_MAC_REAL_RUNNER_CONTROL_MISSING=$test_name" >&2
+      exit 1
+    fi
+  done
 fi
 echo "CI_TESTS_DISCOVERED=$active_count"
 
