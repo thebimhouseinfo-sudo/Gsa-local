@@ -5,7 +5,7 @@ set -euo pipefail
 # models. A successful cargo process with zero matching tests is NOT a pass.
 probe="workflow::tests::real_ollama_generated_terminal_schema_probe"
 inventory="$(cargo test --lib -- --ignored --list 2>/dev/null)"
-if ! printf '%s\n' "$inventory" | grep -Fxq "$probe: test"; then
+if ! grep -Fxq "$probe: test" <<< "$inventory"; then
   echo "UAR2B_PROBE_MISSING_ON_THIS_CHECKOUT: update source before trying the probe." >&2
   exit 1
 fi
