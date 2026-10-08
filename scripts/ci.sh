@@ -23,12 +23,12 @@ for test_name in \
   workflow::tests::execution_graph_schema_is_typed_and_conditionals_are_runtime_validated \
   successful_build_only_evidence_is_not_a_test_pass \
   required_tester_evidence_fails_closed_when_missing; do
-  if ! printf '%s\n' "$all_tests" | grep -Fxq "$test_name: test"; then
+  if ! grep -Fxq "$test_name: test" <<< "$all_tests"; then
     echo "CI_REQUIRED_TEST_MISSING=$test_name" >&2
     exit 1
   fi
 done
-if [[ "$(uname -s)" == "Darwin" ]] && ! printf '%s\n' "$all_tests" | grep -Fxq 'macos_production_runner_cannot_falsely_pass_missing_executable: test'; then
+if [[ "$(uname -s)" == "Darwin" ]] && ! grep -Fxq 'macos_production_runner_cannot_falsely_pass_missing_executable: test' <<< "$all_tests"; then
   echo "CI_REQUIRED_MAC_NEGATIVE_CONTROL_MISSING" >&2
   exit 1
 fi
