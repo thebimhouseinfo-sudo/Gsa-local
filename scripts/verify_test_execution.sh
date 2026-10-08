@@ -9,7 +9,7 @@ verify_result() {
   # requested filter matches zero tests. Verify both the exact test and summary.
   local passed
   passed="$(grep -Fxc "test ${probe} ... ok" "$output" || true)"
-  if [[ "$passed" != "1" ]] || ! grep -Eq '^test result: ok\\. 1 passed; 0 failed; 0 ignored; 0 measured; [0-9]+ filtered out; finished in ' "$output"; then
+  if [[ "$passed" != "1" ]] || ! grep -Eq '^test result: ok[.] 1 passed; 0 failed; 0 ignored; 0 measured; [0-9]+ filtered out; finished in ' "$output"; then
     echo "UAR2B_PROBE_NOT_VERIFIED: expected exactly one executed PASS; zero filtered tests, other tests or failures cannot count." >&2
     return 1
   fi
