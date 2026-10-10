@@ -1833,14 +1833,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cr_revise_routes_through_internal_fix_then_reviewer() {
+    fn cr_revise_routes_through_planner_then_reviewer() {
         let mut route = PlanningRoute::new(5);
         assert!(route.enter_reviewer());
         route.reviewer_result(ReviewVerdict::Pass);
         assert!(route.enter_cr());
         route.cr_result(ReviewVerdict::Revise);
-        assert_eq!(route.stage, PlanningStage::InternalFix);
-        route.after_internal_fix();
+        assert_eq!(route.stage, PlanningStage::Planner);
+        route.after_plan_revision();
         assert_eq!(route.stage, PlanningStage::Reviewer);
     }
 
