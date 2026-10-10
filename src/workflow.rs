@@ -232,14 +232,17 @@ impl<'a> PlanningWorkflow<'a> {
             let findings = self
                 .registry
                 .pending_planner_revision_findings(prior.revision, &prior.hash)?;
+            let prior_evidence: Vec<PlanningSourceEvidence> = serde_json::from_str(
+                &self.registry.planning_source_evidence(prior.revision, &prior.hash)?,
+            )?;
             self.invoke_plan_agent(
                 AgentId::Planner,
                 requirement,
                 Some(&prior),
                 &findings,
                 &project_context,
-                &[],
-                "Resume the Planner-owned revision of the current Implementation Plan using only the persisted negative verdict findings. Produce a new complete revision.",
+                &prior_evidence,
+                "Resume the Planner-owned revision of the current Implementation Plan using only the persisted negative verdict or Job Builder gap findings. Produce a new complete revision.",
             ).await?
         } else {
             self.invoke_plan_agent(
@@ -390,11 +393,10 @@ impl<'a> PlanningWorkflow<'a> {
                         });
                     }
                     JobBuilderOutcome::PlanGap(findings) => {
-                        self.registry.set_workflow_state(
-                            Some(current.revision),
-                            route.reviewer_attempts,
-                            route.cr_attempts,
-                            "PLAN_GAP",
+                        self.registry.record_job_builder_plan_gap(
+                            current.revision,
+                            &current.hash,
+                            &findings,
                         )?;
                         let (revised, discovered) = self
                             .invoke_plan_agent(
@@ -519,10 +521,12 @@ impl<'a> PlanningWorkflow<'a> {
                     })
                 }
                 JobBuilderOutcome::PlanGap(findings) => {
-                    bail!(
-                        "PLANNING_JOB_BUILDER_PLAN_GAP_NOT_DURABLE: {}",
-                        findings.join("; ")
-                    )
+                    self.registry.record_job_builder_plan_gap(
+                        current.revision,
+                        &current.hash,
+                        &findings,
+                    )?;
+                    Box::pin(self.run(requirement)).await
                 }
             };
         }
