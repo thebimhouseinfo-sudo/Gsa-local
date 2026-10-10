@@ -264,7 +264,9 @@ impl<'a> PlanningWorkflow<'a> {
             source_evidence.len()
         );
         if let Some(revision) = durable.current_revision {
-            let prior = self.registry.current_plan_revision()?
+            let prior = self
+                .registry
+                .current_plan_revision()?
                 .context("PLANNING_RESUME_PLAN_MISSING")?;
             if prior.revision != revision || prior.hash == artifact.hash()? {
                 route.unchanged_revision();
