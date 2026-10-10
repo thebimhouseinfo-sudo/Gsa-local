@@ -197,7 +197,14 @@ impl<'a> PlanningWorkflow<'a> {
     }
 
     pub async fn run(&self, requirement: &str) -> Result<PlanningOutcome> {
-        self.registry.begin_plan_workflow()?;
+        let durable = self.registry.begin_or_resume_planning_run(requirement)?;
+        if durable.stage != "PLANNER" || durable.current_revision.is_some() {
+            bail!(
+                "PLANNING_RESUME_STAGE_REQUIRED: stage={} revision={:?}; refusing to replay model calls before stage-specific resume is implemented",
+                durable.stage,
+                durable.current_revision
+            );
+        }
         let mut route = PlanningRoute::new(self.max_attempts);
         let mut project_context = build_project_context(self.project_root)?;
         project_context.tester_evidence = self.registry.current_tester_evidence_catalog()?;
