@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Run cheap script syntax and adversarial verifier controls before compiling
+# Rust. A broken guard is a failing CI, not an optional post-test warning.
+bash -n scripts/ci.sh scripts/real_ollama_probe.sh scripts/verify_test_execution.sh
+bash scripts/verify_test_execution.sh --self-test
+
 cargo fmt --check
 cargo check
 cargo test
-
-# Guard against the most dangerous false-green case: a filtered cargo test
-# exits successfully even when no test with that name was executed.
-bash scripts/verify_test_execution.sh --self-test
 
 # Verify the real test inventory on this revision, not just a successful
 # cargo exit status. These core tests bind the suite to actual workflow gates.
