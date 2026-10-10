@@ -86,6 +86,34 @@ impl App {
             "Resume: {:?} -> {:?} ({})",
             startup_resume.classification, startup_resume.action, startup_resume.reason
         );
+        if let Some(planning) = self.registry.planning_run_state()? {
+            if matches!(
+                planning.stage.as_str(),
+                "PLANNER" | "REVIEWER" | "LOCAL_CR" | "JOB_BUILDER"
+            ) {
+                let requirement = planning.requirement.as_deref()
+                    .context("PLANNING_RESUME_REQUIREMENT_MISSING")?
+                    .to_owned();
+                println!(
+                    "PLANNING_RESUME_AVAILABLE stage={} revision={:?}",
+                    planning.stage, planning.current_revision
+                );
+                println!(
+                    "Type RESUME to continue the saved exact requirement; any other response skips without changing state."
+                );
+                print!("Resume planning: ");
+                io::stdout().flush()?;
+                let mut confirmation = String::new();
+                io::stdin().read_line(&mut confirmation)?;
+                if confirmation.trim() == "RESUME" {
+                    if let Err(error) = self.run_planning_workflow(&requirement).await {
+                        eprintln!("PLANNING_RESUME_FAILED: {error:#}");
+                    }
+                } else {
+                    println!("PLANNING_RESUME_SKIPPED: durable state unchanged.");
+                }
+            }
+        }
         let stdin = io::stdin();
 
         loop {
