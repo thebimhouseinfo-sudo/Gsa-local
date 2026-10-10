@@ -1710,6 +1710,23 @@ impl Registry {
             "#,
             params![sequence, plan_revision],
         )?;
+        let durable: Option<(String, Option<i64>)> = tx
+            .query_row(
+                "SELECT stage, current_revision FROM planning_run_state WHERE id=1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        if let Some((stage, revision)) = durable {
+            if stage != "JOB_BUILDER" || revision != Some(plan_revision) {
+                bail!("PLANNING_GRAPH_REGISTRATION_STAGE_CONFLICT");
+            }
+            tx.execute(
+                "UPDATE planning_run_state SET stage='REGISTERED'
+                 WHERE id=1 AND stage='JOB_BUILDER' AND current_revision=?1",
+                params![plan_revision],
+            )?;
+        }
         tx.commit()?;
         Ok(version)
     }
