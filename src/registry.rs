@@ -1162,7 +1162,8 @@ impl Registry {
         hash: &str,
         evidence_json: &str,
     ) -> Result<()> {
-        let current = self.current_plan_revision()?
+        let current = self
+            .current_plan_revision()?
             .context("PLANNING_SOURCE_EVIDENCE_NO_PLAN")?;
         if current.revision != revision || current.hash != hash {
             bail!("PLANNING_SOURCE_EVIDENCE_STALE_PLAN");
@@ -1185,12 +1186,15 @@ impl Registry {
     }
 
     pub fn planning_source_evidence(&self, revision: i64, hash: &str) -> Result<String> {
-        self.conn.query_row(
-            "SELECT evidence_json FROM planning_source_evidence
+        self.conn
+            .query_row(
+                "SELECT evidence_json FROM planning_source_evidence
              WHERE revision=?1 AND plan_hash=?2",
-            params![revision, hash],
-            |row| row.get(0),
-        ).optional()?.context("PLANNING_SOURCE_EVIDENCE_MISSING: cannot resume without source evidence")
+                params![revision, hash],
+                |row| row.get(0),
+            )
+            .optional()?
+            .context("PLANNING_SOURCE_EVIDENCE_MISSING: cannot resume without source evidence")
     }
 
     /// Recover the exact findings from the last persisted negative planning
