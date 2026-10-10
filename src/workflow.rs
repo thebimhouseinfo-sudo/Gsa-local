@@ -263,6 +263,14 @@ impl<'a> PlanningWorkflow<'a> {
             stage_started.elapsed().as_millis(),
             source_evidence.len()
         );
+        if let Some(revision) = durable.current_revision {
+            let prior = self.registry.current_plan_revision()?
+                .context("PLANNING_RESUME_PLAN_MISSING")?;
+            if prior.revision != revision || prior.hash == artifact.hash()? {
+                route.unchanged_revision();
+                return self.pause(&route, Some(revision));
+            }
+        }
         let mut current = self.registry.persist_plan_revision(&artifact)?;
         self.registry.checkpoint_planning_source_evidence(
             current.revision,
