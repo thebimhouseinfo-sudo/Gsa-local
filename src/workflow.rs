@@ -153,7 +153,7 @@ struct ProjectContext {
     truncated: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct PlanningSourceEvidence {
     tool: String,
     arguments: serde_json::Value,
@@ -263,6 +263,9 @@ impl<'a> PlanningWorkflow<'a> {
             source_evidence.len()
         );
         let mut current = self.registry.persist_plan_revision(&artifact)?;
+        self.registry.checkpoint_planning_source_evidence(
+            current.revision, &current.hash, &serde_json::to_string(&source_evidence)?,
+        )?;
 
         loop {
             if !route.enter_reviewer() {
@@ -317,6 +320,9 @@ impl<'a> PlanningWorkflow<'a> {
                     return self.pause(&route, Some(current.revision));
                 }
                 current = self.registry.persist_plan_revision(&revised)?;
+                self.registry.checkpoint_planning_source_evidence(
+                    current.revision, &current.hash, &serde_json::to_string(&source_evidence)?,
+                )?;
                 continue;
             }
 
@@ -406,6 +412,9 @@ impl<'a> PlanningWorkflow<'a> {
                             return self.pause(&route, Some(current.revision));
                         }
                         current = self.registry.persist_plan_revision(&revised)?;
+                self.registry.checkpoint_planning_source_evidence(
+                    current.revision, &current.hash, &serde_json::to_string(&source_evidence)?,
+                )?;
                         route = PlanningRoute::new(self.max_attempts);
                         continue;
                     }
@@ -434,6 +443,9 @@ impl<'a> PlanningWorkflow<'a> {
                 return self.pause(&route, Some(current.revision));
             }
             current = self.registry.persist_plan_revision(&fixed)?;
+                self.registry.checkpoint_planning_source_evidence(
+                    current.revision, &current.hash, &serde_json::to_string(&source_evidence)?,
+                )?;
             route.after_plan_revision();
         }
     }
