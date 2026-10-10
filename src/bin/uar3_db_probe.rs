@@ -15,7 +15,10 @@ fn main() -> Result<()> {
         Some(state) => {
             println!("UAR3_DB_STAGE={}", state.stage);
             println!("UAR3_DB_REVISION={:?}", state.current_revision);
-            println!("UAR3_DB_LEGACY_SNAPSHOT={}", state.legacy_snapshot_json.is_some());
+            println!(
+                "UAR3_DB_LEGACY_SNAPSHOT={}",
+                state.legacy_snapshot_json.is_some()
+            );
         }
         None => println!("UAR3_DB_STAGE=NO_ACTIVE_PLANNING"),
     }
