@@ -1214,21 +1214,25 @@ impl Registry {
         if findings.is_empty() {
             bail!("PLANNING_JOB_BUILDER_GAP_EMPTY");
         }
-        let current = self.current_plan_revision()?
+        let current = self
+            .current_plan_revision()?
             .context("PLANNING_JOB_BUILDER_GAP_PLAN_MISSING")?;
         if current.revision != revision || current.hash != hash {
             bail!("PLANNING_JOB_BUILDER_GAP_STALE_PLAN");
         }
         if !self.has_pass(ReviewActor::Reviewer, revision, hash)?
-            || !self.has_pass(ReviewActor::LocalCr, revision, hash)? {
+            || !self.has_pass(ReviewActor::LocalCr, revision, hash)?
+        {
             bail!("PLANNING_JOB_BUILDER_GAP_PASS_BINDING_MISSING");
         }
         let tx = self.conn.unchecked_transaction()?;
-        let stage: Option<(String, Option<i64>)> = tx.query_row(
-            "SELECT stage, current_revision FROM planning_run_state WHERE id=1",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        ).optional()?;
+        let stage: Option<(String, Option<i64>)> = tx
+            .query_row(
+                "SELECT stage, current_revision FROM planning_run_state WHERE id=1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
         if stage != Some(("JOB_BUILDER".to_string(), Some(revision))) {
             bail!("PLANNING_JOB_BUILDER_GAP_STAGE_CONFLICT");
         }
@@ -1282,12 +1286,15 @@ impl Registry {
         let findings = if verdict == "REVISE" {
             findings
         } else if verdict == "PASS" {
-            self.conn.query_row(
-                "SELECT findings_json FROM planning_job_builder_gaps
+            self.conn
+                .query_row(
+                    "SELECT findings_json FROM planning_job_builder_gaps
                  WHERE revision=?1 AND plan_hash=?2",
-                params![revision, hash],
-                |row| row.get(0),
-            ).optional()?.context("PLANNING_JOB_BUILDER_GAP_EVIDENCE_MISSING")?
+                    params![revision, hash],
+                    |row| row.get(0),
+                )
+                .optional()?
+                .context("PLANNING_JOB_BUILDER_GAP_EVIDENCE_MISSING")?
         } else {
             bail!("PLANNING_REVISION_EVIDENCE_CONFLICT: unsupported latest verdict");
         };
