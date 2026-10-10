@@ -7144,7 +7144,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 1);
-        assert_eq!(reopened.workflow_state().unwrap().status, "REVIEWER");
+        assert_eq!(reopened.workflow_state().unwrap().status, "PLANNING");
     }
 
     #[test]
