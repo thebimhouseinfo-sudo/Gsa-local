@@ -233,7 +233,9 @@ impl<'a> PlanningWorkflow<'a> {
                 .registry
                 .pending_planner_revision_findings(prior.revision, &prior.hash)?;
             let prior_evidence: Vec<PlanningSourceEvidence> = serde_json::from_str(
-                &self.registry.planning_source_evidence(prior.revision, &prior.hash)?,
+                &self
+                    .registry
+                    .planning_source_evidence(prior.revision, &prior.hash)?,
             )?;
             self.invoke_plan_agent(
                 AgentId::Planner,
