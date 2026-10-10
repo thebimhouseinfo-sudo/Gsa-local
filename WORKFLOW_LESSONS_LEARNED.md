@@ -3964,3 +3964,32 @@ existing Planner relative-tree primitive should be reused/generalized before cre
 LLC records the gap only
 -> no workflow/runtime change is authorized by this lesson alone
 ```
+
+---
+
+# 57. LLC — V2_STABLE Tester Run terminalization can accept PASS with no TEST Verification
+
+**lesson_id:** LLC-GSA-LOCAL-TESTER-RUN-COMPLETION-NO-VERIFICATION-20261010  
+**date:** 2026-10-10  
+**project:** Gsa-local / J-9067 (UAR-2B)  
+**trigger:** `SPECIAL_DETECTION_REQUIRED / CANONICAL_GATE_GAP`  
+**classification:** `WORKFLOW_GAP`  
+**subclassification:** `EVIDENCE_BINDING_GAP / FALSE_GREEN_GATE / EXACT_TARGET_MISMATCH`
+
+## 57.1 Evidence observed during drift reconciliation
+
+- The canonical GSA `run_complete` **prepare-only** call was made for the older Tester Run `R-8548` (`01a114cf-e807-7f32-bfc2-facdec908548`, execution contract `V2_STABLE`, input `target_revision=a1b96538...`).
+- The request proposed `lifecycle=COMPLETED`, `result=PASS` with **no** `run_verification_snapshot`, **no** `verification_refs`, and no matching durable current-target TEST Verification.
+- The API **returned a proposed `COMPLETED/PASS` Run update** instead of rejecting missing TEST evidence. This was a returned proposal, **not a persisted update**. The assistant intentionally did **not** call the Memory mutation path, and the Tester Run remains `IN_PROGRESS`.
+- Contrast: `run_complete` for UAR-2B Coder Run `R-AC9E` rejected a proposed successful completion with `CODER_COMPLETION_BLOCKED: exact GOAL_RECHECK record and its persisted verification ref are required for successful completion.`
+- The actual real Ollama probe **did PASS**, but at a later PR commit `6475f1e`; its tree equals squash-`main@75cf522d`. This is source-content equivalence, **not evidence that the historical Run target `a1b96538` passed exact-target testing**.
+
+## 57.2 Why this is a workflow issue
+
+A caller can receive a plausible successful Tester terminal Run record without supplying evidence binding, while Coder success already requires exact GOAL_RECHECK. A passing CI run or a successful real test on a later commit must not silently satisfy an older Tester Run. `run_complete` preparation success is **not** independent confirmation of product quality or lifecycle authority.
+
+## 57.3 Deferred review direction (not an immediate fix)
+
+A dedicated GSA workflow-contract review should assess the existing V2_STABLE and NEXT completion paths, compare how Reviewer/Tester Verification is persisted and consumed, and enforce *the intended evidence requirements at the appropriate declared boundary*. Any change must preserve compatibility with legitimate historical completed Runs and must not introduce fake retroactive target binding. Test both a missing-verification negative case and a true exact-target positive case. Record the observed rejection/acceptance and ensure no second terminalization after a blocked attempt.
+
+**LLC records only.** Do not treat this lesson as authorization to weaken UAR-2B gates, rebind immutable target revisions, or silently promote stale Tester Runs.
