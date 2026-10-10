@@ -1975,8 +1975,9 @@ mod tests {
         assert!(required.iter().any(|field| field == "status"));
         assert!(!required.iter().any(|field| field == "gap_findings"));
         assert!(!required.iter().any(|field| field == "graph"));
+        let serialized_parameters = tool.function.parameters.to_string();
         assert!(
-            !tool.function.parameters.to_string().contains("$ref"),
+            !serialized_parameters.contains("$ref"),
             "JobBuilder schema sent to Ollama must be self-contained"
         );
         assert!(tool.function.parameters["definitions"].is_null());
