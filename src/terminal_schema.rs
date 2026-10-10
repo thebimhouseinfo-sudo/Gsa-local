@@ -38,6 +38,7 @@ mod tests {
             "required":"value"
         }))
         .unwrap();
+        assert_eq!(parsed.required, "value");
         assert!(parsed.defaulted.is_empty());
         assert!(parsed.optional.is_none());
     }
