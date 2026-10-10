@@ -1147,6 +1147,33 @@ impl Registry {
         Ok(())
     }
 
+    /// Recover the exact findings from the last persisted negative planning
+    /// verdict for a revision. Never synthesize findings after a restart.
+    pub fn pending_planner_revision_findings(
+        &self,
+        revision: i64,
+        hash: &str,
+    ) -> Result<Vec<String>> {
+        let persisted: Option<(String, String)> = self.conn.query_row(
+            "SELECT verdict, findings FROM plan_verdicts
+             WHERE revision=?1 AND plan_hash=?2
+               AND actor IN ('REVIEWER', 'LOCAL_CR')
+             ORDER BY id DESC LIMIT 1",
+            params![revision, hash],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).optional()?;
+        let (verdict, findings) = persisted
+            .context("PLANNING_REVISION_EVIDENCE_MISSING: no persisted review findings")?;
+        if verdict != "REVISE" {
+            bail!("PLANNING_REVISION_EVIDENCE_CONFLICT: latest verdict is not REVISE");
+        }
+        let findings: Vec<String> = serde_json::from_str(&findings)?;
+        if findings.is_empty() {
+            bail!("PLANNING_REVISION_EVIDENCE_EMPTY: cannot replan without findings");
+        }
+        Ok(findings)
+    }
+
     pub fn has_pass(&self, actor: ReviewActor, revision: i64, hash: &str) -> Result<bool> {
         Ok(self.latest_verdict(actor, revision, hash)?.as_deref() == Some("PASS"))
     }
