@@ -254,9 +254,9 @@ fn reviewer_revision_and_cr_fix_routes_are_enforced() {
 
     assert!(route.enter_cr());
     route.cr_result(ReviewVerdict::Revise);
-    assert_eq!(route.stage, PlanningStage::InternalFix);
+    assert_eq!(route.stage, PlanningStage::Planner);
 
-    route.after_internal_fix();
+    route.after_plan_revision();
     assert_eq!(route.stage, PlanningStage::Reviewer);
 }
 
