@@ -614,9 +614,22 @@ impl Registry {
             let safely_completed = if status == "APPROVED" {
                 if let Some(revision) = revision {
                     let matches: i64 = tx.query_row(
-                        "SELECT COUNT(*) FROM approved_plan ap JOIN plan_revisions pr
-                         ON pr.revision=ap.revision AND pr.plan_hash=ap.plan_hash
-                         WHERE ap.id=1 AND ap.revision=?1",
+                        "SELECT COUNT(*) FROM approved_plan ap
+                         JOIN plan_revisions pr
+                           ON pr.revision=ap.revision AND pr.plan_hash=ap.plan_hash
+                         JOIN execution_graph eg
+                           ON eg.version=ap.execution_graph_version
+                          AND eg.plan_revision=ap.revision
+                          AND eg.plan_hash=ap.plan_hash AND eg.status='CURRENT'
+                         WHERE ap.id=1 AND ap.revision=?1
+                           AND (SELECT verdict FROM plan_verdicts
+                                WHERE actor='REVIEWER' AND revision=ap.revision
+                                  AND plan_hash=ap.plan_hash
+                                ORDER BY id DESC LIMIT 1)='PASS'
+                           AND (SELECT verdict FROM plan_verdicts
+                                WHERE actor='LOCAL_CR' AND revision=ap.revision
+                                  AND plan_hash=ap.plan_hash
+                                ORDER BY id DESC LIMIT 1)='PASS'",
                         params![revision],
                         |row| row.get(0),
                     )?;
@@ -686,7 +699,7 @@ impl Registry {
         }
 
         let tx = self.conn.unchecked_transaction()?;
-        let legacy_snapshot: Option<String> = tx
+        let legacy_snapshot: String = tx
             .query_row(
                 "SELECT legacy_snapshot_json FROM planning_run_state
                  WHERE id=1 AND stage='LEGACY_RECOVERY_REQUIRED'",
@@ -6859,6 +6872,45 @@ mod tests {
     }
 
     #[test]
+    fn approved_without_registered_current_graph_is_ambiguous_legacy() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("partial-approval.db");
+        {
+            let registry = Registry::open_at(&db).unwrap();
+            registry
+                .conn
+                .execute(
+                    "INSERT INTO plan_revisions (revision, plan_hash, content, created_at)
+                     VALUES (1, 'hash', '{}', 1)",
+                    [],
+                )
+                .unwrap();
+            registry
+                .conn
+                .execute(
+                    "INSERT INTO approved_plan (id, revision, plan_hash, execution_graph_version)
+                     VALUES (1, 1, 'hash', 0)",
+                    [],
+                )
+                .unwrap();
+            registry
+                .conn
+                .execute(
+                    "INSERT INTO plan_workflow_state (id, current_revision, status)
+                     VALUES (1, 1, 'APPROVED')",
+                    [],
+                )
+                .unwrap();
+        }
+        let reopened = Registry::open_at(&db).unwrap();
+        assert_eq!(
+            reopened.planning_run_state().unwrap().unwrap().stage,
+            "LEGACY_RECOVERY_REQUIRED"
+        );
+        assert_eq!(reopened.workflow_state().unwrap().status, "APPROVED");
+    }
+
+    #[test]
     fn completed_and_empty_legacy_are_not_mistaken_for_pending_recovery() {
         let dir = tempdir().unwrap();
         let db = dir.path().join("complete.db");
@@ -6876,10 +6928,29 @@ mod tests {
                 .conn
                 .execute(
                     "INSERT INTO approved_plan (id, revision, plan_hash, execution_graph_version)
-                 VALUES (1, 3, 'hash', 0)",
+                 VALUES (1, 3, 'hash', 1)",
                     [],
                 )
                 .unwrap();
+            registry
+                .conn
+                .execute(
+                    "INSERT INTO execution_graph (version, plan_revision, plan_hash, status)
+                     VALUES (1, 3, 'hash', 'CURRENT')",
+                    [],
+                )
+                .unwrap();
+            for actor in ["REVIEWER", "LOCAL_CR"] {
+                registry
+                    .conn
+                    .execute(
+                        "INSERT INTO plan_verdicts
+                         (actor, revision, plan_hash, verdict, findings, created_at)
+                         VALUES (?1, 3, 'hash', 'PASS', '[]', 1)",
+                        params![actor],
+                    )
+                    .unwrap();
+            }
             registry
                 .conn
                 .execute(
