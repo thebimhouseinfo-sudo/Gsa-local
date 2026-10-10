@@ -584,3 +584,31 @@ fn job_builder_plan_gap_returns_to_planner_with_exact_persisted_findings() {
     assert_eq!(resumed.reviewer_attempts, 0);
     assert_eq!(resumed.cr_attempts, 0);
 }
+
+#[test]
+fn planning_revision_and_source_evidence_commit_together_across_restart() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("state.db");
+    let binding;
+    {
+        let registry = Registry::open_at(&path).unwrap();
+        registry
+            .begin_or_resume_planning_run("atomic evidence")
+            .unwrap();
+        binding = registry
+            .persist_plan_revision_with_source_evidence(&sample("atomic"), "[]")
+            .unwrap();
+    }
+    let registry = Registry::open_at(&path).unwrap();
+    let durable = registry
+        .begin_or_resume_planning_run("atomic evidence")
+        .unwrap();
+    assert_eq!(durable.stage, "REVIEWER");
+    assert_eq!(durable.current_revision, Some(binding.revision));
+    assert_eq!(
+        registry
+            .planning_source_evidence(binding.revision, &binding.hash)
+            .unwrap(),
+        "[]"
+    );
+}
