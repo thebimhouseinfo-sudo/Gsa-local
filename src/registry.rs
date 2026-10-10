@@ -773,6 +773,15 @@ impl Registry {
         if updated != 1 {
             bail!("legacy planning recovery lost its singleton state");
         }
+        tx.execute(
+            "INSERT INTO plan_workflow_state
+             (id, current_revision, reviewer_attempts, cr_attempts, status)
+             VALUES (1, NULL, 0, 0, 'PLANNING')
+             ON CONFLICT(id) DO UPDATE SET
+                current_revision=NULL, reviewer_attempts=0,
+                cr_attempts=0, status='PLANNING'",
+            [],
+        )?;
         tx.commit()?;
         self.planning_run_state()?
             .context("committed planning run state was not found")
