@@ -254,7 +254,8 @@ impl<'a> PlanningWorkflow<'a> {
                 &project_context,
                 &[],
                 "Create the first Implementation Plan revision.",
-            ).await?
+            )
+            .await?
         };
         println!(
             "PLAN_STAGE Planner DONE elapsed_ms={} source_evidence={}",
