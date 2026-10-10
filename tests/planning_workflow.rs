@@ -551,6 +551,9 @@ fn job_builder_plan_gap_returns_to_planner_with_exact_persisted_findings() {
                 &[],
             )
             .unwrap();
+        registry
+            .set_workflow_state(Some(plan.revision), 3, 2, "JOB_BUILDER")
+            .unwrap();
         assert!(registry
             .pending_planner_revision_findings(plan.revision, &plan.hash)
             .is_err());
@@ -572,4 +575,10 @@ fn job_builder_plan_gap_returns_to_planner_with_exact_persisted_findings() {
         .pending_planner_revision_findings(state.current_revision.unwrap(), &current.hash)
         .unwrap();
     assert_eq!(findings, vec!["missing decomposition".to_string()]);
+    let revised = registry.persist_plan_revision(&sample("resolved gap")).unwrap();
+    let resumed = registry.planning_run_state().unwrap().unwrap();
+    assert_eq!(resumed.stage, "REVIEWER");
+    assert_eq!(resumed.current_revision, Some(revised.revision));
+    assert_eq!(resumed.reviewer_attempts, 0);
+    assert_eq!(resumed.cr_attempts, 0);
 }
