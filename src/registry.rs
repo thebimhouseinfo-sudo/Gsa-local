@@ -959,6 +959,15 @@ impl Registry {
             "#,
             params![revision],
         )?;
+        // A completed Planner submission advances the durable cursor in the
+        // same transaction as its immutable plan revision. Legacy-only test
+        // databases have no durable row and retain their original behavior.
+        tx.execute(
+            "UPDATE planning_run_state
+             SET current_revision=?1, stage='REVIEWER'
+             WHERE id=1 AND stage='PLANNER' AND requirement IS NOT NULL",
+            params![revision],
+        )?;
         tx.commit()?;
 
         Ok(PlanRevision {
