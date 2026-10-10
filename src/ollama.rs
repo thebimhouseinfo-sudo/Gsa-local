@@ -309,15 +309,31 @@ impl OllamaClient {
             consume_complete_lines(&mut pending, &mut assistant, &mut telemetry, &mut on_token)?;
         }
 
-        if !pending.is_empty() {
-            consume_chat_bytes(&pending, &mut assistant, &mut telemetry, &mut on_token)?;
-        }
-
-        Ok(OllamaChatResponse {
-            message: assistant,
-            telemetry,
-        })
+        finish_chat_stream_response(&pending, assistant, telemetry, &mut on_token)
     }
+}
+
+// A clean transport EOF is not the protocol's end-of-response marker.
+// Reject any partial stream before its tool calls can reach an executor.
+fn finish_chat_stream_response<F>(
+    pending: &[u8],
+    mut assistant: ChatMessage,
+    mut telemetry: OllamaChatTelemetry,
+    on_token: &mut F,
+) -> Result<OllamaChatResponse>
+where
+    F: FnMut(&str),
+{
+    if !pending.is_empty() {
+        consume_chat_bytes(pending, &mut assistant, &mut telemetry, on_token)?;
+    }
+    if !telemetry.done {
+        bail!("Ollama /api/chat stream ended before done=true; refusing partial response");
+    }
+    Ok(OllamaChatResponse {
+        message: assistant,
+        telemetry,
+    })
 }
 
 fn consume_complete_lines<F>(
@@ -519,6 +535,85 @@ mod tests {
         assert_eq!(telemetry.prompt_eval_count, Some(42));
         assert_eq!(telemetry.eval_count, Some(7));
         assert_eq!(telemetry.total_duration_ns, Some(1000));
+    }
+
+    #[test]
+    fn action_call_without_final_done_is_rejected() {
+        // The action is syntactically valid but must never escape the reader
+        // when the stream ends without a terminal protocol frame.
+        let message = json!({
+            "message": {
+                "role": "assistant",
+                "tool_calls": [{
+                    "type": "function",
+                    "function": {
+                        "name": "project_read",
+                        "arguments": {"path": "a.txt"}
+                    }
+                }]
+            },
+            "done": false
+        });
+        let mut pending = format!("{message}\n").into_bytes();
+        let mut assistant = ChatMessage::assistant("");
+        let mut telemetry = OllamaChatTelemetry::default();
+        consume_complete_lines(&mut pending, &mut assistant, &mut telemetry, &mut |_| {}).unwrap();
+        assert!(pending.is_empty());
+        assert_eq!(assistant.tool_calls.len(), 1);
+        assert!(!telemetry.done);
+        let error =
+            finish_chat_stream_response(&pending, assistant, telemetry, &mut |_| {}).unwrap_err();
+        assert!(error.to_string().contains("before done=true"));
+    }
+
+    #[test]
+    fn complete_stream_accepts_action_and_terminal_telemetry_without_final_newline() {
+        let action = json!({
+            "message": {
+                "role": "assistant",
+                "tool_calls": [{
+                    "type": "function",
+                    "function": {"name": "project_read", "arguments": {"path": "a.txt"}}
+                }]
+            },
+            "done": false
+        });
+        let completed = json!({
+            "model": "local-model",
+            "done": true,
+            "done_reason": "stop",
+            "total_duration": 321,
+            "eval_count": 9
+        });
+        let mut pending = format!("{action}\n{completed}").into_bytes();
+        let mut assistant = ChatMessage::assistant("");
+        let mut telemetry = OllamaChatTelemetry {
+            requested_num_ctx: 16384,
+            ..OllamaChatTelemetry::default()
+        };
+        consume_complete_lines(&mut pending, &mut assistant, &mut telemetry, &mut |_| {}).unwrap();
+        assert!(!telemetry.done);
+        assert!(!pending.is_empty());
+
+        let response =
+            finish_chat_stream_response(&pending, assistant, telemetry, &mut |_| {}).unwrap();
+        assert!(response.telemetry.done);
+        assert_eq!(response.telemetry.model.as_deref(), Some("local-model"));
+        assert_eq!(response.telemetry.requested_num_ctx, 16384);
+        assert_eq!(response.telemetry.total_duration_ns, Some(321));
+        assert_eq!(response.telemetry.eval_count, Some(9));
+        assert_eq!(response.message.tool_calls.len(), 1);
+        assert_eq!(response.message.tool_calls[0].function.name, "project_read");
+    }
+
+    #[test]
+    fn incomplete_text_only_stream_is_rejected_too() {
+        let mut pending = b"{\"message\":{\"role\":\"assistant\",\"content\":\"partial\"},\"done\":false}\n".to_vec();
+        let mut assistant = ChatMessage::assistant("");
+        let mut telemetry = OllamaChatTelemetry::default();
+        consume_complete_lines(&mut pending, &mut assistant, &mut telemetry, &mut |_| {}).unwrap();
+        assert_eq!(assistant.content, "partial");
+        assert!(finish_chat_stream_response(&pending, assistant, telemetry, &mut |_| {}).is_err());
     }
 
     #[test]
