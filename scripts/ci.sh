@@ -3,7 +3,9 @@ set -euo pipefail
 
 # Run cheap script syntax and adversarial verifier controls before compiling
 # Rust. A broken guard is a failing CI, not an optional post-test warning.
-bash -n scripts/ci.sh scripts/real_ollama_probe.sh scripts/verify_test_execution.sh
+for script in scripts/ci.sh scripts/real_ollama_probe.sh scripts/verify_test_execution.sh; do
+  bash -n "$script"
+done
 bash scripts/verify_test_execution.sh --self-test
 
 cargo fmt --check
