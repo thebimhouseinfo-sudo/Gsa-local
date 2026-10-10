@@ -400,7 +400,9 @@ fn human_recovery_restarts_both_cursors_without_erasing_plan_history() {
     {
         let registry = Registry::open_at(&path).unwrap();
         registry.begin_plan_workflow().unwrap();
-        registry.persist_plan_revision(&sample("unfinished legacy plan")).unwrap();
+        registry
+            .persist_plan_revision(&sample("unfinished legacy plan"))
+            .unwrap();
     }
     let registry = Registry::open_at(&path).unwrap();
     assert_eq!(
@@ -427,11 +429,18 @@ fn human_recovery_restarts_both_cursors_without_erasing_plan_history() {
     assert_eq!(legacy.cr_attempts, 0);
     assert_eq!(legacy.status, "PLANNING");
     assert_eq!(
-        registry.current_plan_revision().unwrap().unwrap().artifact.goal,
+        registry
+            .current_plan_revision()
+            .unwrap()
+            .unwrap()
+            .artifact
+            .goal,
         "unfinished legacy plan"
     );
     assert_eq!(
-        registry.begin_or_resume_planning_run("new exact intent").unwrap(),
+        registry
+            .begin_or_resume_planning_run("new exact intent")
+            .unwrap(),
         resumed
     );
 }
