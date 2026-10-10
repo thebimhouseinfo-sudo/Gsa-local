@@ -7,8 +7,8 @@ use crate::{
     ollama::{ChatMessage, OllamaClient, ToolCall, ToolDefinition},
     plan::{PlanArtifact, PlanRevision},
     registry::{
-        ChecklistClaim, CodeCrBoundaryWork, CodeTodoState, PlanBinding, PlanningRunState, Registry, ReviewActor,
-        ReviewVerdict,
+        ChecklistClaim, CodeCrBoundaryWork, CodeTodoState, PlanBinding, PlanningRunState, Registry,
+        ReviewActor, ReviewVerdict,
     },
     session::Session,
     terminal_schema::typed_terminal_tool,
@@ -516,7 +516,10 @@ impl<'a> PlanningWorkflow<'a> {
             return Box::pin(self.run(requirement)).await;
         }
 
-        if !self.registry.has_pass(ReviewActor::Reviewer, revision, &current.hash)? {
+        if !self
+            .registry
+            .has_pass(ReviewActor::Reviewer, revision, &current.hash)?
+        {
             bail!("PLANNING_RESUME_REVIEWER_PASS_MISSING");
         }
         let attempt = state.cr_attempts.max(1);
