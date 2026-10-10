@@ -594,7 +594,9 @@ impl Registry {
     fn migrate_planning_run_state(&self) -> Result<()> {
         let tx = self.conn.unchecked_transaction()?;
         let existing: Option<i64> = tx
-            .query_row("SELECT id FROM planning_run_state WHERE id=1", [], |row| row.get(0))
+            .query_row("SELECT id FROM planning_run_state WHERE id=1", [], |row| {
+                row.get(0)
+            })
             .optional()?;
         if existing.is_some() {
             tx.commit()?;
@@ -623,10 +625,7 @@ impl Registry {
                     false
                 }
             } else {
-                status == "IDLE"
-                    && revision.is_none()
-                    && reviewer_attempts == 0
-                    && cr_attempts == 0
+                status == "IDLE" && revision.is_none() && reviewer_attempts == 0 && cr_attempts == 0
             };
 
             if !safely_completed {
@@ -2038,7 +2037,10 @@ impl Registry {
                 reason: if needs_human {
                     "LEGACY_RECOVERY_REQUIRED: Human must affirmatively abandon old planning before starting a new requirement".into()
                 } else {
-                    format!("planning stage {} requires the durable planning resume router", planning.stage)
+                    format!(
+                        "planning stage {} requires the durable planning resume router",
+                        planning.stage
+                    )
                 },
             });
         }
@@ -6726,7 +6728,11 @@ mod tests {
         let state = registry.planning_run_state().unwrap().unwrap();
         assert_eq!(state.stage, "LEGACY_RECOVERY_REQUIRED");
         assert!(state.requirement.is_none());
-        assert!(state.legacy_snapshot_json.as_ref().unwrap().contains("REVIEWER"));
+        assert!(state
+            .legacy_snapshot_json
+            .as_ref()
+            .unwrap()
+            .contains("REVIEWER"));
         let old = registry.workflow_state().unwrap();
         assert_eq!(old.current_revision, Some(7));
         assert_eq!(old.status, "REVIEWER");
@@ -6746,18 +6752,28 @@ mod tests {
         registry.migrate_planning_run_state().unwrap();
 
         let count_events = || -> i64 {
-            registry.conn.query_row(
-                "SELECT COUNT(*) FROM events WHERE kind='LEGACY_PLANNING_ABANDONED'",
-                [],
-                |row| row.get(0),
-            ).unwrap()
+            registry
+                .conn
+                .query_row(
+                    "SELECT COUNT(*) FROM events WHERE kind='LEGACY_PLANNING_ABANDONED'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap()
         };
         for input in ["", "   ", "Create implementation plan"] {
-            assert!(registry.confirm_legacy_planning_recovery(input, false).is_err());
+            assert!(registry
+                .confirm_legacy_planning_recovery(input, false)
+                .is_err());
         }
-        assert!(registry.confirm_legacy_planning_recovery("  ", true).is_err());
+        assert!(registry
+            .confirm_legacy_planning_recovery("  ", true)
+            .is_err());
         assert_eq!(count_events(), 0);
-        assert_eq!(registry.planning_run_state().unwrap().unwrap().stage, "LEGACY_RECOVERY_REQUIRED");
+        assert_eq!(
+            registry.planning_run_state().unwrap().unwrap().stage,
+            "LEGACY_RECOVERY_REQUIRED"
+        );
         assert_eq!(registry.workflow_state().unwrap().status, "PLANNING");
     }
 
@@ -6768,22 +6784,31 @@ mod tests {
         {
             let registry = Registry::open_at(&db).unwrap();
             registry.begin_plan_workflow().unwrap();
-            registry.set_workflow_state(Some(4), 1, 0, "REVIEWER").unwrap();
+            registry
+                .set_workflow_state(Some(4), 1, 0, "REVIEWER")
+                .unwrap();
         }
         let registry = Registry::open_at(&db).unwrap();
         let requirement = "Create an implementation plan for the new requirements.";
-        let state = registry.confirm_legacy_planning_recovery(requirement, true).unwrap();
+        let state = registry
+            .confirm_legacy_planning_recovery(requirement, true)
+            .unwrap();
         assert_eq!(state.stage, "PLANNER");
         assert_eq!(state.requirement.as_deref(), Some(requirement));
         assert!(state.legacy_snapshot_json.is_some());
         assert!(registry.begin_plan_workflow().is_err());
-        assert!(registry.confirm_legacy_planning_recovery(requirement, true).is_err());
+        assert!(registry
+            .confirm_legacy_planning_recovery(requirement, true)
+            .is_err());
 
-        let (kind, payload): (String, String) = registry.conn.query_row(
-            "SELECT kind, payload FROM events WHERE kind='LEGACY_PLANNING_ABANDONED'",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        ).unwrap();
+        let (kind, payload): (String, String) = registry
+            .conn
+            .query_row(
+                "SELECT kind, payload FROM events WHERE kind='LEGACY_PLANNING_ABANDONED'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
         assert_eq!(kind, "LEGACY_PLANNING_ABANDONED");
         let event: serde_json::Value = serde_json::from_str(&payload).unwrap();
         assert_eq!(event["new_requirement"], requirement);
@@ -6791,11 +6816,23 @@ mod tests {
         drop(registry);
 
         let reopened = Registry::open_at(&db).unwrap();
-        assert_eq!(reopened.planning_run_state().unwrap().unwrap().requirement.as_deref(), Some(requirement));
-        let count: i64 = reopened.conn.query_row(
-            "SELECT COUNT(*) FROM events WHERE kind='LEGACY_PLANNING_ABANDONED'",
-            [], |row| row.get(0),
-        ).unwrap();
+        assert_eq!(
+            reopened
+                .planning_run_state()
+                .unwrap()
+                .unwrap()
+                .requirement
+                .as_deref(),
+            Some(requirement)
+        );
+        let count: i64 = reopened
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM events WHERE kind='LEGACY_PLANNING_ABANDONED'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(count, 1);
         assert_eq!(reopened.workflow_state().unwrap().status, "REVIEWER");
     }
@@ -6805,12 +6842,17 @@ mod tests {
         let (_dir, registry) = registry();
         registry.begin_plan_workflow().unwrap();
         registry.migrate_planning_run_state().unwrap();
-        registry.conn.execute_batch(
-            "CREATE TRIGGER reject_legacy_abandon BEFORE INSERT ON events
+        registry
+            .conn
+            .execute_batch(
+                "CREATE TRIGGER reject_legacy_abandon BEFORE INSERT ON events
              WHEN NEW.kind='LEGACY_PLANNING_ABANDONED'
              BEGIN SELECT RAISE(ABORT, 'blocked event'); END;",
-        ).unwrap();
-        assert!(registry.confirm_legacy_planning_recovery("new plan", true).is_err());
+            )
+            .unwrap();
+        assert!(registry
+            .confirm_legacy_planning_recovery("new plan", true)
+            .is_err());
         let state = registry.planning_run_state().unwrap().unwrap();
         assert_eq!(state.stage, "LEGACY_RECOVERY_REQUIRED");
         assert!(state.requirement.is_none());
@@ -6822,19 +6864,31 @@ mod tests {
         let db = dir.path().join("complete.db");
         {
             let registry = Registry::open_at(&db).unwrap();
-            registry.conn.execute(
-                "INSERT INTO plan_revisions (revision, plan_hash, content, created_at)
-                 VALUES (3, 'hash', '{}', 1)", [],
-            ).unwrap();
-            registry.conn.execute(
-                "INSERT INTO approved_plan (id, revision, plan_hash, execution_graph_version)
-                 VALUES (1, 3, 'hash', 0)", [],
-            ).unwrap();
-            registry.conn.execute(
-                "INSERT INTO plan_workflow_state
+            registry
+                .conn
+                .execute(
+                    "INSERT INTO plan_revisions (revision, plan_hash, content, created_at)
+                 VALUES (3, 'hash', '{}', 1)",
+                    [],
+                )
+                .unwrap();
+            registry
+                .conn
+                .execute(
+                    "INSERT INTO approved_plan (id, revision, plan_hash, execution_graph_version)
+                 VALUES (1, 3, 'hash', 0)",
+                    [],
+                )
+                .unwrap();
+            registry
+                .conn
+                .execute(
+                    "INSERT INTO plan_workflow_state
                  (id, current_revision, reviewer_attempts, cr_attempts, status)
-                 VALUES (1, 3, 1, 1, 'APPROVED')", [],
-            ).unwrap();
+                 VALUES (1, 3, 1, 1, 'APPROVED')",
+                    [],
+                )
+                .unwrap();
         }
         let reopened = Registry::open_at(&db).unwrap();
         assert!(reopened.planning_run_state().unwrap().is_none());
