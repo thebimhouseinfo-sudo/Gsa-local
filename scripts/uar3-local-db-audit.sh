@@ -13,6 +13,7 @@ trap 'rm -rf "$tmp"' EXIT
 
 python3 - "$1" "$tmp/snapshot.db" "$tmp/counts.json" <<'PY'
 import json
+import os
 import sqlite3
 import sys
 from pathlib import Path
@@ -22,11 +23,27 @@ snapshot = Path(sys.argv[2])
 try:
     readonly = sqlite3.connect(original.as_uri() + "?mode=ro", uri=True)
     readonly.execute("PRAGMA schema_version").fetchone()
-except sqlite3.Error as exc:
-    raise SystemExit(
-        f"UAR3_SOURCE_READ_FAILED={type(exc).__name__}: {exc}; "
-        "check SQLite permissions and WAL/-shm sidecars"
-    )
+except (sqlite3.Error, OSError) as exc:
+    print(f"UAR3_SOURCE_READ_FAILED={type(exc).__name__}: {exc}", file=sys.stderr)
+    for candidate in (original.parent, original, Path(str(original) + "-wal"), Path(str(original) + "-shm")):
+        try:
+            st = candidate.stat()
+            print(
+                f"UAR3_PATH_DIAGNOSTIC={candidate.name} exists=1 "
+                f"mode={oct(st.st_mode & 0o777)} size={st.st_size} "
+                f"readable={os.access(candidate, os.R_OK)} "
+                f"writable={os.access(candidate, os.W_OK)}",
+                file=sys.stderr,
+            )
+        except OSError as detail:
+            print(f"UAR3_PATH_DIAGNOSTIC={candidate.name} error={detail}", file=sys.stderr)
+    try:
+        with original.open("rb") as source:
+            signature = source.read(16)
+        print(f"UAR3_SQLITE_HEADER_VALID={int(signature == b'SQLite format 3\\x00')}", file=sys.stderr)
+    except OSError as detail:
+        print(f"UAR3_HEADER_READ_FAILED={detail}", file=sys.stderr)
+    raise SystemExit("UAR3_READONLY_OPEN_BLOCKED: no fallback to writable mode or immutable WAL snapshot")
 
 try:
     copy = sqlite3.connect(str(snapshot))
