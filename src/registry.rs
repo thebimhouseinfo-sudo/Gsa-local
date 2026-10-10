@@ -969,6 +969,14 @@ impl Registry {
             |row| row.get(0),
         )?;
 
+        let reset_after_gap: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM planning_run_state p
+             JOIN planning_job_builder_gaps g
+               ON g.revision=p.current_revision
+             WHERE p.id=1 AND p.stage='PLANNER'",
+            [],
+            |row| row.get(0),
+        )?;
         tx.execute(
             "INSERT INTO plan_revisions (revision, plan_hash, content, created_at) VALUES (?1, ?2, ?3, ?4)",
             params![revision, hash, content, unix_seconds()?],
@@ -980,18 +988,22 @@ impl Registry {
             VALUES (1, ?1, 0, 0, 'REVIEWER')
             ON CONFLICT(id) DO UPDATE SET
                 current_revision=excluded.current_revision,
+                reviewer_attempts=CASE WHEN ?2>0 THEN 0 ELSE reviewer_attempts END,
+                cr_attempts=CASE WHEN ?2>0 THEN 0 ELSE cr_attempts END,
                 status='REVIEWER'
             "#,
-            params![revision],
+            params![revision, reset_after_gap],
         )?;
         // A completed Planner submission advances the durable cursor in the
         // same transaction as its immutable plan revision. Legacy-only test
         // databases have no durable row and retain their original behavior.
         tx.execute(
             "UPDATE planning_run_state
-             SET current_revision=?1, stage='REVIEWER'
+             SET current_revision=?1, stage='REVIEWER',
+                 reviewer_attempts=CASE WHEN ?2>0 THEN 0 ELSE reviewer_attempts END,
+                 cr_attempts=CASE WHEN ?2>0 THEN 0 ELSE cr_attempts END
              WHERE id=1 AND stage='PLANNER' AND requirement IS NOT NULL",
-            params![revision],
+            params![revision, reset_after_gap],
         )?;
         tx.commit()?;
 
