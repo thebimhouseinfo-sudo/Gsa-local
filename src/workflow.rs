@@ -462,7 +462,10 @@ impl<'a> PlanningWorkflow<'a> {
         requirement: &str,
         state: &PlanningRunState,
     ) -> Result<PlanningOutcome> {
-        if state.stage != "REVIEWER" && state.stage != "LOCAL_CR" {
+        if state.stage != "REVIEWER"
+            && state.stage != "LOCAL_CR"
+            && state.stage != "JOB_BUILDER"
+        {
             bail!(
                 "PLANNING_RESUME_STAGE_REQUIRED: stage={} revision={:?}; no supported safe replay",
                 state.stage,
@@ -486,6 +489,43 @@ impl<'a> PlanningWorkflow<'a> {
         )?;
         let mut project_context = build_project_context(self.project_root)?;
         project_context.tester_evidence = self.registry.current_tester_evidence_catalog()?;
+
+        if state.stage == "JOB_BUILDER" {
+            if !self
+                .registry
+                .has_pass(ReviewActor::Reviewer, revision, &current.hash)?
+                || !self
+                    .registry
+                    .has_pass(ReviewActor::LocalCr, revision, &current.hash)?
+            {
+                bail!("PLANNING_JOB_BUILDER_PASS_BINDING_MISSING");
+            }
+            let job_builder = self
+                .invoke_job_builder(requirement, &current, &project_context, &source_evidence)
+                .await?;
+            return match job_builder {
+                JobBuilderOutcome::Ready(graph) => {
+                    let binding = self
+                        .registry
+                        .approve_current_plan(current.revision, &current.hash)?;
+                    let graph_version = self.registry.register_execution_graph(
+                        binding.revision,
+                        &binding.hash,
+                        &graph,
+                    )?;
+                    Ok(PlanningOutcome::Registered {
+                        plan: binding,
+                        graph_version,
+                    })
+                }
+                JobBuilderOutcome::PlanGap(findings) => {
+                    bail!(
+                        "PLANNING_JOB_BUILDER_PLAN_GAP_NOT_DURABLE: {}",
+                        findings.join("; ")
+                    )
+                }
+            };
+        }
 
         if state.stage == "REVIEWER" {
             let attempt = state.reviewer_attempts.max(1);
@@ -550,7 +590,7 @@ impl<'a> PlanningWorkflow<'a> {
         if verdict == ReviewVerdict::Revise {
             return Box::pin(self.run(requirement)).await;
         }
-        bail!("PLANNING_RESUME_STAGE_REQUIRED: JOB_BUILDER exact-once registration is not ready")
+        Box::pin(self.run(requirement)).await
     }
 
     fn pause(&self, route: &PlanningRoute, revision: Option<i64>) -> Result<PlanningOutcome> {
