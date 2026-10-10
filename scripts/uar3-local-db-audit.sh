@@ -40,7 +40,8 @@ except (sqlite3.Error, OSError) as exc:
     try:
         with original.open("rb") as source:
             signature = source.read(16)
-        print(f"UAR3_SQLITE_HEADER_VALID={int(signature == b'SQLite format 3\\x00')}", file=sys.stderr)
+        header_valid = signature == bytes.fromhex("53514c69746520666f726d6174203300")
+        print(f"UAR3_SQLITE_HEADER_VALID={int(header_valid)}", file=sys.stderr)
     except OSError as detail:
         print(f"UAR3_HEADER_READ_FAILED={detail}", file=sys.stderr)
     raise SystemExit("UAR3_READONLY_OPEN_BLOCKED: no fallback to writable mode or immutable WAL snapshot")
