@@ -493,10 +493,14 @@ fn planning_source_evidence_checkpoint_is_immutable_and_survives_restart() {
     let revision;
     {
         let registry = Registry::open_at(&path).unwrap();
-        registry.begin_or_resume_planning_run("durable evidence").unwrap();
+        registry
+            .begin_or_resume_planning_run("durable evidence")
+            .unwrap();
         let plan = registry.persist_plan_revision(&sample("evidence")).unwrap();
         revision = (plan.revision, plan.hash);
-        assert!(registry.planning_source_evidence(revision.0, &revision.1).is_err());
+        assert!(registry
+            .planning_source_evidence(revision.0, &revision.1)
+            .is_err());
         registry
             .checkpoint_planning_source_evidence(revision.0, &revision.1, "[]")
             .unwrap();
@@ -509,7 +513,9 @@ fn planning_source_evidence_checkpoint_is_immutable_and_survives_restart() {
     }
     let registry = Registry::open_at(&path).unwrap();
     assert_eq!(
-        registry.planning_source_evidence(revision.0, &revision.1).unwrap(),
+        registry
+            .planning_source_evidence(revision.0, &revision.1)
+            .unwrap(),
         "[]"
     );
     assert!(registry
@@ -523,26 +529,47 @@ fn job_builder_plan_gap_returns_to_planner_with_exact_persisted_findings() {
     let path = dir.path().join("state.db");
     {
         let registry = Registry::open_at(&path).unwrap();
-        registry.begin_or_resume_planning_run("job builder gap").unwrap();
+        registry
+            .begin_or_resume_planning_run("job builder gap")
+            .unwrap();
         let plan = registry.persist_plan_revision(&sample("gap")).unwrap();
         registry
-            .record_plan_verdict(ReviewActor::Reviewer, plan.revision, &plan.hash, ReviewVerdict::Pass, &[])
+            .record_plan_verdict(
+                ReviewActor::Reviewer,
+                plan.revision,
+                &plan.hash,
+                ReviewVerdict::Pass,
+                &[],
+            )
             .unwrap();
         registry
-            .record_plan_verdict(ReviewActor::LocalCr, plan.revision, &plan.hash, ReviewVerdict::Pass, &[])
+            .record_plan_verdict(
+                ReviewActor::LocalCr,
+                plan.revision,
+                &plan.hash,
+                ReviewVerdict::Pass,
+                &[],
+            )
             .unwrap();
-        assert!(registry.pending_planner_revision_findings(plan.revision, &plan.hash).is_err());
+        assert!(registry
+            .pending_planner_revision_findings(plan.revision, &plan.hash)
+            .is_err());
         registry
-            .record_job_builder_plan_gap(plan.revision, &plan.hash, &["missing decomposition".to_string()])
+            .record_job_builder_plan_gap(
+                plan.revision,
+                &plan.hash,
+                &["missing decomposition".to_string()],
+            )
             .unwrap();
     }
     let registry = Registry::open_at(&path).unwrap();
-    let state = registry.begin_or_resume_planning_run("job builder gap").unwrap();
+    let state = registry
+        .begin_or_resume_planning_run("job builder gap")
+        .unwrap();
     assert_eq!(state.stage, "PLANNER");
-    assert_eq!(
-        registry
-            .pending_planner_revision_findings(state.current_revision.unwrap(), &registry.current_plan_revision().unwrap().unwrap().hash)
-            .unwrap(),
-        vec!["missing decomposition".to_string()]
-    );
+    let current = registry.current_plan_revision().unwrap().unwrap();
+    let findings = registry
+        .pending_planner_revision_findings(state.current_revision.unwrap(), &current.hash)
+        .unwrap();
+    assert_eq!(findings, vec!["missing decomposition".to_string()]);
 }
