@@ -133,11 +133,11 @@ impl PlanningRoute {
     pub fn cr_result(&mut self, verdict: ReviewVerdict) {
         self.stage = match verdict {
             ReviewVerdict::Pass => PlanningStage::Approved,
-            ReviewVerdict::Revise => PlanningStage::InternalFix,
+            ReviewVerdict::Revise => PlanningStage::Planner,
         };
     }
 
-    pub fn after_internal_fix(&mut self) {
+    pub fn after_plan_revision(&mut self) {
         self.stage = PlanningStage::Reviewer;
     }
 
@@ -386,13 +386,13 @@ impl<'a> PlanningWorkflow<'a> {
             self.persist_route(&route, Some(current.revision))?;
             let (fixed, discovered) = self
                 .invoke_plan_agent(
-                    AgentId::InternalFix,
+                    AgentId::Planner,
                     requirement,
                     Some(&current),
                     &cr.findings,
                     &project_context,
                     &source_evidence,
-                    "Repair only the CR findings inside the existing planning scope. Return a complete revised plan.",
+                    "Revise the Implementation Plan to address Local CR findings within the approved scope. Return a complete revised plan.",
                 )
                 .await?;
             source_evidence = discovered;
@@ -401,7 +401,7 @@ impl<'a> PlanningWorkflow<'a> {
                 return self.pause(&route, Some(current.revision));
             }
             current = self.registry.persist_plan_revision(&fixed)?;
-            route.after_internal_fix();
+            route.after_plan_revision();
         }
     }
 
