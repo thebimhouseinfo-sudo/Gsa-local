@@ -1969,6 +1969,34 @@ mod tests {
     }
 
     #[test]
+    fn all_workflow_terminal_tools_export_self_contained_schemas() {
+        // Shared inlining is used by all roles, not just the Tester path that
+        // exposed the Ollama HTTP 500. Regressions must fail offline here.
+        for tool in [
+            plan_tool(),
+            review_tool(),
+            cr_tool(),
+            execution_graph_tool(),
+            code_checkpoint_tool(),
+            code_cr_review_tool(),
+            code_review_tool(),
+        ] {
+            let schema = &tool.function.parameters;
+            assert_eq!(schema["type"], "object", "tool {}", tool.function.name);
+            assert!(
+                schema["properties"].as_object().is_some_and(|map| !map.is_empty()),
+                "tool {} must expose typed fields",
+                tool.function.name
+            );
+            assert!(
+                !schema.to_string().contains("$ref"),
+                "tool {} must not expose nested refs to Ollama",
+                tool.function.name
+            );
+        }
+    }
+
+    #[test]
     fn execution_graph_schema_is_typed_and_conditionals_are_runtime_validated() {
         let tool = execution_graph_tool();
         let required = required_field_names(&tool);
