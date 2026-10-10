@@ -31,6 +31,12 @@ The UAR-3 **SQLite persistence checkpoint 1 is implemented**, but the shared pla
 
 The historical J-177F freeze text in the three plan documents is kept only for traceability and no longer serves as an active-work instruction. `Cargo.lock` is absent from the source tree, so deterministic dependency pinning remains a separate hardening task. Do not invent lockfile contents.
 
+## UAR-3 checkpoint 2 — Planner owns Local CR revisions (2026-10-10)
+
+- `main@ffa625387c6ad3a3f777c9023c914fec23c8755a` changes the Local CR `REVISE` route to **Planner**, not InternalFix. The revision prompt invokes `AgentId::Planner`; the route and in-module/integration tests assert Planner ownership.
+- Exact-head macOS CI [run 38064916151](https://github.com/thebimhouseinfo-sudo/Gsa-local/actions/runs/38064916151) **PASS**. This is a bounded UAR-3 correction, **not** an UAR-3 completion or a real Ollama test.
+- `PlanningWorkflow::run` still uses the legacy entrypoint; stage-specific resume and explicit CLI Human recovery integration remain unimplemented. SQLite checkpoint 1 remains partial. Do not mark UAR-3 complete or ask Human for final Mac acceptance yet.
+
 ## Next governed checkpoint — UAR-3 continuation
 
 1. **Prior Human-invoked code CR gate PASS** at exact `main@5b2b563`: CRITIC_REVIEW `01a124f4-9b79-737c-8f3f-8bd25a5e3f49`, persisted and read back. The earlier CR FAIL remains historically true on `main@1a1ab9b` but its stream-`done=true` finding was fixed. There is **no automatic CR requirement for each small UAR-3 edit**; J-9067 requires another Human CR after UAR-3..6.
