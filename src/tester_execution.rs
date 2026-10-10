@@ -1044,7 +1044,7 @@ mod tests {
         }
 
         assert!(
-            !tool.function.parameters.to_string().contains("\\\"$ref\\\""),
+            !tool.function.parameters.to_string().contains("$ref"),
             "Tester terminal tool must not send reference-bearing JSON Schema"
         );
         assert!(
