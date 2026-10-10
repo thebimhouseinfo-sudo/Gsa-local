@@ -273,10 +273,8 @@ impl<'a> PlanningWorkflow<'a> {
                 return self.pause(&route, Some(revision));
             }
         }
-        let mut current = self.registry.persist_plan_revision(&artifact)?;
-        self.registry.checkpoint_planning_source_evidence(
-            current.revision,
-            &current.hash,
+        let mut current = self.registry.persist_plan_revision_with_source_evidence(
+            &artifact,
             &serde_json::to_string(&source_evidence)?,
         )?;
 
@@ -332,10 +330,8 @@ impl<'a> PlanningWorkflow<'a> {
                     route.unchanged_revision();
                     return self.pause(&route, Some(current.revision));
                 }
-                current = self.registry.persist_plan_revision(&revised)?;
-                self.registry.checkpoint_planning_source_evidence(
-                    current.revision,
-                    &current.hash,
+                current = self.registry.persist_plan_revision_with_source_evidence(
+                    &revised,
                     &serde_json::to_string(&source_evidence)?,
                 )?;
                 continue;
@@ -425,10 +421,8 @@ impl<'a> PlanningWorkflow<'a> {
                         if revised.hash()? == current.hash {
                             return self.pause(&route, Some(current.revision));
                         }
-                        current = self.registry.persist_plan_revision(&revised)?;
-                        self.registry.checkpoint_planning_source_evidence(
-                            current.revision,
-                            &current.hash,
+                        current = self.registry.persist_plan_revision_with_source_evidence(
+                            &revised,
                             &serde_json::to_string(&source_evidence)?,
                         )?;
                         route = PlanningRoute::new(self.max_attempts);
@@ -458,10 +452,8 @@ impl<'a> PlanningWorkflow<'a> {
                 route.unchanged_revision();
                 return self.pause(&route, Some(current.revision));
             }
-            current = self.registry.persist_plan_revision(&fixed)?;
-            self.registry.checkpoint_planning_source_evidence(
-                current.revision,
-                &current.hash,
+            current = self.registry.persist_plan_revision_with_source_evidence(
+                &fixed,
                 &serde_json::to_string(&source_evidence)?,
             )?;
             route.after_plan_revision();
