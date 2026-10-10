@@ -673,7 +673,8 @@ Do not edit Tester-owned artifacts as the product fix. Use the structured repair
                     println!("LEGACY_RECOVERY_CANCELLED: previous planning history unchanged.");
                     return Ok(());
                 }
-                self.registry.confirm_legacy_planning_recovery(requirement, true)?;
+                self.registry
+                    .confirm_legacy_planning_recovery(requirement, true)?;
                 println!("LEGACY_PLANNING_ABANDONED: old snapshot retained in durable history.");
             }
         }
