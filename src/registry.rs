@@ -698,7 +698,9 @@ impl Registry {
                 bail!("PLANNING_ALREADY_REGISTERED: start a new reviewed planning intent");
             }
             if state.requirement.as_deref() != Some(requirement) {
-                bail!("PLANNING_REQUIREMENT_CONFLICT: active run belongs to a different requirement");
+                bail!(
+                    "PLANNING_REQUIREMENT_CONFLICT: active run belongs to a different requirement"
+                );
             }
             return Ok(state);
         }
