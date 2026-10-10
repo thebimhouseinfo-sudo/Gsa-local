@@ -2065,8 +2065,10 @@ mod tests {
 
         let (reviewer, builder, tester) =
             select_uar2b_probe_models(&mut config, &installed, Some("second:latest")).unwrap();
-        assert_eq!((reviewer.as_str(), builder.as_str(), tester.as_str()),
-            ("second:latest", "second:latest", "second:latest"));
+        assert_eq!(
+            (reviewer.as_str(), builder.as_str(), tester.as_str()),
+            ("second:latest", "second:latest", "second:latest")
+        );
         assert_eq!(config.default_model.as_deref(), Some("missing-default"));
 
         let mut stale = AppConfig::default();
@@ -2085,7 +2087,10 @@ mod tests {
         let mut config = AppConfig::load().context("UAR2B failed to load GSA config")?;
         let ollama =
             OllamaClient::with_num_ctx(config.ollama_base_url.clone(), config.ollama_num_ctx);
-        let installed = ollama.list_models().await.context("UAR2B cannot list Ollama models")?;
+        let installed = ollama
+            .list_models()
+            .await
+            .context("UAR2B cannot list Ollama models")?;
         let explicit = std::env::var("GSA_UAR2B_MODEL").ok();
         let (reviewer_model, job_builder_model, tester_model) =
             select_uar2b_probe_models(&mut config, &installed, explicit.as_deref())?;
