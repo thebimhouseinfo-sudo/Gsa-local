@@ -1190,7 +1190,8 @@ impl Registry {
         cr_attempts: u32,
         status: &str,
     ) -> Result<()> {
-        self.conn.execute(
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
             r#"
             INSERT INTO plan_workflow_state
                 (id, current_revision, reviewer_attempts, cr_attempts, status)
@@ -1208,6 +1209,38 @@ impl Registry {
                 status
             ],
         )?;
+        let durable: Option<Option<i64>> = tx
+            .query_row(
+                "SELECT current_revision FROM planning_run_state WHERE id=1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(bound_revision) = durable {
+            if bound_revision != current_revision {
+                bail!("PLANNING_CURSOR_REVISION_CONFLICT: cannot change durable revision through legacy state");
+            }
+            let next_stage = match status {
+                "REVIEWER" => "REVIEWER",
+                "LOCAL_CR" => "LOCAL_CR",
+                "JOB_BUILDER" => "JOB_BUILDER",
+                "PLANNER" | "PLAN_GAP" => "PLANNER",
+                "PAUSED" => "PAUSED",
+                _ => bail!("PLANNING_CURSOR_STAGE_UNSUPPORTED: {status}"),
+            };
+            tx.execute(
+                "UPDATE planning_run_state
+                 SET stage=?1, reviewer_attempts=?2, cr_attempts=?3
+                 WHERE id=1 AND current_revision IS ?4",
+                params![
+                    next_stage,
+                    reviewer_attempts as i64,
+                    cr_attempts as i64,
+                    current_revision
+                ],
+            )?;
+        }
+        tx.commit()?;
         Ok(())
     }
 
