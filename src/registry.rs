@@ -1092,7 +1092,34 @@ impl Registry {
             );
         }
 
-        self.conn.execute(
+        let tx = self.conn.unchecked_transaction()?;
+        let durable: Option<(String, Option<i64>)> = tx
+            .query_row(
+                "SELECT stage, current_revision FROM planning_run_state WHERE id=1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        if let Some((stage, bound_revision)) = durable {
+            let expected = match actor {
+                ReviewActor::Reviewer => "REVIEWER",
+                ReviewActor::LocalCr => "LOCAL_CR",
+            };
+            if stage != expected || bound_revision != Some(revision) {
+                bail!("PLANNING_VERDICT_STAGE_CONFLICT: durable stage/revision mismatch");
+            }
+            let next = match (actor, verdict) {
+                (ReviewActor::Reviewer, ReviewVerdict::Pass) => "LOCAL_CR",
+                (ReviewActor::Reviewer, ReviewVerdict::Revise) => "PLANNER",
+                (ReviewActor::LocalCr, ReviewVerdict::Pass) => "JOB_BUILDER",
+                (ReviewActor::LocalCr, ReviewVerdict::Revise) => "PLANNER",
+            };
+            tx.execute(
+                "UPDATE planning_run_state SET stage=?1 WHERE id=1 AND stage=?2 AND current_revision=?3",
+                params![next, expected, revision],
+            )?;
+        }
+        tx.execute(
             r#"
             INSERT INTO plan_verdicts
                 (actor, revision, plan_hash, verdict, findings, created_at)
@@ -1107,6 +1134,7 @@ impl Registry {
                 unix_seconds()?
             ],
         )?;
+        tx.commit()?;
         Ok(())
     }
 
