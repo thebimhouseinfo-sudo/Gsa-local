@@ -1975,7 +1975,11 @@ mod tests {
         assert!(required.iter().any(|field| field == "status"));
         assert!(!required.iter().any(|field| field == "gap_findings"));
         assert!(!required.iter().any(|field| field == "graph"));
-        assert!(tool.function.parameters["definitions"]["ExecutionGraph"].is_object());
+        assert!(
+            !tool.function.parameters.to_string().contains("\\\"$ref\\\""),
+            "JobBuilder schema sent to Ollama must be self-contained"
+        );
+        assert!(tool.function.parameters["definitions"].is_null());
 
         let ready_without_graph: JobBuilderSubmission =
             serde_json::from_value(serde_json::json!({"status":"READY"})).unwrap();
