@@ -2366,11 +2366,10 @@ mod tests {
                 "checklist":["add sentence"]}],
             "checkpoints":[],"evidence_requirements":[]
         });
-        let submission: JobBuilderSubmission =
-            serde_json::from_value(serde_json::json!({
-                "status":"READY","graph":graph
-            }))
-            .unwrap();
+        let submission: JobBuilderSubmission = serde_json::from_value(serde_json::json!({
+            "status":"READY","graph":graph
+        }))
+        .unwrap();
         assert!(matches!(
             validate_job_builder_submission(submission, &schema_fixture_plan()).unwrap(),
             JobBuilderOutcome::Ready(_)
@@ -2378,13 +2377,12 @@ mod tests {
 
         // Tester report also has optional collections; a minimal BLOCKED
         // fixture is valid only after its real enum/conditional validation.
-        let report: TesterReportSubmission = serde_json::from_value(
-            serde_json::json!({"mode_results":[{
+        let report: TesterReportSubmission =
+            serde_json::from_value(serde_json::json!({"mode_results":[{
                 "mode":"VERIFY","outcome":"BLOCKED",
                 "reason":"schema compatibility probe"
-            }]}),
-        )
-        .unwrap();
+            }]}))
+            .unwrap();
         assert!(report.classifications.is_empty());
         assert!(report.experiment.is_none());
         assert!(report.outputs.is_empty());
@@ -2393,12 +2391,11 @@ mod tests {
         report.mode_results[0].validate().unwrap();
 
         // Negative control: semantic mismatch is not a test success.
-        let invalid: TesterReportSubmission = serde_json::from_value(
-            serde_json::json!({"mode_results":[{
+        let invalid: TesterReportSubmission =
+            serde_json::from_value(serde_json::json!({"mode_results":[{
                 "mode":"VERIFY","outcome":"COMPLETE"
-            }]}),
-        )
-        .unwrap();
+            }]}))
+            .unwrap();
         assert!(invalid.mode_results[0].validate().is_err());
     }
 
