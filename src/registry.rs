@@ -309,6 +309,13 @@ impl Registry {
                 status TEXT NOT NULL DEFAULT 'IDLE'
             );
 
+            CREATE TABLE IF NOT EXISTS planning_job_builder_gaps (
+                revision INTEGER PRIMARY KEY,
+                plan_hash TEXT NOT NULL,
+                findings_json TEXT NOT NULL,
+                FOREIGN KEY (revision) REFERENCES plan_revisions(revision)
+            );
+
             CREATE TABLE IF NOT EXISTS planning_source_evidence (
                 revision INTEGER PRIMARY KEY,
                 plan_hash TEXT NOT NULL,
@@ -1197,6 +1204,61 @@ impl Registry {
             .context("PLANNING_SOURCE_EVIDENCE_MISSING: cannot resume without source evidence")
     }
 
+    /// Persist Job Builder PLAN_GAP and route back to Planner in one commit.
+    pub fn record_job_builder_plan_gap(
+        &self,
+        revision: i64,
+        hash: &str,
+        findings: &[String],
+    ) -> Result<()> {
+        if findings.is_empty() {
+            bail!("PLANNING_JOB_BUILDER_GAP_EMPTY");
+        }
+        let current = self.current_plan_revision()?
+            .context("PLANNING_JOB_BUILDER_GAP_PLAN_MISSING")?;
+        if current.revision != revision || current.hash != hash {
+            bail!("PLANNING_JOB_BUILDER_GAP_STALE_PLAN");
+        }
+        if !self.has_pass(ReviewActor::Reviewer, revision, hash)?
+            || !self.has_pass(ReviewActor::LocalCr, revision, hash)? {
+            bail!("PLANNING_JOB_BUILDER_GAP_PASS_BINDING_MISSING");
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        let stage: Option<(String, Option<i64>)> = tx.query_row(
+            "SELECT stage, current_revision FROM planning_run_state WHERE id=1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).optional()?;
+        if stage != Some(("JOB_BUILDER".to_string(), Some(revision))) {
+            bail!("PLANNING_JOB_BUILDER_GAP_STAGE_CONFLICT");
+        }
+        let encoded = serde_json::to_string(findings)?;
+        tx.execute(
+            "INSERT INTO planning_job_builder_gaps (revision, plan_hash, findings_json)
+             VALUES (?1, ?2, ?3) ON CONFLICT(revision) DO NOTHING",
+            params![revision, hash, encoded],
+        )?;
+        let saved: (String, String) = tx.query_row(
+            "SELECT plan_hash, findings_json FROM planning_job_builder_gaps WHERE revision=?1",
+            params![revision],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        if saved.0 != hash || saved.1 != encoded {
+            bail!("PLANNING_JOB_BUILDER_GAP_CONFLICT");
+        }
+        tx.execute(
+            "UPDATE planning_run_state SET stage='PLANNER'
+             WHERE id=1 AND stage='JOB_BUILDER' AND current_revision=?1",
+            params![revision],
+        )?;
+        tx.execute(
+            "UPDATE plan_workflow_state SET status='PLAN_GAP' WHERE id=1 AND current_revision=?1",
+            params![revision],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Recover the exact findings from the last persisted negative planning
     /// verdict for a revision. Never synthesize findings after a restart.
     pub fn pending_planner_revision_findings(
@@ -1217,9 +1279,18 @@ impl Registry {
             .optional()?;
         let (verdict, findings) = persisted
             .context("PLANNING_REVISION_EVIDENCE_MISSING: no persisted review findings")?;
-        if verdict != "REVISE" {
-            bail!("PLANNING_REVISION_EVIDENCE_CONFLICT: latest verdict is not REVISE");
-        }
+        let findings = if verdict == "REVISE" {
+            findings
+        } else if verdict == "PASS" {
+            self.conn.query_row(
+                "SELECT findings_json FROM planning_job_builder_gaps
+                 WHERE revision=?1 AND plan_hash=?2",
+                params![revision, hash],
+                |row| row.get(0),
+            ).optional()?.context("PLANNING_JOB_BUILDER_GAP_EVIDENCE_MISSING")?
+        } else {
+            bail!("PLANNING_REVISION_EVIDENCE_CONFLICT: unsupported latest verdict");
+        };
         let findings: Vec<String> = serde_json::from_str(&findings)?;
         if findings.is_empty() {
             bail!("PLANNING_REVISION_EVIDENCE_EMPTY: cannot replan without findings");
