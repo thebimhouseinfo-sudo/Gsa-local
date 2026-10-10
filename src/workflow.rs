@@ -1990,22 +1990,109 @@ mod tests {
         );
     }
 
+    // Probe-only selection: explicit overrides are intentionally NOT persisted to
+    // ~/.config or used by application model selection. Never auto-pick among
+    // multiple Ollama models, and reject stale configured model names early.
+    fn select_uar2b_probe_models(
+        config: &mut AppConfig,
+        installed: &[String],
+        explicit: Option<&str>,
+    ) -> Result<(String, String, String)> {
+        if let Some(explicit) = explicit {
+            let name = explicit.trim();
+            if name.is_empty() {
+                bail!("GSA_UAR2B_MODEL is empty; supply an installed Ollama model name");
+            }
+            if !installed.iter().any(|item| item == name) {
+                bail!(
+                    "GSA_UAR2B_MODEL={name} is not installed; available: {}",
+                    installed.join(", ")
+                );
+            }
+            for agent in [AgentId::Reviewer, AgentId::JobBuilder, AgentId::Tester] {
+                config.set_agent_model(agent, name.to_owned());
+            }
+        }
+        let session = Session::default();
+        let selected = |agent: AgentId| -> Result<String> {
+            let model = crate::agent_runtime::resolve_model_from_installed(
+                &session, config, agent, installed,
+            )
+            .with_context(|| {
+                format!(
+                    "UAR2B_MODEL_CONFIGURATION_REQUIRED for {}: set GSA_UAR2B_MODEL=<installed-model> for this probe, or configure agent/default models using /config",
+                    agent.display_name()
+                )
+            })?
+            .name;
+            if !installed.iter().any(|item| item == &model) {
+                bail!(
+                    "UAR2B_MODEL_NOT_INSTALLED for {}: {model}; available: {}",
+                    agent.display_name(),
+                    installed.join(", ")
+                );
+            }
+            Ok(model)
+        };
+        Ok((
+            selected(AgentId::Reviewer)?,
+            selected(AgentId::JobBuilder)?,
+            selected(AgentId::Tester)?,
+        ))
+    }
+
+    #[test]
+    fn uar2b_model_preflight_requires_explicit_selection_for_multiple_models() {
+        let installed = vec!["first:latest".to_owned(), "second:latest".to_owned()];
+        let mut config = AppConfig::default();
+        let error = select_uar2b_probe_models(&mut config, &installed, None)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("UAR2B_MODEL_CONFIGURATION_REQUIRED"));
+        assert!(config.agent_models.is_empty());
+
+        assert!(select_uar2b_probe_models(&mut config, &installed, Some("")).is_err());
+        assert!(select_uar2b_probe_models(&mut config, &installed, Some("missing")).is_err());
+        assert!(config.agent_models.is_empty());
+    }
+
+    #[test]
+    fn uar2b_model_preflight_is_explicit_and_does_not_mutate_global_default() {
+        let installed = vec!["first:latest".to_owned(), "second:latest".to_owned()];
+        let mut config = AppConfig::default();
+        config.set_default_model(Some("missing-default".to_owned()));
+        config.set_agent_model(AgentId::Reviewer, "missing-reviewer".to_owned());
+
+        let (reviewer, builder, tester) =
+            select_uar2b_probe_models(&mut config, &installed, Some("second:latest")).unwrap();
+        assert_eq!((reviewer.as_str(), builder.as_str(), tester.as_str()),
+            ("second:latest", "second:latest", "second:latest"));
+        assert_eq!(config.default_model.as_deref(), Some("missing-default"));
+
+        let mut stale = AppConfig::default();
+        stale.set_default_model(Some("not-installed".to_owned()));
+        assert!(select_uar2b_probe_models(&mut stale, &installed, None).is_err());
+    }
+
     #[tokio::test]
-    #[ignore = "requires local Ollama plus configured Reviewer, JobBuilder, and Tester models"]
-    async fn real_ollama_generated_terminal_schema_probe() {
+    #[ignore = "requires local Ollama and explicit Reviewer/JobBuilder/Tester model selection"]
+    async fn real_ollama_generated_terminal_schema_probe() -> Result<()> {
         use crate::{
             agent_runtime::{RuntimePolicy, StructuredAgentRuntime},
             tester_execution::{tester_report_tool, TesterReportSubmission},
         };
 
-        let config = AppConfig::load().unwrap();
+        let mut config = AppConfig::load().context("UAR2B failed to load GSA config")?;
         let ollama =
             OllamaClient::with_num_ctx(config.ollama_base_url.clone(), config.ollama_num_ctx);
-        let session = Session::default();
-
-        let reviewer_model = resolve_model_name(&ollama, &session, &config, AgentId::Reviewer)
-            .await
-            .unwrap();
+        let installed = ollama.list_models().await.context("UAR2B cannot list Ollama models")?;
+        let explicit = std::env::var("GSA_UAR2B_MODEL").ok();
+        let (reviewer_model, job_builder_model, tester_model) =
+            select_uar2b_probe_models(&mut config, &installed, explicit.as_deref())?;
+        println!(
+            "UAR2B_MODELS_SELECTED reviewer={} job_builder={} tester={}",
+            reviewer_model, job_builder_model, tester_model
+        );
         let review_terminal = review_tool();
         let mut review_messages = vec![
             ChatMessage::system(
@@ -2048,8 +2135,7 @@ mod tests {
                 },
                 |_| {},
             )
-            .await
-            .unwrap();
+            .await?;
         assert_eq!(review_result.model, reviewer_model);
         assert_eq!(review_submissions, 2);
         assert_eq!(review_result.terminal_repairs, 1);
@@ -2066,9 +2152,6 @@ mod tests {
             review_result.invocations.len()
         );
 
-        let job_builder_model = resolve_model_name(&ollama, &session, &config, AgentId::JobBuilder)
-            .await
-            .unwrap();
         let graph_terminal = execution_graph_tool();
         let fixture_plan = schema_fixture_plan();
         let mut graph_messages = vec![
@@ -2142,8 +2225,7 @@ mod tests {
                 },
                 |_| {},
             )
-            .await
-            .unwrap();
+            .await?;
         assert_eq!(graph_result.model, job_builder_model);
         assert_eq!(graph_result.terminal_arguments["status"], "READY");
         println!(
@@ -2154,9 +2236,6 @@ mod tests {
             graph_result.invocations.len()
         );
 
-        let tester_model = resolve_model_name(&ollama, &session, &config, AgentId::Tester)
-            .await
-            .unwrap();
         let tester_terminal = tester_report_tool();
         let mut tester_messages = vec![
             ChatMessage::system(
@@ -2202,8 +2281,7 @@ mod tests {
                 },
                 |_| {},
             )
-            .await
-            .unwrap();
+            .await?;
         assert_eq!(tester_result.model, tester_model);
         assert_eq!(
             tester_result.terminal_arguments["mode_results"][0]["mode"],
@@ -2224,6 +2302,7 @@ mod tests {
             tester_result.terminal_repairs,
             tester_result.invocations.len()
         );
+        Ok(())
     }
 
     #[test]
