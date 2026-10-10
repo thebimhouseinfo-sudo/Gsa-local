@@ -37,6 +37,13 @@ The historical J-177F freeze text in the three plan documents is kept only for t
 - Exact-head macOS CI [run 38064916151](https://github.com/thebimhouseinfo-sudo/Gsa-local/actions/runs/38064916151) **PASS**. This is a bounded UAR-3 correction, **not** an UAR-3 completion or a real Ollama test.
 - `PlanningWorkflow::run` still uses the legacy entrypoint; stage-specific resume and explicit CLI Human recovery integration remain unimplemented. SQLite checkpoint 1 remains partial. Do not mark UAR-3 complete or ask Human for final Mac acceptance yet.
 
+## UAR-3 checkpoint 3 — guarded durable planning + real DB audit (2026-10-10)
+
+- Source main@660e29e adds exact requirement-bound durable planning start/resume identity, atomic plan revision → REVIEWER, atomic verdict → next stage, and atomic legacy/durable counter synchronization. PlanningWorkflow::run admits a fresh durable PLANNER entry but still fail-closes on unsupported stage replay. **UAR-3 remains partial.**
+- Exact-source macOS CI [run 38065788977](https://github.com/thebimhouseinfo-sudo/Gsa-local/actions/runs/38065788977) **PASS**, including the automated nonterminal legacy DB snapshot audit. This fixture is not a substitute for real old DB acceptance.
+- Human local checkpoint: `bash scripts/uar3-local-db-audit.sh /absolute/path/to/.gsa/state/gsa.db`. The tool opens the supplied DB read-only, creates a temporary SQLite backup, performs migration on that copy only, and verifies integrity and preservation of legacy row counts.
+- Still pending: affirmative CLI Human recovery prompt, stage-specific restart for Reviewer/LocalCR/JobBuilder/Planner revisions, evidence-first reads, safe graph registration and real Ollama acceptance. No full UAR-3 task PASS or inherited old evidence.
+
 ## Next governed checkpoint — UAR-3 continuation
 
 1. **Prior Human-invoked code CR gate PASS** at exact `main@5b2b563`: CRITIC_REVIEW `01a124f4-9b79-737c-8f3f-8bd25a5e3f49`, persisted and read back. The earlier CR FAIL remains historically true on `main@1a1ab9b` but its stream-`done=true` finding was fixed. There is **no automatic CR requirement for each small UAR-3 edit**; J-9067 requires another Human CR after UAR-3..6.
