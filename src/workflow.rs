@@ -7,7 +7,7 @@ use crate::{
     ollama::{ChatMessage, OllamaClient, ToolCall, ToolDefinition},
     plan::{PlanArtifact, PlanRevision},
     registry::{
-        ChecklistClaim, CodeCrBoundaryWork, CodeTodoState, PlanBinding, Registry, ReviewActor,
+        ChecklistClaim, CodeCrBoundaryWork, CodeTodoState, PlanBinding, PlanningRunState, Registry, ReviewActor,
         ReviewVerdict,
     },
     session::Session,
@@ -199,11 +199,7 @@ impl<'a> PlanningWorkflow<'a> {
     pub async fn run(&self, requirement: &str) -> Result<PlanningOutcome> {
         let durable = self.registry.begin_or_resume_planning_run(requirement)?;
         if durable.stage != "PLANNER" {
-            bail!(
-                "PLANNING_RESUME_STAGE_REQUIRED: stage={} revision={:?}; refusing to replay model calls before stage-specific resume is implemented",
-                durable.stage,
-                durable.current_revision
-            );
+            return self.resume_existing(requirement, &durable).await;
         }
         let mut route = PlanningRoute {
             stage: PlanningStage::Planner,
@@ -456,6 +452,102 @@ impl<'a> PlanningWorkflow<'a> {
             )?;
             route.after_plan_revision();
         }
+    }
+
+    /// Continue a persisted Reviewer or Local CR cursor with the exact
+    /// plan-bound source evidence. No model is allowed to approve an
+    /// evidence-less replay after a process restart.
+    async fn resume_existing(
+        &self,
+        requirement: &str,
+        state: &PlanningRunState,
+    ) -> Result<PlanningOutcome> {
+        if state.stage != "REVIEWER" && state.stage != "LOCAL_CR" {
+            bail!(
+                "PLANNING_RESUME_STAGE_REQUIRED: stage={} revision={:?}; no supported safe replay",
+                state.stage,
+                state.current_revision
+            );
+        }
+        let revision = state
+            .current_revision
+            .context("PLANNING_RESUME_REVISION_MISSING")?;
+        let current = self
+            .registry
+            .current_plan_revision()?
+            .context("PLANNING_RESUME_PLAN_MISSING")?;
+        if current.revision != revision {
+            bail!("PLANNING_RESUME_REVISION_CONFLICT: persisted plan is not current");
+        }
+        let source_evidence: Vec<PlanningSourceEvidence> = serde_json::from_str(
+            &self
+                .registry
+                .planning_source_evidence(current.revision, &current.hash)?,
+        )?;
+        let mut project_context = build_project_context(self.project_root)?;
+        project_context.tester_evidence = self.registry.current_tester_evidence_catalog()?;
+
+        if state.stage == "REVIEWER" {
+            let attempt = state.reviewer_attempts.max(1);
+            if attempt > self.max_attempts {
+                bail!("PLANNING_REVIEW_ATTEMPTS_EXHAUSTED");
+            }
+            self.registry.set_workflow_state(
+                Some(revision),
+                attempt,
+                state.cr_attempts,
+                "REVIEWER",
+            )?;
+            let review = self
+                .invoke_reviewer(requirement, &current, &project_context, &source_evidence)
+                .await?;
+            let verdict = match review.verdict.as_str() {
+                "PASS" => ReviewVerdict::Pass,
+                "CHANGES_REQUIRED" => ReviewVerdict::Revise,
+                other => bail!("Reviewer returned unsupported verdict {other}"),
+            };
+            self.registry.record_plan_verdict(
+                ReviewActor::Reviewer,
+                revision,
+                &current.hash,
+                verdict,
+                &review.findings,
+            )?;
+            return Box::pin(self.run(requirement)).await;
+        }
+
+        if !self.registry.has_pass(ReviewActor::Reviewer, revision, &current.hash)? {
+            bail!("PLANNING_RESUME_REVIEWER_PASS_MISSING");
+        }
+        let attempt = state.cr_attempts.max(1);
+        if attempt > self.max_attempts {
+            bail!("PLANNING_CR_ATTEMPTS_EXHAUSTED");
+        }
+        self.registry.set_workflow_state(
+            Some(revision),
+            state.reviewer_attempts,
+            attempt,
+            "LOCAL_CR",
+        )?;
+        let cr = self
+            .invoke_cr(requirement, &current, &project_context, &source_evidence)
+            .await?;
+        let verdict = match cr.verdict.as_str() {
+            "PASS" => ReviewVerdict::Pass,
+            "REVISE" => ReviewVerdict::Revise,
+            other => bail!("Local CR returned unsupported verdict {other}"),
+        };
+        self.registry.record_plan_verdict(
+            ReviewActor::LocalCr,
+            revision,
+            &current.hash,
+            verdict,
+            &cr.findings,
+        )?;
+        if verdict == ReviewVerdict::Revise {
+            return Box::pin(self.run(requirement)).await;
+        }
+        bail!("PLANNING_RESUME_STAGE_REQUIRED: JOB_BUILDER exact-once registration is not ready")
     }
 
     fn pause(&self, route: &PlanningRoute, revision: Option<i64>) -> Result<PlanningOutcome> {
