@@ -1,5 +1,9 @@
 # GSA Local — Implementation Plan
 
+> **Active execution status:** [CURRENT_EXECUTION_BASELINE.md](CURRENT_EXECUTION_BASELINE.md)
+> records J-9067 revision 2, exact source/evidence mapping and remaining gates.
+> The J-177F chapter below is retained as a historical rebaseline, not current work.
+
 ## 1. Mục tiêu
 
 Xây dựng phiên bản **GSA chạy hoàn toàn local**, sử dụng Ollama trực tiếp và giữ nguyên triết lý Super Agent hiện tại:
@@ -2496,6 +2500,10 @@ NEXT MILESTONE
 
 
 # IMMEDIATE REBASELINE BOUNDARY — BEFORE T-ORCHESTRATION
+
+> **Historical record (2026-09-30).** The J-177F freeze is a past transition.
+> Current execution uses J-9067. Preserve this chapter for architecture
+> lineage; do not treat its present tense as an instruction to restart J-177F.
 
 This boundary applies now. It is an operational use of the Human Rebaseline/Salvage contract before the future runtime automation exists.
 

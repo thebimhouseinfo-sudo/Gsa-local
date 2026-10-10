@@ -2,6 +2,11 @@
 
 This task list is the execution baseline after the Tester architecture rebase.
 
+> **Current status (2026-10-10):** [CURRENT_EXECUTION_BASELINE.md](CURRENT_EXECUTION_BASELINE.md)
+> is the operational evidence/status map. Active approved Job: **J-9067 revision 2**.
+> The unchecked items here are a historical/migration requirements inventory, **not**
+> authoritative durable Task status. J-177F freeze below is a historical boundary.
+
 ## Status rule
 
 - Completed earlier phases keep their validated core invariants.
@@ -329,6 +334,10 @@ Gate:
 - resume never silently advances into the next Human-bounded Task/phase.
 
 ## Execution boundary before any coding resumes
+
+> **Historical J-177F rebaseline (2026-09-30).** Do not restart the obsolete
+> topology. Current UAR execution authority is J-9067; see
+> [CURRENT_EXECUTION_BASELINE.md](CURRENT_EXECUTION_BASELINE.md).
 
 Current Human-directed architecture change is itself a rebaseline event.
 

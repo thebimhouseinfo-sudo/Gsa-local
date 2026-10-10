@@ -1,5 +1,9 @@
 # GSA Local — Detailed Execution Plan
 
+> **Operational status:** [CURRENT_EXECUTION_BASELINE.md](CURRENT_EXECUTION_BASELINE.md).
+> J-9067 revision 2 is the current approved UAR Job. Older J-177F references
+> document the historical rebaseline, not a live execution instruction.
+
 This plan turns `IMPLEMENTATION_PLAN.md` into bounded implementation Jobs.
 
 ## Current architecture rebaseline — Tester checkpoint subsystem
@@ -146,6 +150,9 @@ Only the current approved Job is implemented at a time. Runtime state, not Markd
 
 
 ## Milestone F — Immediate Rebaseline Bridge + Recovery architecture
+
+> The J-177F freeze below is historical. Do not restart it; defer to the
+> current J-9067 governed task/checkpoint state.
 
 Immediate gate before any more coding:
 - freeze J-177F before T-ORCHESTRATION;
