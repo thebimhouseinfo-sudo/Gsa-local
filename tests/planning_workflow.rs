@@ -392,3 +392,46 @@ fn durable_planning_verdict_transition_is_revision_bound() {
         "REVIEWER"
     );
 }
+
+#[test]
+fn human_recovery_restarts_both_cursors_without_erasing_plan_history() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("state.db");
+    {
+        let registry = Registry::open_at(&path).unwrap();
+        registry.begin_plan_workflow().unwrap();
+        registry.persist_plan_revision(&sample("unfinished legacy plan")).unwrap();
+    }
+    let registry = Registry::open_at(&path).unwrap();
+    assert_eq!(
+        registry.planning_run_state().unwrap().unwrap().stage,
+        "LEGACY_RECOVERY_REQUIRED"
+    );
+    assert!(registry
+        .confirm_legacy_planning_recovery("new exact intent", false)
+        .is_err());
+    assert_eq!(
+        registry.planning_run_state().unwrap().unwrap().stage,
+        "LEGACY_RECOVERY_REQUIRED"
+    );
+    let resumed = registry
+        .confirm_legacy_planning_recovery("new exact intent", true)
+        .unwrap();
+    assert_eq!(resumed.stage, "PLANNER");
+    assert_eq!(resumed.current_revision, None);
+    assert_eq!(resumed.requirement.as_deref(), Some("new exact intent"));
+    assert!(resumed.legacy_snapshot_json.is_some());
+    let legacy = registry.workflow_state().unwrap();
+    assert_eq!(legacy.current_revision, None);
+    assert_eq!(legacy.reviewer_attempts, 0);
+    assert_eq!(legacy.cr_attempts, 0);
+    assert_eq!(legacy.status, "PLANNING");
+    assert_eq!(
+        registry.current_plan_revision().unwrap().unwrap().artifact.goal,
+        "unfinished legacy plan"
+    );
+    assert_eq!(
+        registry.begin_or_resume_planning_run("new exact intent").unwrap(),
+        resumed
+    );
+}
