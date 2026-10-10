@@ -19,10 +19,25 @@ from pathlib import Path
 
 original = Path(sys.argv[1]).expanduser().resolve(strict=True)
 snapshot = Path(sys.argv[2])
-readonly = sqlite3.connect(original.as_uri() + "?mode=ro", uri=True)
-copy = sqlite3.connect(str(snapshot))
 try:
+    readonly = sqlite3.connect(original.as_uri() + "?mode=ro", uri=True)
+    readonly.execute("PRAGMA schema_version").fetchone()
+except sqlite3.Error as exc:
+    raise SystemExit(
+        f"UAR3_SOURCE_READ_FAILED={type(exc).__name__}: {exc}; "
+        "check SQLite permissions and WAL/-shm sidecars"
+    )
+
+try:
+    copy = sqlite3.connect(str(snapshot))
     readonly.backup(copy)
+except sqlite3.Error as exc:
+    raise SystemExit(
+        f"UAR3_BACKUP_FAILED={type(exc).__name__}: {exc}; "
+        f"source={original}; snapshot_dir={snapshot.parent}; "
+        "check SQLite WAL/-shm permissions and temporary directory access"
+    )
+try:
     copy.commit()
     print("UAR3_SNAPSHOT_CREATED=1")
     counts = {}
