@@ -683,6 +683,47 @@ impl Registry {
             .map_err(Into::into)
     }
 
+    /// Start a new planning run or recover its exact durable identity without
+    /// overwriting an in-flight revision or an ambiguous legacy singleton.
+    /// Resuming the returned stage is the planning runner's responsibility.
+    pub fn begin_or_resume_planning_run(&self, requirement: &str) -> Result<PlanningRunState> {
+        if requirement.trim().is_empty() {
+            bail!("planning requires an explicit nonempty requirement");
+        }
+        if let Some(state) = self.planning_run_state()? {
+            if state.stage == "LEGACY_RECOVERY_REQUIRED" {
+                bail!("LEGACY_RECOVERY_REQUIRED: affirmative Human recovery is required");
+            }
+            if state.stage == "REGISTERED" {
+                bail!("PLANNING_ALREADY_REGISTERED: start a new reviewed planning intent");
+            }
+            if state.requirement.as_deref() != Some(requirement) {
+                bail!("PLANNING_REQUIREMENT_CONFLICT: active run belongs to a different requirement");
+            }
+            return Ok(state);
+        }
+
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "INSERT INTO planning_run_state
+             (id, requirement, stage, current_revision, reviewer_attempts, cr_attempts)
+             VALUES (1, ?1, 'PLANNER', NULL, 0, 0)",
+            params![requirement],
+        )?;
+        tx.execute(
+            "INSERT INTO plan_workflow_state
+             (id, current_revision, reviewer_attempts, cr_attempts, status)
+             VALUES (1, NULL, 0, 0, 'PLANNING')
+             ON CONFLICT(id) DO UPDATE SET
+                 current_revision=NULL, reviewer_attempts=0,
+                 cr_attempts=0, status='PLANNING'",
+            [],
+        )?;
+        tx.commit()?;
+        self.planning_run_state()?
+            .context("new planning run state missing after commit")
+    }
+
     /// Apply a separately obtained, affirmative Human recovery decision.
     /// Merely receiving a planning-like message must never call this method.
     /// Decline/cancel and empty requirements do not change any durable state.
