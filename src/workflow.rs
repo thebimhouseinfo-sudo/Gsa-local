@@ -464,10 +464,7 @@ impl<'a> PlanningWorkflow<'a> {
         requirement: &str,
         state: &PlanningRunState,
     ) -> Result<PlanningOutcome> {
-        if state.stage != "REVIEWER"
-            && state.stage != "LOCAL_CR"
-            && state.stage != "JOB_BUILDER"
-        {
+        if state.stage != "REVIEWER" && state.stage != "LOCAL_CR" && state.stage != "JOB_BUILDER" {
             bail!(
                 "PLANNING_RESUME_STAGE_REQUIRED: stage={} revision={:?}; no supported safe replay",
                 state.stage,
