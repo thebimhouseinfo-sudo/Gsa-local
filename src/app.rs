@@ -91,7 +91,9 @@ impl App {
                 planning.stage.as_str(),
                 "PLANNER" | "REVIEWER" | "LOCAL_CR" | "JOB_BUILDER"
             ) {
-                let requirement = planning.requirement.as_deref()
+                let requirement = planning
+                    .requirement
+                    .as_deref()
                     .context("PLANNING_RESUME_REQUIREMENT_MISSING")?
                     .to_owned();
                 println!(
