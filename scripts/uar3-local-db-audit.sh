@@ -48,6 +48,9 @@ except (sqlite3.Error, OSError) as exc:
         print(f"UAR3_SQLITE_HEADER_VALID={int(header_valid)}", file=sys.stderr)
     except OSError as detail:
         print(f"UAR3_HEADER_READ_FAILED={detail}", file=sys.stderr)
+    if readonly is not None:
+        readonly.close()
+        readonly = None
     # Some SQLite WAL-mode databases cannot be opened with mode=ro when
     # sidecars are absent. Only copy the standalone database after a strict
     # no-sidecars/no-open-handles gate; never open the original writable.
