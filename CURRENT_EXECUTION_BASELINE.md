@@ -51,6 +51,14 @@ The historical J-177F freeze text in the three plan documents is kept only for t
 - `UAR3_SNAPSHOT_INTEGRITY=ok`, `UAR3_LEGACY_ROW_COUNTS_PRESERVED=1`, `UAR3_ORIGINAL_DB_UNMODIFIED=1`. **Real Mac database migration-preservation checkpoint PASS**. Original planning history remains blocked pending explicit Human decision. This did not prove in-place runtime restart, stage-specific resume, JobBuilder or live Ollama.
 - The earlier `mode=ro` failure without WAL/SHM was not itself proof of corruption; the script's no-sidecar/no-open-file guarded copy resolved the audit access issue. Do not reset or abandon the legacy state automatically.
 
+## UAR-3 checkpoint 4 — durable stage resume implementation (2026-10-11)
+
+- Exact implementation source **main@e5e40da9d344243ff1b4723df1bf63e40b7fc65e**. macOS CI [run 38080497621](https://github.com/thebimhouseinfo-sudo/Gsa-local/actions/runs/38080497621) **PASS**: `CI_TESTS_DISCOVERED=225`, negative controls passed, SQLite legacy snapshot audit passed. This is source/unit/integration evidence only, not live Ollama acceptance.
+- Explicit Human legacy recovery: only the exact CLI confirmation `ABANDON LEGACY PLANNING` can transition `LEGACY_RECOVERY_REQUIRED` into a new Planner run, preserving old plan revisions and logged abandonment event. Cancel/other text makes no DB changes. Legacy/durable cursor resets are transactional.
+- Durable stage-specific resume: Planner revision from exact persisted Reviewer/CR findings or JobBuilder `PLAN_GAP`; Reviewer and Local CR restart only with exact revision-bound source evidence and prior PASS bindings; JobBuilder restarts with exact Reviewer+CR PASS. Graph registration atomically marks stage `REGISTERED` and refuses duplicates. Negative/incomplete stages fail closed.
+- Planner source evidence is committed in the **same SQLite transaction** as new plan revision, preventing a post-commit/pre-evidence crash gap. Source evidence and job-gap findings are immutable and revision-bound. After JobBuilder plan gap, next revised plan resets Reviewer/CR attempt counters atomically. Added SQLite reopen/restart regressions.
+- **Do not close UAR-3 yet.** Remaining checkpoint requires a real Mac Ollama model and process-restart test on an isolated scratch project. Never use the original `/Users/nam/Gsa-local/.gsa/state/gsa.db` for Human abandonment testing; the previously validated original still has `LEGACY_RECOVERY_REQUIRED`. Human verification or explicit CR after later UAR stages must remain separately evidenced.
+
 ## Next governed checkpoint — UAR-3 continuation
 
 1. **Prior Human-invoked code CR gate PASS** at exact `main@5b2b563`: CRITIC_REVIEW `01a124f4-9b79-737c-8f3f-8bd25a5e3f49`, persisted and read back. The earlier CR FAIL remains historically true on `main@1a1ab9b` but its stream-`done=true` finding was fixed. There is **no automatic CR requirement for each small UAR-3 edit**; J-9067 requires another Human CR after UAR-3..6.
