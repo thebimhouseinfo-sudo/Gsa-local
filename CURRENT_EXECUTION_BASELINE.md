@@ -44,6 +44,13 @@ The historical J-177F freeze text in the three plan documents is kept only for t
 - Human local checkpoint: `bash scripts/uar3-local-db-audit.sh /absolute/path/to/.gsa/state/gsa.db`. The tool opens the supplied DB read-only, creates a temporary SQLite backup, performs migration on that copy only, and verifies integrity and preservation of legacy row counts.
 - Still pending: affirmative CLI Human recovery prompt, stage-specific restart for Reviewer/LocalCR/JobBuilder/Planner revisions, evidence-first reads, safe graph registration and real Ollama acceptance. No full UAR-3 task PASS or inherited old evidence.
 
+## UAR-3 real-project SQLite snapshot acceptance (2026-10-11)
+
+- Human ran `scripts/uar3-local-db-audit.sh` from Mac `/Users/nam/Gsa-local` after pulling `main@07a9d2e`. The first `mode=ro` open returned SQLite `OperationalError`, but the guarded standalone copy fallback reported `UAR3_STANDALONE_COPY_FALLBACK=1`; `UAR3_SNAPSHOT_CREATED=1`.
+- Original DB observed `plan_revisions=3`, `plan_workflow_state=1`, `approved_plan=0`, `execution_graph=0`. After running migration on the temporary copy, all four row counts were identical. Probe showed `UAR3_DB_STAGE=LEGACY_RECOVERY_REQUIRED`, `UAR3_DB_REVISION=None`, `UAR3_DB_LEGACY_SNAPSHOT=true`, `UAR3_DB_PROBE_PASS=1`.
+- `UAR3_SNAPSHOT_INTEGRITY=ok`, `UAR3_LEGACY_ROW_COUNTS_PRESERVED=1`, `UAR3_ORIGINAL_DB_UNMODIFIED=1`. **Real Mac database migration-preservation checkpoint PASS**. Original planning history remains blocked pending explicit Human decision. This did not prove in-place runtime restart, stage-specific resume, JobBuilder or live Ollama.
+- The earlier `mode=ro` failure without WAL/SHM was not itself proof of corruption; the script's no-sidecar/no-open-file guarded copy resolved the audit access issue. Do not reset or abandon the legacy state automatically.
+
 ## Next governed checkpoint — UAR-3 continuation
 
 1. **Prior Human-invoked code CR gate PASS** at exact `main@5b2b563`: CRITIC_REVIEW `01a124f4-9b79-737c-8f3f-8bd25a5e3f49`, persisted and read back. The earlier CR FAIL remains historically true on `main@1a1ab9b` but its stream-`done=true` finding was fixed. There is **no automatic CR requirement for each small UAR-3 edit**; J-9067 requires another Human CR after UAR-3..6.
