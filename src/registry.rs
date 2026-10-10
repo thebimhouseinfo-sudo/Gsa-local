@@ -959,6 +959,25 @@ impl Registry {
     }
 
     pub fn persist_plan_revision(&self, artifact: &PlanArtifact) -> Result<PlanRevision> {
+        self.persist_plan_revision_internal(artifact, None)
+    }
+
+    /// Commit plan and its exact source evidence atomically; a crash can
+    /// never leave an executable Reviewer cursor without its evidence.
+    pub fn persist_plan_revision_with_source_evidence(
+        &self,
+        artifact: &PlanArtifact,
+        evidence_json: &str,
+    ) -> Result<PlanRevision> {
+        let _: Vec<serde_json::Value> = serde_json::from_str(evidence_json)?;
+        self.persist_plan_revision_internal(artifact, Some(evidence_json))
+    }
+
+    fn persist_plan_revision_internal(
+        &self,
+        artifact: &PlanArtifact,
+        evidence_json: Option<&str>,
+    ) -> Result<PlanRevision> {
         artifact.validate()?;
         let hash = artifact.hash()?;
         let content = serde_json::to_string(artifact)?;
@@ -981,6 +1000,13 @@ impl Registry {
             "INSERT INTO plan_revisions (revision, plan_hash, content, created_at) VALUES (?1, ?2, ?3, ?4)",
             params![revision, hash, content, unix_seconds()?],
         )?;
+        if let Some(evidence_json) = evidence_json {
+            tx.execute(
+                "INSERT INTO planning_source_evidence (revision, plan_hash, evidence_json)
+                 VALUES (?1, ?2, ?3)",
+                params![revision, hash, evidence_json],
+            )?;
+        }
         tx.execute(
             r#"
             INSERT INTO plan_workflow_state
