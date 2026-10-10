@@ -656,6 +656,27 @@ Do not edit Tester-owned artifacts as the product fix. Use the structured repair
     }
 
     async fn run_planning_workflow(&mut self, requirement: &str) -> Result<()> {
+        if let Some(state) = self.registry.planning_run_state()? {
+            if state.stage == "LEGACY_RECOVERY_REQUIRED" {
+                println!(
+                    "LEGACY_RECOVERY_REQUIRED: previous incomplete planning history is preserved."
+                );
+                println!(
+                    "To abandon that old planning cursor and start the exact new requirement, type: ABANDON LEGACY PLANNING"
+                );
+                println!("Any other response (including empty) cancels without database changes.");
+                print!("Human confirmation: ");
+                io::stdout().flush()?;
+                let mut response = String::new();
+                io::stdin().read_line(&mut response)?;
+                if response.trim() != "ABANDON LEGACY PLANNING" {
+                    println!("LEGACY_RECOVERY_CANCELLED: previous planning history unchanged.");
+                    return Ok(());
+                }
+                self.registry.confirm_legacy_planning_recovery(requirement, true)?;
+                println!("LEGACY_PLANNING_ABANDONED: old snapshot retained in durable history.");
+            }
+        }
         println!("Planning workflow: Planner → Reviewer → Local CR");
         let workflow = PlanningWorkflow::new(
             &self.ollama,
