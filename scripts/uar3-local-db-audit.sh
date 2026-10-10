@@ -14,12 +14,16 @@ trap 'rm -rf "$tmp"' EXIT
 python3 - "$1" "$tmp/snapshot.db" "$tmp/counts.json" <<'PY'
 import json
 import os
+import shutil
+import subprocess
 import sqlite3
 import sys
 from pathlib import Path
 
 original = Path(sys.argv[1]).expanduser().resolve(strict=True)
 snapshot = Path(sys.argv[2])
+readonly = None
+used_copy_fallback = False
 try:
     readonly = sqlite3.connect(original.as_uri() + "?mode=ro", uri=True)
     readonly.execute("PRAGMA schema_version").fetchone()
@@ -44,11 +48,35 @@ except (sqlite3.Error, OSError) as exc:
         print(f"UAR3_SQLITE_HEADER_VALID={int(header_valid)}", file=sys.stderr)
     except OSError as detail:
         print(f"UAR3_HEADER_READ_FAILED={detail}", file=sys.stderr)
-    raise SystemExit("UAR3_READONLY_OPEN_BLOCKED: no fallback to writable mode or immutable WAL snapshot")
+    # Some SQLite WAL-mode databases cannot be opened with mode=ro when
+    # sidecars are absent. Only copy the standalone database after a strict
+    # no-sidecars/no-open-handles gate; never open the original writable.
+    sidecars = [Path(str(original) + suffix) for suffix in ("-wal", "-shm", "-journal")]
+    if any(item.exists() for item in sidecars):
+        raise SystemExit("UAR3_COPY_FALLBACK_BLOCKED=SIDECAR_PRESENT")
+    try:
+        probe = subprocess.run(["lsof", "-t", str(original)], capture_output=True, text=True)
+    except OSError as detail:
+        raise SystemExit(f"UAR3_COPY_FALLBACK_BLOCKED=LSOF_UNAVAILABLE {detail}")
+    if probe.returncode != 1:
+        raise SystemExit(f"UAR3_COPY_FALLBACK_BLOCKED=FILE_OPEN_OR_LSOF_ERROR rc={probe.returncode}")
+    before = original.stat()
+    shutil.copyfile(original, snapshot)
+    after = original.stat()
+    if (before.st_size, before.st_mtime_ns, before.st_ino) != (
+        after.st_size, after.st_mtime_ns, after.st_ino
+    ) or any(item.exists() for item in sidecars):
+        raise SystemExit("UAR3_COPY_FALLBACK_BLOCKED=SOURCE_CHANGED_DURING_COPY")
+    probe_after = subprocess.run(["lsof", "-t", str(original)], capture_output=True, text=True)
+    if probe_after.returncode != 1:
+        raise SystemExit("UAR3_COPY_FALLBACK_BLOCKED=FILE_OPENED_DURING_COPY")
+    used_copy_fallback = True
+    print("UAR3_STANDALONE_COPY_FALLBACK=1")
 
 try:
     copy = sqlite3.connect(str(snapshot))
-    readonly.backup(copy)
+    if not used_copy_fallback:
+        readonly.backup(copy)
 except sqlite3.Error as exc:
     raise SystemExit(
         f"UAR3_BACKUP_FAILED={type(exc).__name__}: {exc}; "
@@ -70,7 +98,8 @@ try:
     Path(sys.argv[3]).write_text(json.dumps(counts))
 finally:
     copy.close()
-    readonly.close()
+    if readonly is not None:
+        readonly.close()
 PY
 
 (
@@ -98,4 +127,4 @@ try:
 finally:
     db.close()
 PY
-echo "UAR3_ORIGINAL_DB_UNMODIFIED=1 (read-only connection; migration ran on snapshot)"
+echo "UAR3_ORIGINAL_DB_UNMODIFIED=1 (source opened read-only or copied as bytes; migration ran on snapshot)"
