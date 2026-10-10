@@ -107,6 +107,19 @@ pub struct PlanWorkflowState {
     pub status: String,
 }
 
+/// Additive successor to the legacy plan_workflow_state singleton.
+/// An ambiguous legacy row is never silently overwritten or treated as a
+/// fresh planning session; it must be explicitly recovered by Human.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanningRunState {
+    pub requirement: Option<String>,
+    pub stage: String,
+    pub current_revision: Option<i64>,
+    pub reviewer_attempts: u32,
+    pub cr_attempts: u32,
+    pub legacy_snapshot_json: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ChecklistClaim {
     pub todo_id: String,
@@ -294,6 +307,19 @@ impl Registry {
                 reviewer_attempts INTEGER NOT NULL DEFAULT 0,
                 cr_attempts INTEGER NOT NULL DEFAULT 0,
                 status TEXT NOT NULL DEFAULT 'IDLE'
+            );
+
+            CREATE TABLE IF NOT EXISTS planning_run_state (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                requirement TEXT,
+                stage TEXT NOT NULL CHECK (stage IN (
+                    'LEGACY_RECOVERY_REQUIRED', 'PLANNER', 'REVIEWER', 'LOCAL_CR',
+                    'JOB_BUILDER', 'PAUSED', 'REGISTERED'
+                )),
+                current_revision INTEGER,
+                reviewer_attempts INTEGER NOT NULL DEFAULT 0,
+                cr_attempts INTEGER NOT NULL DEFAULT 0,
+                legacy_snapshot_json TEXT
             );
 
             CREATE TABLE IF NOT EXISTS execution_graph (
@@ -558,7 +584,143 @@ impl Registry {
         )?;
         self.migrate_plan_revision_hash_schema()?;
         self.migrate_execution_jobpack_contract_schema()?;
+        self.migrate_planning_run_state()?;
         Ok(())
+    }
+
+    /// Idempotent, append-only classification of the legacy planning singleton.
+    /// A fully approved row is recognized only with matching durable bindings;
+    /// any unknown or incomplete state is blocked without altering its history.
+    fn migrate_planning_run_state(&self) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        let existing: Option<i64> = tx
+            .query_row("SELECT id FROM planning_run_state WHERE id=1", [], |row| row.get(0))
+            .optional()?;
+        if existing.is_some() {
+            tx.commit()?;
+            return Ok(());
+        }
+
+        let legacy: Option<(Option<i64>, i64, i64, String)> = tx
+            .query_row(
+                "SELECT current_revision, reviewer_attempts, cr_attempts, status FROM plan_workflow_state WHERE id=1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .optional()?;
+        if let Some((revision, reviewer_attempts, cr_attempts, status)) = legacy {
+            let safely_completed = if status == "APPROVED" {
+                if let Some(revision) = revision {
+                    let matches: i64 = tx.query_row(
+                        "SELECT COUNT(*) FROM approved_plan ap JOIN plan_revisions pr
+                         ON pr.revision=ap.revision AND pr.plan_hash=ap.plan_hash
+                         WHERE ap.id=1 AND ap.revision=?1",
+                        params![revision],
+                        |row| row.get(0),
+                    )?;
+                    matches == 1
+                } else {
+                    false
+                }
+            } else {
+                status == "IDLE"
+                    && revision.is_none()
+                    && reviewer_attempts == 0
+                    && cr_attempts == 0
+            };
+
+            if !safely_completed {
+                let legacy_snapshot = serde_json::json!({
+                    "status": status,
+                    "current_revision": revision,
+                    "reviewer_attempts": reviewer_attempts,
+                    "cr_attempts": cr_attempts
+                });
+                tx.execute(
+                    "INSERT INTO planning_run_state
+                     (id, requirement, stage, current_revision, reviewer_attempts,
+                      cr_attempts, legacy_snapshot_json)
+                     VALUES (1, NULL, 'LEGACY_RECOVERY_REQUIRED', NULL, 0, 0, ?1)",
+                    params![legacy_snapshot.to_string()],
+                )?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn planning_run_state(&self) -> Result<Option<PlanningRunState>> {
+        self.conn
+            .query_row(
+                "SELECT requirement, stage, current_revision, reviewer_attempts,
+                        cr_attempts, legacy_snapshot_json
+                 FROM planning_run_state WHERE id=1",
+                [],
+                |row| {
+                    Ok(PlanningRunState {
+                        requirement: row.get(0)?,
+                        stage: row.get(1)?,
+                        current_revision: row.get(2)?,
+                        reviewer_attempts: row.get::<_, i64>(3)? as u32,
+                        cr_attempts: row.get::<_, i64>(4)? as u32,
+                        legacy_snapshot_json: row.get(5)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(Into::into)
+    }
+
+    /// Apply a separately obtained, affirmative Human recovery decision.
+    /// Merely receiving a planning-like message must never call this method.
+    /// Decline/cancel and empty requirements do not change any durable state.
+    pub fn confirm_legacy_planning_recovery(
+        &self,
+        new_requirement: &str,
+        human_confirmed: bool,
+    ) -> Result<PlanningRunState> {
+        if !human_confirmed {
+            bail!("LEGACY_RECOVERY_REQUIRED: explicit Human confirmation is required");
+        }
+        if new_requirement.trim().is_empty() {
+            bail!("legacy planning recovery requires an exact nonempty new requirement");
+        }
+
+        let tx = self.conn.unchecked_transaction()?;
+        let legacy_snapshot: Option<String> = tx
+            .query_row(
+                "SELECT legacy_snapshot_json FROM planning_run_state
+                 WHERE id=1 AND stage='LEGACY_RECOVERY_REQUIRED'",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?
+            .context("no blocked legacy planning state to recover")?;
+        tx.execute(
+            "INSERT INTO events (kind, payload, created_at)
+             VALUES ('LEGACY_PLANNING_ABANDONED', ?1, ?2)",
+            params![
+                serde_json::json!({
+                    "legacy": serde_json::from_str::<serde_json::Value>(&legacy_snapshot)?,
+                    "new_requirement": new_requirement
+                })
+                .to_string(),
+                unix_seconds()?
+            ],
+        )?;
+        let updated = tx.execute(
+            "UPDATE planning_run_state
+             SET requirement=?1, stage='PLANNER', current_revision=NULL,
+                 reviewer_attempts=0, cr_attempts=0
+             WHERE id=1 AND stage='LEGACY_RECOVERY_REQUIRED'",
+            params![new_requirement],
+        )?;
+        if updated != 1 {
+            bail!("legacy planning recovery lost its singleton state");
+        }
+        tx.commit()?;
+        self.planning_run_state()?
+            .context("committed planning run state was not found")
     }
 
     fn migrate_execution_jobpack_contract_schema(&self) -> Result<()> {
@@ -696,6 +858,12 @@ impl Registry {
     }
 
     pub fn begin_plan_workflow(&self) -> Result<()> {
+        if let Some(state) = self.planning_run_state()? {
+            bail!(
+                "PLANNING_RUN_STATE_ACTIVE: {} requires the durable planning runner; refusing to reset legacy planning history",
+                state.stage
+            );
+        }
         self.conn.execute(
             r#"
             INSERT INTO plan_workflow_state
@@ -1849,6 +2017,31 @@ impl Registry {
         project_root: &Path,
         available_capabilities: &[String],
     ) -> Result<ResumeDecision> {
+        if let Some(planning) = self.planning_run_state()? {
+            let needs_human = planning.stage == "LEGACY_RECOVERY_REQUIRED";
+            // The successor planning router is implemented in the next UAR-3
+            // checkpoint. Until then, NEVER resume a stale CURRENT graph while
+            // a new planning run is nonterminal.
+            return Ok(ResumeDecision {
+                classification: if needs_human {
+                    RecoveryClassification::NeedsHuman
+                } else {
+                    RecoveryClassification::Blocked
+                },
+                action: ResumeAction::BlockedNeedsHuman,
+                graph_version: None,
+                milestone_id: None,
+                jobpack_id: None,
+                change_set_id: None,
+                checkpoint_id: None,
+                attempt_id: None,
+                reason: if needs_human {
+                    "LEGACY_RECOVERY_REQUIRED: Human must affirmatively abandon old planning before starting a new requirement".into()
+                } else {
+                    format!("planning stage {} requires the durable planning resume router", planning.stage)
+                },
+            });
+        }
         let Some((graph_version, _, _)) = ({
             let tx = self.conn.unchecked_transaction()?;
             let binding = current_graph_binding_tx(&tx)?;
@@ -6518,6 +6711,137 @@ mod tests {
         assert_eq!(checkpoint.milestone, None);
         assert_eq!(checkpoint.jobpack, None);
         assert_eq!(checkpoint.jobpack_status, None);
+    }
+
+    #[test]
+    fn old_incomplete_planning_is_preserved_and_blocks_implicit_reset() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("planning.db");
+        {
+            let old = Registry::open_at(&db).unwrap();
+            old.begin_plan_workflow().unwrap();
+            old.set_workflow_state(Some(7), 2, 1, "REVIEWER").unwrap();
+        }
+        let registry = Registry::open_at(&db).unwrap();
+        let state = registry.planning_run_state().unwrap().unwrap();
+        assert_eq!(state.stage, "LEGACY_RECOVERY_REQUIRED");
+        assert!(state.requirement.is_none());
+        assert!(state.legacy_snapshot_json.as_ref().unwrap().contains("REVIEWER"));
+        let old = registry.workflow_state().unwrap();
+        assert_eq!(old.current_revision, Some(7));
+        assert_eq!(old.status, "REVIEWER");
+        assert!(registry.begin_plan_workflow().is_err());
+
+        let decision = registry.resolve_resume_decision(dir.path(), &[]).unwrap();
+        assert_eq!(decision.classification, RecoveryClassification::NeedsHuman);
+        assert_eq!(decision.action, ResumeAction::BlockedNeedsHuman);
+        assert!(decision.reason.contains("LEGACY_RECOVERY_REQUIRED"));
+    }
+
+    #[test]
+    fn human_decline_and_empty_requirement_do_not_mutate_legacy_recovery() {
+        let (_dir, registry) = registry();
+        registry.begin_plan_workflow().unwrap();
+        registry.set_workflow_state(None, 0, 0, "PLANNING").unwrap();
+        registry.migrate_planning_run_state().unwrap();
+
+        let count_events = || -> i64 {
+            registry.conn.query_row(
+                "SELECT COUNT(*) FROM events WHERE kind='LEGACY_PLANNING_ABANDONED'",
+                [],
+                |row| row.get(0),
+            ).unwrap()
+        };
+        for input in ["", "   ", "Create implementation plan"] {
+            assert!(registry.confirm_legacy_planning_recovery(input, false).is_err());
+        }
+        assert!(registry.confirm_legacy_planning_recovery("  ", true).is_err());
+        assert_eq!(count_events(), 0);
+        assert_eq!(registry.planning_run_state().unwrap().unwrap().stage, "LEGACY_RECOVERY_REQUIRED");
+        assert_eq!(registry.workflow_state().unwrap().status, "PLANNING");
+    }
+
+    #[test]
+    fn confirmed_legacy_recovery_persists_exact_requirement_and_event_atomically() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("recovery.db");
+        {
+            let registry = Registry::open_at(&db).unwrap();
+            registry.begin_plan_workflow().unwrap();
+            registry.set_workflow_state(Some(4), 1, 0, "REVIEWER").unwrap();
+        }
+        let registry = Registry::open_at(&db).unwrap();
+        let requirement = "Create an implementation plan for the new requirements.";
+        let state = registry.confirm_legacy_planning_recovery(requirement, true).unwrap();
+        assert_eq!(state.stage, "PLANNER");
+        assert_eq!(state.requirement.as_deref(), Some(requirement));
+        assert!(state.legacy_snapshot_json.is_some());
+        assert!(registry.begin_plan_workflow().is_err());
+        assert!(registry.confirm_legacy_planning_recovery(requirement, true).is_err());
+
+        let (kind, payload): (String, String) = registry.conn.query_row(
+            "SELECT kind, payload FROM events WHERE kind='LEGACY_PLANNING_ABANDONED'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).unwrap();
+        assert_eq!(kind, "LEGACY_PLANNING_ABANDONED");
+        let event: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        assert_eq!(event["new_requirement"], requirement);
+        assert_eq!(event["legacy"]["current_revision"], 4);
+        drop(registry);
+
+        let reopened = Registry::open_at(&db).unwrap();
+        assert_eq!(reopened.planning_run_state().unwrap().unwrap().requirement.as_deref(), Some(requirement));
+        let count: i64 = reopened.conn.query_row(
+            "SELECT COUNT(*) FROM events WHERE kind='LEGACY_PLANNING_ABANDONED'",
+            [], |row| row.get(0),
+        ).unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(reopened.workflow_state().unwrap().status, "REVIEWER");
+    }
+
+    #[test]
+    fn recovery_event_write_failure_rolls_back_planning_state_transition() {
+        let (_dir, registry) = registry();
+        registry.begin_plan_workflow().unwrap();
+        registry.migrate_planning_run_state().unwrap();
+        registry.conn.execute_batch(
+            "CREATE TRIGGER reject_legacy_abandon BEFORE INSERT ON events
+             WHEN NEW.kind='LEGACY_PLANNING_ABANDONED'
+             BEGIN SELECT RAISE(ABORT, 'blocked event'); END;",
+        ).unwrap();
+        assert!(registry.confirm_legacy_planning_recovery("new plan", true).is_err());
+        let state = registry.planning_run_state().unwrap().unwrap();
+        assert_eq!(state.stage, "LEGACY_RECOVERY_REQUIRED");
+        assert!(state.requirement.is_none());
+    }
+
+    #[test]
+    fn completed_and_empty_legacy_are_not_mistaken_for_pending_recovery() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("complete.db");
+        {
+            let registry = Registry::open_at(&db).unwrap();
+            registry.conn.execute(
+                "INSERT INTO plan_revisions (revision, plan_hash, content, created_at)
+                 VALUES (3, 'hash', '{}', 1)", [],
+            ).unwrap();
+            registry.conn.execute(
+                "INSERT INTO approved_plan (id, revision, plan_hash, execution_graph_version)
+                 VALUES (1, 3, 'hash', 0)", [],
+            ).unwrap();
+            registry.conn.execute(
+                "INSERT INTO plan_workflow_state
+                 (id, current_revision, reviewer_attempts, cr_attempts, status)
+                 VALUES (1, 3, 1, 1, 'APPROVED')", [],
+            ).unwrap();
+        }
+        let reopened = Registry::open_at(&db).unwrap();
+        assert!(reopened.planning_run_state().unwrap().is_none());
+        assert_eq!(reopened.workflow_state().unwrap().status, "APPROVED");
+
+        let (_dir, empty) = registry();
+        assert!(empty.planning_run_state().unwrap().is_none());
     }
 
     #[test]
