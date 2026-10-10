@@ -2150,10 +2150,13 @@ mod tests {
         assert_eq!(review_submissions, 2);
         assert_eq!(review_result.terminal_repairs, 1);
         assert_eq!(review_result.terminal_arguments["verdict"], "PASS");
-        assert_eq!(
-            review_result.terminal_arguments["findings"],
-            serde_json::json!([])
-        );
+        // #[serde(default)] permits the model to OMIT findings entirely.
+        // A missing raw JSON field indexes as Null, although the successfully
+        // deserialized ReviewDecision has the correct empty Vec semantics.
+        let observed_review: ReviewDecision =
+            serde_json::from_value(review_result.terminal_arguments.clone())?;
+        assert_eq!(observed_review.verdict, "PASS");
+        assert!(observed_review.findings.is_empty());
         println!(
             "UAR2B_PROBE verdict model={} elapsed_ms={} repairs={} invocations={}",
             review_result.model,
@@ -2313,6 +2316,90 @@ mod tests {
             tester_result.invocations.len()
         );
         Ok(())
+    }
+
+    #[test]
+    fn uar2b_offline_three_stage_fixtures_preserve_serde_defaults_and_contracts() {
+        use crate::tester_execution::TesterReportSubmission;
+
+        // Negative control: raw JSON must NOT be mistaken for the
+        // deserialized semantic value. This is the exact Mac false-FAIL.
+        let minimal_review = serde_json::json!({"verdict":"PASS"});
+        assert!(minimal_review.get("findings").is_none());
+        assert!(minimal_review["findings"].is_null());
+        for raw in [
+            minimal_review,
+            serde_json::json!({"verdict":"PASS","findings":[]}),
+        ] {
+            let review: ReviewDecision = serde_json::from_value(raw).unwrap();
+            assert_eq!(review.verdict, "PASS");
+            assert!(review.findings.is_empty());
+        }
+        for raw in [
+            serde_json::json!({"verdict":"PASS","findings":null}),
+            serde_json::json!({"verdict":"PASS","findings":"none"}),
+        ] {
+            assert!(
+                serde_json::from_value::<ReviewDecision>(raw).is_err(),
+                "invalid typed findings must not be silently normalized"
+            );
+        }
+        let nonempty: ReviewDecision = serde_json::from_value(
+            serde_json::json!({"verdict":"REVISE","findings":["real issue"]}),
+        )
+        .unwrap();
+        assert_eq!(nonempty.findings, vec!["real issue"]);
+
+        // The job-builder fixture mirrors the same business validator as the
+        // live probe, including omission of serde-defaulted fields.
+        let graph = serde_json::json!({
+            "milestones":[{"id":"M1","title":"Docs","order":1}],
+            "jobpacks":[{
+                "id":"J1","milestone_id":"M1","title":"Docs",
+                "goal":"Add clarification","todo_ids":["T1"],
+                "depends_on":[],"required_inputs":["README"],
+                "expected_outputs":["updated README"],
+                "acceptance":["clarification present"],
+                "verification_hints":["inspect diff"]
+            }],
+            "todos":[{"id":"T1","jobpack_id":"J1","title":"Add sentence",
+                "checklist":["add sentence"]}],
+            "checkpoints":[],"evidence_requirements":[]
+        });
+        let submission: JobBuilderSubmission =
+            serde_json::from_value(serde_json::json!({
+                "status":"READY","graph":graph
+            }))
+            .unwrap();
+        assert!(matches!(
+            validate_job_builder_submission(submission, &schema_fixture_plan()).unwrap(),
+            JobBuilderOutcome::Ready(_)
+        ));
+
+        // Tester report also has optional collections; a minimal BLOCKED
+        // fixture is valid only after its real enum/conditional validation.
+        let report: TesterReportSubmission = serde_json::from_value(
+            serde_json::json!({"mode_results":[{
+                "mode":"VERIFY","outcome":"BLOCKED",
+                "reason":"schema compatibility probe"
+            }]}),
+        )
+        .unwrap();
+        assert!(report.classifications.is_empty());
+        assert!(report.experiment.is_none());
+        assert!(report.outputs.is_empty());
+        assert!(report.limitations.is_empty());
+        assert_eq!(report.mode_results.len(), 1);
+        report.mode_results[0].validate().unwrap();
+
+        // Negative control: semantic mismatch is not a test success.
+        let invalid: TesterReportSubmission = serde_json::from_value(
+            serde_json::json!({"mode_results":[{
+                "mode":"VERIFY","outcome":"COMPLETE"
+            }]}),
+        )
+        .unwrap();
+        assert!(invalid.mode_results[0].validate().is_err());
     }
 
     #[test]
