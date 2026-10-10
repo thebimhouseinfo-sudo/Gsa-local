@@ -608,7 +608,9 @@ mod tests {
 
     #[test]
     fn incomplete_text_only_stream_is_rejected_too() {
-        let mut pending = b"{\"message\":{\"role\":\"assistant\",\"content\":\"partial\"},\"done\":false}\n".to_vec();
+        let mut pending =
+            b"{\"message\":{\"role\":\"assistant\",\"content\":\"partial\"},\"done\":false}\n"
+                .to_vec();
         let mut assistant = ChatMessage::assistant("");
         let mut telemetry = OllamaChatTelemetry::default();
         consume_complete_lines(&mut pending, &mut assistant, &mut telemetry, &mut |_| {}).unwrap();
