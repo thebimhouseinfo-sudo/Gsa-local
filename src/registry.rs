@@ -1154,14 +1154,17 @@ impl Registry {
         revision: i64,
         hash: &str,
     ) -> Result<Vec<String>> {
-        let persisted: Option<(String, String)> = self.conn.query_row(
-            "SELECT verdict, findings FROM plan_verdicts
+        let persisted: Option<(String, String)> = self
+            .conn
+            .query_row(
+                "SELECT verdict, findings FROM plan_verdicts
              WHERE revision=?1 AND plan_hash=?2
                AND actor IN ('REVIEWER', 'LOCAL_CR')
              ORDER BY id DESC LIMIT 1",
-            params![revision, hash],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        ).optional()?;
+                params![revision, hash],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
         let (verdict, findings) = persisted
             .context("PLANNING_REVISION_EVIDENCE_MISSING: no persisted review findings")?;
         if verdict != "REVISE" {
