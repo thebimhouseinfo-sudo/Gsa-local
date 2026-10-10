@@ -380,7 +380,11 @@ fn durable_planning_verdict_transition_is_revision_bound() {
     );
     let second = registry.persist_plan_revision(&sample("second")).unwrap();
     assert_eq!(
-        registry.planning_run_state().unwrap().unwrap().current_revision,
+        registry
+            .planning_run_state()
+            .unwrap()
+            .unwrap()
+            .current_revision,
         Some(second.revision)
     );
     assert_eq!(
