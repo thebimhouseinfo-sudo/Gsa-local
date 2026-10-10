@@ -198,14 +198,19 @@ impl<'a> PlanningWorkflow<'a> {
 
     pub async fn run(&self, requirement: &str) -> Result<PlanningOutcome> {
         let durable = self.registry.begin_or_resume_planning_run(requirement)?;
-        if durable.stage != "PLANNER" || durable.current_revision.is_some() {
+        if durable.stage != "PLANNER" {
             bail!(
                 "PLANNING_RESUME_STAGE_REQUIRED: stage={} revision={:?}; refusing to replay model calls before stage-specific resume is implemented",
                 durable.stage,
                 durable.current_revision
             );
         }
-        let mut route = PlanningRoute::new(self.max_attempts);
+        let mut route = PlanningRoute {
+            stage: PlanningStage::Planner,
+            reviewer_attempts: durable.reviewer_attempts,
+            cr_attempts: durable.cr_attempts,
+            max_attempts: self.max_attempts,
+        };
         let mut project_context = build_project_context(self.project_root)?;
         project_context.tester_evidence = self.registry.current_tester_evidence_catalog()?;
 
@@ -220,8 +225,28 @@ impl<'a> PlanningWorkflow<'a> {
 
         println!("PLAN_STAGE Planner START");
         let stage_started = Instant::now();
-        let (artifact, mut source_evidence) = self
-            .invoke_plan_agent(
+        let (artifact, mut source_evidence) = if let Some(revision) = durable.current_revision {
+            let prior = self
+                .registry
+                .current_plan_revision()?
+                .context("PLANNING_RESUME_REVISION_MISSING")?;
+            if prior.revision != revision {
+                bail!("PLANNING_RESUME_REVISION_CONFLICT: durable revision is not current");
+            }
+            let findings = self
+                .registry
+                .pending_planner_revision_findings(prior.revision, &prior.hash)?;
+            self.invoke_plan_agent(
+                AgentId::Planner,
+                requirement,
+                Some(&prior),
+                &findings,
+                &project_context,
+                &[],
+                "Resume the Planner-owned revision of the current Implementation Plan using only the persisted negative verdict findings. Produce a new complete revision.",
+            ).await?
+        } else {
+            self.invoke_plan_agent(
                 AgentId::Planner,
                 requirement,
                 None,
@@ -229,8 +254,8 @@ impl<'a> PlanningWorkflow<'a> {
                 &project_context,
                 &[],
                 "Create the first Implementation Plan revision.",
-            )
-            .await?;
+            ).await?
+        };
         println!(
             "PLAN_STAGE Planner DONE elapsed_ms={} source_evidence={}",
             stage_started.elapsed().as_millis(),
