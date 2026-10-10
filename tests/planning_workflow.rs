@@ -290,3 +290,32 @@ fn loop_exhaustion_pauses_instead_of_approving() {
     assert!(!route.enter_reviewer());
     assert_eq!(route.stage, PlanningStage::Paused);
 }
+
+#[test]
+fn planning_run_start_is_idempotent_and_fails_closed_on_requirement_change() {
+    let dir = tempdir().unwrap();
+    let registry = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    let first = registry.begin_or_resume_planning_run("Build typed planner").unwrap();
+    assert_eq!(first.stage, "PLANNER");
+    assert_eq!(first.requirement.as_deref(), Some("Build typed planner"));
+    assert_eq!(first.current_revision, None);
+    assert_eq!(registry.begin_or_resume_planning_run("Build typed planner").unwrap(), first);
+    assert!(registry.begin_or_resume_planning_run("Other requirement").is_err());
+    assert!(registry.begin_or_resume_planning_run("  ").is_err());
+    assert_eq!(registry.planning_run_state().unwrap().unwrap(), first);
+}
+
+#[test]
+fn planning_run_start_never_clears_legacy_recovery_block() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("legacy.db");
+    {
+        let registry = Registry::open_at(&path).unwrap();
+        registry.begin_plan_workflow().unwrap();
+    }
+    let registry = Registry::open_at(&path).unwrap();
+    let blocked = registry.planning_run_state().unwrap().unwrap();
+    assert_eq!(blocked.stage, "LEGACY_RECOVERY_REQUIRED");
+    assert!(registry.begin_or_resume_planning_run("Start again").is_err());
+    assert_eq!(registry.planning_run_state().unwrap().unwrap(), blocked);
+}
