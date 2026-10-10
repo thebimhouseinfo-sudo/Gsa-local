@@ -309,6 +309,13 @@ impl Registry {
                 status TEXT NOT NULL DEFAULT 'IDLE'
             );
 
+            CREATE TABLE IF NOT EXISTS planning_source_evidence (
+                revision INTEGER PRIMARY KEY,
+                plan_hash TEXT NOT NULL,
+                evidence_json TEXT NOT NULL,
+                FOREIGN KEY (revision) REFERENCES plan_revisions(revision)
+            );
+
             CREATE TABLE IF NOT EXISTS planning_run_state (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 requirement TEXT,
@@ -1145,6 +1152,45 @@ impl Registry {
         )?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// Checkpoint source evidence for a particular immutable plan revision.
+    /// Never overwrite different evidence for an already checkpointed revision.
+    pub fn checkpoint_planning_source_evidence(
+        &self,
+        revision: i64,
+        hash: &str,
+        evidence_json: &str,
+    ) -> Result<()> {
+        let current = self.current_plan_revision()?
+            .context("PLANNING_SOURCE_EVIDENCE_NO_PLAN")?;
+        if current.revision != revision || current.hash != hash {
+            bail!("PLANNING_SOURCE_EVIDENCE_STALE_PLAN");
+        }
+        let _: Vec<serde_json::Value> = serde_json::from_str(evidence_json)?;
+        self.conn.execute(
+            "INSERT INTO planning_source_evidence (revision, plan_hash, evidence_json)
+             VALUES (?1, ?2, ?3) ON CONFLICT(revision) DO NOTHING",
+            params![revision, hash, evidence_json],
+        )?;
+        let stored: (String, String) = self.conn.query_row(
+            "SELECT plan_hash, evidence_json FROM planning_source_evidence WHERE revision=?1",
+            params![revision],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        if stored.0 != hash || stored.1 != evidence_json {
+            bail!("PLANNING_SOURCE_EVIDENCE_CONFLICT: immutable checkpoint mismatch");
+        }
+        Ok(())
+    }
+
+    pub fn planning_source_evidence(&self, revision: i64, hash: &str) -> Result<String> {
+        self.conn.query_row(
+            "SELECT evidence_json FROM planning_source_evidence
+             WHERE revision=?1 AND plan_hash=?2",
+            params![revision, hash],
+            |row| row.get(0),
+        ).optional()?.context("PLANNING_SOURCE_EVIDENCE_MISSING: cannot resume without source evidence")
     }
 
     /// Recover the exact findings from the last persisted negative planning
