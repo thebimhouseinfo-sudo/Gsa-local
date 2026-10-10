@@ -1043,6 +1043,15 @@ mod tests {
             assert!(!required.iter().any(|field| field == optional));
         }
 
+        assert!(
+            !tool.function.parameters.to_string().contains("\\\"$ref\\\""),
+            "Tester terminal tool must not send reference-bearing JSON Schema"
+        );
+        assert!(
+            tool.function.parameters["properties"]["classifications"]["items"]["enum"]
+                .is_array(),
+            "nested Tester classification enum must remain typed after inlining"
+        );
         let report: TesterReportSubmission = serde_json::from_value(serde_json::json!({
             "mode_results": []
         }))
