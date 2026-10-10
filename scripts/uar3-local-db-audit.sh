@@ -42,7 +42,7 @@ PY
 
 (
   cd "$repo_root"
-  cargo run --quiet --bin uar3-db-probe -- "$tmp/snapshot.db"
+  cargo run --quiet --bin uar3_db_probe -- "$tmp/snapshot.db"
 )
 
 python3 - "$tmp/snapshot.db" "$tmp/counts.json" <<'PY'
