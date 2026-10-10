@@ -1984,7 +1984,9 @@ mod tests {
             let schema = &tool.function.parameters;
             assert_eq!(schema["type"], "object", "tool {}", tool.function.name);
             assert!(
-                schema["properties"].as_object().is_some_and(|map| !map.is_empty()),
+                schema["properties"]
+                    .as_object()
+                    .is_some_and(|map| !map.is_empty()),
                 "tool {} must expose typed fields",
                 tool.function.name
             );
