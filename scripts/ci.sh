@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Run cheap script syntax and adversarial verifier controls before compiling
 # Rust. A broken guard is a failing CI, not an optional post-test warning.
-for script in scripts/ci.sh scripts/real_ollama_probe.sh scripts/verify_test_execution.sh; do
+for script in scripts/ci.sh scripts/real_ollama_probe.sh scripts/verify_test_execution.sh scripts/uar3-local-db-audit.sh; do
   bash -n "$script"
 done
 bash scripts/verify_test_execution.sh --self-test
@@ -11,6 +11,30 @@ bash scripts/verify_test_execution.sh --self-test
 cargo fmt --check
 cargo check
 cargo test
+
+# Exercise the snapshot-only audit against a legacy, nonterminal DB fixture.
+# This guards the Human-facing command; real-project DB acceptance remains
+# a separate Mac checkpoint and is never inferred from this fixture.
+uar3_fixture="$(mktemp)"
+trap 'rm -f "$uar3_fixture"' EXIT
+python3 - "$uar3_fixture" <<'PY'
+import sqlite3
+import sys
+db = sqlite3.connect(sys.argv[1])
+db.execute(
+    "CREATE TABLE plan_workflow_state "
+    "(id INTEGER PRIMARY KEY, current_revision INTEGER, "
+    "reviewer_attempts INTEGER, cr_attempts INTEGER, status TEXT)"
+)
+db.execute("INSERT INTO plan_workflow_state VALUES (1, NULL, 1, 0, 'PLANNING')")
+db.commit()
+db.close()
+PY
+uar3_audit="$(bash scripts/uar3-local-db-audit.sh "$uar3_fixture")"
+grep -Fq "UAR3_DB_STAGE=LEGACY_RECOVERY_REQUIRED" <<< "$uar3_audit"
+grep -Fq "UAR3_LEGACY_ROW_COUNTS_PRESERVED=1" <<< "$uar3_audit"
+grep -Fq "UAR3_ORIGINAL_DB_UNMODIFIED=1" <<< "$uar3_audit"
+echo "UAR3_SNAPSHOT_AUDIT_CI_PASS=1"
 
 # Verify the real test inventory on this revision, not just a successful
 # cargo exit status. These core tests bind the suite to actual workflow gates.
