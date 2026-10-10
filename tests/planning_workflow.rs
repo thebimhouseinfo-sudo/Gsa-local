@@ -330,3 +330,61 @@ fn planning_run_start_never_clears_legacy_recovery_block() {
         .is_err());
     assert_eq!(registry.planning_run_state().unwrap().unwrap(), blocked);
 }
+
+#[test]
+fn durable_planning_verdict_transition_is_revision_bound() {
+    let dir = tempdir().unwrap();
+    let registry = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    registry
+        .begin_or_resume_planning_run("Typed planning run")
+        .unwrap();
+    let first = registry.persist_plan_revision(&sample("first")).unwrap();
+    let state = registry.planning_run_state().unwrap().unwrap();
+    assert_eq!(state.stage, "REVIEWER");
+    assert_eq!(state.current_revision, Some(first.revision));
+
+    registry
+        .record_plan_verdict(
+            ReviewActor::Reviewer,
+            first.revision,
+            &first.hash,
+            ReviewVerdict::Pass,
+            &[],
+        )
+        .unwrap();
+    assert_eq!(
+        registry.planning_run_state().unwrap().unwrap().stage,
+        "LOCAL_CR"
+    );
+    assert!(registry
+        .record_plan_verdict(
+            ReviewActor::Reviewer,
+            first.revision,
+            &first.hash,
+            ReviewVerdict::Pass,
+            &[],
+        )
+        .is_err());
+    registry
+        .record_plan_verdict(
+            ReviewActor::LocalCr,
+            first.revision,
+            &first.hash,
+            ReviewVerdict::Revise,
+            &[],
+        )
+        .unwrap();
+    assert_eq!(
+        registry.planning_run_state().unwrap().unwrap().stage,
+        "PLANNER"
+    );
+    let second = registry.persist_plan_revision(&sample("second")).unwrap();
+    assert_eq!(
+        registry.planning_run_state().unwrap().unwrap().current_revision,
+        Some(second.revision)
+    );
+    assert_eq!(
+        registry.planning_run_state().unwrap().unwrap().stage,
+        "REVIEWER"
+    );
+}
