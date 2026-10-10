@@ -88,6 +88,24 @@ mod tests {
         let required = exported["required"].as_array().unwrap();
         assert!(required.iter().any(|field| field == "children"));
         assert!(!required.iter().any(|field| field == "optional_children"));
+
+        // Exercise fixture values as well as schema generation, so the test
+        // cannot be mistaken for an unused-code/warning-only placeholder.
+        let fixture = NestedFixture {
+            children: vec![
+                NestedChild {
+                    status: NestedStatus::Ready,
+                },
+                NestedChild {
+                    status: NestedStatus::Blocked,
+                },
+            ],
+            optional_children: vec![],
+        };
+        assert_eq!(fixture.children.len(), 2);
+        assert!(matches!(&fixture.children[0].status, NestedStatus::Ready));
+        assert!(matches!(&fixture.children[1].status, NestedStatus::Blocked));
+        assert!(fixture.optional_children.is_empty());
     }
 
     #[test]
