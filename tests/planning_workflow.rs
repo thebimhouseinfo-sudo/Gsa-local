@@ -444,3 +444,44 @@ fn human_recovery_restarts_both_cursors_without_erasing_plan_history() {
         resumed
     );
 }
+
+#[test]
+fn planner_restart_recovers_only_exact_persisted_revise_findings() {
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("state.db");
+    {
+        let registry = Registry::open_at(&path).unwrap();
+        registry
+            .begin_or_resume_planning_run("durable planner")
+            .unwrap();
+        let first = registry.persist_plan_revision(&sample("first")).unwrap();
+        assert!(registry
+            .pending_planner_revision_findings(first.revision, &first.hash)
+            .is_err());
+        registry
+            .record_plan_verdict(
+                ReviewActor::Reviewer,
+                first.revision,
+                &first.hash,
+                ReviewVerdict::Revise,
+                &["fix evidence binding".to_string()],
+            )
+            .unwrap();
+    }
+    let registry = Registry::open_at(&path).unwrap();
+    let state = registry
+        .begin_or_resume_planning_run("durable planner")
+        .unwrap();
+    assert_eq!(state.stage, "PLANNER");
+    let first = registry.current_plan_revision().unwrap().unwrap();
+    assert_eq!(state.current_revision, Some(first.revision));
+    assert_eq!(
+        registry
+            .pending_planner_revision_findings(first.revision, &first.hash)
+            .unwrap(),
+        vec!["fix evidence binding".to_string()]
+    );
+    assert!(registry
+        .pending_planner_revision_findings(first.revision, "stale-hash")
+        .is_err());
+}
