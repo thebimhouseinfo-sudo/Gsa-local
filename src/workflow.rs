@@ -738,11 +738,15 @@ impl<'a> PlanningWorkflow<'a> {
             )
             .await?;
 
-        let submission: JobBuilderSubmission = match extract_tool_args(
+        // Treat schema and plan-graph invariant violations alike: both are
+        // model-output errors and merit one bounded structured repair.
+        let first = extract_tool_args::<JobBuilderSubmission>(
             &response,
             "submit_execution_graph",
-        ) {
-            Ok(submission) => submission,
+        )
+        .and_then(|submission| validate_job_builder_submission(submission, &current.artifact));
+        match first {
+            Ok(outcome) => Ok(outcome),
             Err(error) => {
                 let validation_error = format!("{error:#}");
                 println!(
@@ -759,7 +763,7 @@ impl<'a> PlanningWorkflow<'a> {
                         "plan": current.artifact
                     },
                     "validation_error": validation_error,
-                    "instruction": "Your previous submit_execution_graph call had invalid structured arguments. Repair only the structured payload so it satisfies the supplied submit_execution_graph schema and the approved plan. Do not redesign the plan. Call submit_execution_graph as the only tool call."
+                    "instruction": "Your previous execution graph was rejected by the exact plan validator. Repair all graph invariant violations, especially jobpack todo references: each jobpack must reference one or more existing plan todos. Use only exact todo IDs from the approved plan. Do not invent plan tasks, redesign the plan, or bypass validation. Call submit_execution_graph as the only tool call."
                 });
                 let repaired = self
                     .invoke_submission_only(
@@ -768,12 +772,15 @@ impl<'a> PlanningWorkflow<'a> {
                         execution_graph_tool(),
                     )
                     .await?;
-                extract_tool_args(&repaired, "submit_execution_graph")
-                    .context("Job Builder submit_execution_graph remained invalid after one structured repair")?
+                let submission = extract_tool_args::<JobBuilderSubmission>(
+                    &repaired,
+                    "submit_execution_graph",
+                )
+                .context("Job Builder structured submission still invalid after one repair")?;
+                validate_job_builder_submission(submission, &current.artifact)
+                    .context("Job Builder graph still violates approved plan after one repair")
             }
-        };
-
-        validate_job_builder_submission(submission, &current.artifact)
+        }
     }
 
     async fn invoke_with_source_tools(
