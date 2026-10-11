@@ -22,6 +22,7 @@ pub enum ModelSelectionSource {
     InternalFixCoderSession,
     InternalFixCoderConfig,
     DefaultConfig,
+    ExplicitWorkflowEnvironment,
     SingleInstalledBootstrap,
 }
 
@@ -107,6 +108,24 @@ pub async fn resolve_model(
 ) -> Result<ResolvedModel> {
     if let Some(resolved) = resolve_configured_model(session, config, agent) {
         return Ok(resolved);
+    }
+    if matches!(
+        agent,
+        AgentId::Planner | AgentId::Reviewer | AgentId::LocalCr | AgentId::JobBuilder
+    ) {
+        if let Some(model) = std::env::var("GSA_WORKFLOW_MODEL")
+            .ok()
+            .and_then(|value| non_empty_model(Some(&value)).map(str::to_owned))
+        {
+            let installed = ollama.list_models().await?;
+            if !installed.contains(&model) {
+                bail!("GSA_WORKFLOW_MODEL_NOT_INSTALLED: {model}");
+            }
+            return Ok(ResolvedModel {
+                name: model,
+                source: ModelSelectionSource::ExplicitWorkflowEnvironment,
+            });
+        }
     }
     let installed = ollama.list_models().await?;
     resolve_model_from_installed(session, config, agent, &installed)
