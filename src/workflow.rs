@@ -728,7 +728,8 @@ impl<'a> PlanningWorkflow<'a> {
                 "hash": current.hash,
                 "plan": current.artifact
             },
-            "instruction": "Decompose this approved plan only using the supplied plan and exact source evidence. Do not repeat repository discovery or redesign the plan. Return READY with a complete execution graph, or PLAN_GAP with explicit findings if the approved plan is insufficient."
+            "allowed_statuses": ["READY", "PLAN_GAP"],
+            "instruction": "Decompose the approved plan only. Call submit_execution_graph exactly once, with status READY and a complete valid execution graph or status PLAN_GAP with nonempty specific findings. Never return OK/PASS/SUCCESS. Every jobpack todo_ids list must be nonempty and reference approved-plan todos; every todo must point to its jobpack. Do not repeat repository discovery or redesign the plan."
         });
         let response = self
             .invoke_submission_only(
@@ -763,7 +764,9 @@ impl<'a> PlanningWorkflow<'a> {
                         "plan": current.artifact
                     },
                     "validation_error": validation_error,
-                    "instruction": "Your previous execution graph was rejected by the exact plan validator. Repair all graph invariant violations, especially jobpack todo references: each jobpack must reference one or more existing plan todos. Use only exact todo IDs from the approved plan. Do not invent plan tasks, redesign the plan, or bypass validation. Call submit_execution_graph as the only tool call."
+                    "previous_submission": response.tool_calls.iter().find(|call| call.function.name == "submit_execution_graph").map(|call| &call.function.arguments),
+                    "allowed_statuses": ["READY", "PLAN_GAP"],
+                    "instruction": "Call submit_execution_graph exactly once. The status field MUST be READY or PLAN_GAP; never OK, PASS, SUCCESS or COMPLETE. If READY, include graph and no gap_findings. If PLAN_GAP, include nonempty specific gap_findings. Repair all exact validator errors. Each jobpack must have nonempty todo_ids referencing todos in the approved plan, and the listed todos must point back to that jobpack. Use only approved plan tasks; do not invent tasks or bypass validation. Preserve valid portions of previous_submission and correct the precise validation_error."
                 });
                 let repaired = self
                     .invoke_submission_only(
