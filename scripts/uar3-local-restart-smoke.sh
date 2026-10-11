@@ -28,6 +28,16 @@ if [[ "$handles_rc" -ne 1 ]]; then
   exit 2
 fi
 
+qa_model="${GSA_WORKFLOW_MODEL:-qwen38t:latest}"
+if ! command -v ollama >/dev/null 2>&1; then
+  echo "UAR3_QA_BLOCKED=OLLAMA_CLI_NOT_FOUND" >&2
+  exit 2
+fi
+if ! ollama list | awk 'NR>1 {print $1}' | grep -Fxq "$qa_model"; then
+  echo "UAR3_QA_BLOCKED=WORKFLOW_MODEL_NOT_INSTALLED model=$qa_model" >&2
+  exit 2
+fi
+export GSA_WORKFLOW_MODEL="$qa_model"
 qa="$(mktemp -d "$HOME/Gsa-local-UAR3-QA.XXXXXX")"
 rsync -a --exclude='.git/' --exclude='.gsa/' --exclude='target/' \
   --exclude='.env' --exclude='.env.*' "$root/" "$qa/"
@@ -47,10 +57,11 @@ for suffix in -wal -shm -journal; do
 done
 
 echo "UAR3_QA_ISOLATED_PROJECT=$qa"
+echo "UAR3_QA_WORKFLOW_MODEL=$qa_model"
 echo "UAR3_QA_ORIGINAL_DB_UNTOUCHED=1"
 echo "UAR3_QA_INSTRUCTIONS=Ask Planner to start a SMALL documentation-only Implementation Plan. The legacy recovery confirmation is safe ONLY in this QA copy."
 echo "UAR3_QA_INSTRUCTIONS=When PLAN_STAGE Reviewer START appears, press Ctrl+C to simulate process interruption."
-echo "UAR3_QA_RESTART_COMMAND=cd '$qa' && cargo run --bin gsa"
+echo "UAR3_QA_RESTART_COMMAND=cd '$qa' && GSA_WORKFLOW_MODEL='$qa_model' cargo run --bin gsa"
 echo "UAR3_QA_INSTRUCTIONS=After restart, type RESUME at the saved-planning prompt. Report the full output."
 cd "$qa"
 cargo run --bin gsa
