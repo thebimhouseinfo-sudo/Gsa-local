@@ -6950,8 +6950,10 @@ mod tests {
         assert_eq!(decision.graph_version, Some(1));
         assert_ne!(decision.action, ResumeAction::BlockedNeedsHuman);
 
-        registry.conn.execute(
-            "UPDATE execution_graph SET plan_hash='wrong' WHERE version=1",
+        registry
+            .conn
+            .execute(
+                    "UPDATE execution_graph SET plan_hash='wrong' WHERE version=1",
                 [],
             )
             .unwrap();
