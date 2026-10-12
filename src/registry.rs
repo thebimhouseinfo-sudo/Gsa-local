@@ -6909,37 +6909,52 @@ mod tests {
                 [],
             )
             .unwrap();
-        registry.conn.execute(
-            "INSERT INTO approved_plan (id, revision, plan_hash, execution_graph_version) VALUES (1, 4, 'hash4', 1)",
-            [],
-        ).unwrap();
-        registry.conn.execute(
-            "INSERT INTO execution_graph (version, plan_revision, plan_hash, status) VALUES (1, 4, 'hash4', 'CURRENT')",
-            [],
-        ).unwrap();
-        registry.conn.execute(
-            "INSERT INTO planning_run_state (id, requirement, stage, current_revision, reviewer_attempts, cr_attempts) VALUES (1, 'README', 'REGISTERED', 4, 1, 1)",
-            [],
-        ).unwrap();
+        registry
+            .conn
+            .execute(
+                "INSERT INTO approved_plan (id, revision, plan_hash, execution_graph_version) VALUES (1, 4, 'hash4', 1)",
+                [],
+            )
+            .unwrap();
+        registry
+            .conn
+            .execute(
+                "INSERT INTO execution_graph (version, plan_revision, plan_hash, status) VALUES (1, 4, 'hash4', 'CURRENT')",
+                [],
+            )
+            .unwrap();
+        registry
+            .conn
+            .execute(
+                "INSERT INTO planning_run_state (id, requirement, stage, current_revision, reviewer_attempts, cr_attempts) VALUES (1, 'README', 'REGISTERED', 4, 1, 1)",
+                [],
+            )
+            .unwrap();
         let decision = registry.resolve_resume_decision(dir.path(), &[]).unwrap();
         assert_eq!(decision.graph_version, Some(1));
         assert_ne!(decision.action, ResumeAction::BlockedNeedsHuman);
 
         registry.conn.execute(
             "UPDATE execution_graph SET plan_hash='wrong' WHERE version=1",
-            [],
-        ).unwrap();
+                [],
+            )
+            .unwrap();
         assert!(registry.resolve_resume_decision(dir.path(), &[]).is_err());
     }
 
     #[test]
     fn registered_planning_without_approved_graph_fails_closed() {
         let (dir, registry) = registry();
-        registry.conn.execute(
-            "INSERT INTO planning_run_state (id, requirement, stage, current_revision, reviewer_attempts, cr_attempts) VALUES (1, 'README', 'REGISTERED', 4, 1, 1)",
-            [],
-        ).unwrap();
-        let error = registry.resolve_resume_decision(dir.path(), &[]).unwrap_err();
+        registry
+            .conn
+            .execute(
+                "INSERT INTO planning_run_state (id, requirement, stage, current_revision, reviewer_attempts, cr_attempts) VALUES (1, 'README', 'REGISTERED', 4, 1, 1)",
+                [],
+            )
+            .unwrap();
+        let error = registry
+            .resolve_resume_decision(dir.path(), &[])
+            .unwrap_err();
         assert!(format!("{error:#}").contains("PLANNING_REGISTERED_GRAPH_MISSING"));
     }
 
