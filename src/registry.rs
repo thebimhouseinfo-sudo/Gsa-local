@@ -6251,11 +6251,11 @@ fn assert_lease_owner_tx(tx: &Transaction<'_>, project_root: &Path, owner: &str)
 }
 
 fn current_graph_binding_tx(tx: &Transaction<'_>) -> Result<Option<(i64, i64, String)>> {
-    let row: Option<(i64, i64, String, String, i64, String)> = tx
+    let row: Option<(i64, i64, String, String, i64, String, i64, String)> = tx
         .query_row(
             r#"
             SELECT ap.execution_graph_version, ap.revision, ap.plan_hash,
-                   eg.status, pr.revision, pr.plan_hash
+                   eg.status, pr.revision, pr.plan_hash, eg.plan_revision, eg.plan_hash
             FROM approved_plan ap
             JOIN execution_graph eg ON eg.version=ap.execution_graph_version
             JOIN plan_revisions pr ON pr.revision=(
@@ -6272,18 +6272,20 @@ fn current_graph_binding_tx(tx: &Transaction<'_>) -> Result<Option<(i64, i64, St
                     row.get(3)?,
                     row.get(4)?,
                     row.get(5)?,
+                    row.get(6)?,
+                    row.get(7)?,
                 ))
             },
         )
         .optional()?;
 
-    let Some((version, revision, hash, graph_status, current_revision, current_hash)) = row else {
+    let Some((version, revision, hash, graph_status, current_revision, current_hash, graph_revision, graph_hash)) = row else {
         return Ok(None);
     };
     if graph_status != "CURRENT" {
         bail!("approved execution graph {version} is not CURRENT");
     }
-    if revision != current_revision || hash != current_hash {
+    if revision != current_revision || hash != current_hash || revision != graph_revision || hash != graph_hash {
         bail!("execution graph is bound to a stale approved plan");
     }
     Ok(Some((version, revision, hash)))
