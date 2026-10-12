@@ -6953,7 +6953,7 @@ mod tests {
         registry
             .conn
             .execute(
-                    "UPDATE execution_graph SET plan_hash='wrong' WHERE version=1",
+                "UPDATE execution_graph SET plan_hash='wrong' WHERE version=1",
                 [],
             )
             .unwrap();
