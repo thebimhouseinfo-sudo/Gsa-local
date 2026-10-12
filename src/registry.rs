@@ -2365,6 +2365,19 @@ impl Registry {
         available_capabilities: &[String],
     ) -> Result<ResumeDecision> {
         if let Some(planning) = self.planning_run_state()? {
+            if planning.stage == "REGISTERED" {
+                // Planning is terminal only when the approved CURRENT graph is
+                // bound to this exact persisted plan revision and hash.
+                let tx = self.conn.unchecked_transaction()?;
+                let binding = current_graph_binding_tx(&tx)?
+                    .context("PLANNING_REGISTERED_GRAPH_MISSING: no exact approved CURRENT graph")?;
+                tx.commit()?;
+                let persisted_revision = planning.current_revision
+                    .context("PLANNING_REGISTERED_REVISION_MISSING")?;
+                if binding.1 != persisted_revision {
+                    bail!("PLANNING_REGISTERED_REVISION_CONFLICT: durable planning revision differs from approved graph");
+                }
+            } else {
             let needs_human = planning.stage == "LEGACY_RECOVERY_REQUIRED";
             // The successor planning router is implemented in the next UAR-3
             // checkpoint. Until then, NEVER resume a stale CURRENT graph while
@@ -2391,6 +2404,7 @@ impl Registry {
                     )
                 },
             });
+            }
         }
         let Some((graph_version, _, _)) = ({
             let tx = self.conn.unchecked_transaction()?;
