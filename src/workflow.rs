@@ -741,11 +741,8 @@ impl<'a> PlanningWorkflow<'a> {
 
         // Treat schema and plan-graph invariant violations alike: both are
         // model-output errors and merit one bounded structured repair.
-        let first = extract_tool_args::<JobBuilderSubmission>(
-            &response,
-            "submit_execution_graph",
-        )
-        .and_then(|submission| validate_job_builder_submission(submission, &current.artifact));
+        let first = extract_tool_args::<JobBuilderSubmission>(&response, "submit_execution_graph")
+            .and_then(|submission| validate_job_builder_submission(submission, &current.artifact));
         match first {
             Ok(outcome) => Ok(outcome),
             Err(error) => {
@@ -775,11 +772,11 @@ impl<'a> PlanningWorkflow<'a> {
                         execution_graph_tool(),
                     )
                     .await?;
-                let submission = extract_tool_args::<JobBuilderSubmission>(
-                    &repaired,
-                    "submit_execution_graph",
-                )
-                .context("Job Builder structured submission still invalid after one repair")?;
+                let submission =
+                    extract_tool_args::<JobBuilderSubmission>(&repaired, "submit_execution_graph")
+                        .context(
+                            "Job Builder structured submission still invalid after one repair",
+                        )?;
                 validate_job_builder_submission(submission, &current.artifact)
                     .context("Job Builder graph still violates approved plan after one repair")
             }
