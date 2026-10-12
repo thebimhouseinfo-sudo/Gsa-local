@@ -6279,13 +6279,27 @@ fn current_graph_binding_tx(tx: &Transaction<'_>) -> Result<Option<(i64, i64, St
         )
         .optional()?;
 
-    let Some((version, revision, hash, graph_status, current_revision, current_hash, graph_revision, graph_hash)) = row else {
+    let Some((
+        version,
+        revision,
+        hash,
+        graph_status,
+        current_revision,
+        current_hash,
+        graph_revision,
+        graph_hash,
+    )) = row
+    else {
         return Ok(None);
     };
     if graph_status != "CURRENT" {
         bail!("approved execution graph {version} is not CURRENT");
     }
-    if revision != current_revision || hash != current_hash || revision != graph_revision || hash != graph_hash {
+    if revision != current_revision
+        || hash != current_hash
+        || revision != graph_revision
+        || hash != graph_hash
+    {
         bail!("execution graph is bound to a stale approved plan");
     }
     Ok(Some((version, revision, hash)))
