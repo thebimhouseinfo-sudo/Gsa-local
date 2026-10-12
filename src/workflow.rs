@@ -1439,39 +1439,16 @@ impl<'a> CodingWorkflow<'a> {
         let mut definitions = tool_runtime.tool_definitions(agent);
         definitions.push(code_checkpoint_tool());
 
-        for round in 0..8usize {
-            let response = self
-                .ollama
-                .chat_stream_with_tools(&model, &messages, &definitions, |_| {})
-                .await?;
-            let calls = response.tool_calls.clone();
-            messages.push(response);
-
-            if calls.is_empty() {
-                bail!(
-                    "{} stopped without submit_code_checkpoint",
-                    agent.display_name()
-                );
-            }
-            if calls
-                .iter()
-                .any(|call| call.function.name == "submit_code_checkpoint")
-            {
-                if calls.len() != 1 || calls[0].function.name != "submit_code_checkpoint" {
-                    bail!("submit_code_checkpoint must be the only tool call in its response");
-                }
-                return serde_json::from_value(calls[0].function.arguments.clone())
-                    .context("invalid submit_code_checkpoint arguments");
-            }
-
-            if round + 1 >= 8 {
-                bail!("{} exceeded coding tool rounds", agent.display_name());
-            }
-            for call in calls {
-                messages.push(execute_project_tool_message(agent, tool_runtime, &call));
-            }
-        }
-        unreachable!("bounded coding tool loop must return or fail")
+        run_code_role_tool_loop(
+            self.ollama,
+            &model,
+            agent,
+            &mut messages,
+            &definitions,
+            "submit_code_checkpoint",
+            tool_runtime,
+        )
+        .await
     }
 
     async fn invoke_code_reviewer(
@@ -1516,45 +1493,59 @@ impl<'a> CodingWorkflow<'a> {
         let mut definitions = tool_runtime.tool_definitions(AgentId::Reviewer);
         definitions.push(code_review_tool());
 
-        for round in 0..8usize {
-            let response = self
-                .ollama
-                .chat_stream_with_tools(&model, &messages, &definitions, |_| {})
-                .await?;
-            let calls = response.tool_calls.clone();
-            messages.push(response);
-
-            if calls.is_empty() {
-                bail!("Reviewer stopped without submit_code_review");
-            }
-            if calls
-                .iter()
-                .any(|call| call.function.name == "submit_code_review")
-            {
-                if calls.len() != 1 || calls[0].function.name != "submit_code_review" {
-                    bail!("submit_code_review must be the only tool call in its response");
-                }
-                return serde_json::from_value(calls[0].function.arguments.clone())
-                    .context("invalid submit_code_review arguments");
-            }
-
-            if round + 1 >= 8 {
-                bail!("Reviewer exceeded code review tool rounds");
-            }
-            for call in calls {
-                messages.push(execute_project_tool_message(
-                    AgentId::Reviewer,
-                    tool_runtime,
-                    &call,
-                ));
-            }
-        }
-        unreachable!("bounded Reviewer tool loop must return or fail")
+        run_code_role_tool_loop(
+            self.ollama,
+            &model,
+            AgentId::Reviewer,
+            &mut messages,
+            &definitions,
+            "submit_code_review",
+            tool_runtime,
+        )
+        .await
     }
 
     async fn model_for(&self, agent: AgentId) -> Result<String> {
         resolve_model_name(self.ollama, self.session, self.config, agent).await
     }
+}
+
+async fn run_code_role_tool_loop<T: serde::de::DeserializeOwned>(
+    ollama: &OllamaClient,
+    model: &str,
+    agent: AgentId,
+    messages: &mut Vec<ChatMessage>,
+    definitions: &[ToolDefinition],
+    terminal_tool: &str,
+    tool_runtime: &mut ProjectToolRuntime,
+) -> Result<T> {
+    // Shared bounded Coder/Internal Fix/Reviewer model loop. Preserve role
+    // tool permissions, terminal exclusivity and fail-closed semantics.
+    for round in 0..8usize {
+        let response = ollama
+            .chat_stream_with_tools(model, messages, definitions, |_| {})
+            .await?;
+        let calls = response.tool_calls.clone();
+        messages.push(response);
+
+        if calls.is_empty() {
+            bail!("{} stopped without {}", agent.display_name(), terminal_tool);
+        }
+        if calls.iter().any(|call| call.function.name == terminal_tool) {
+            if calls.len() != 1 || calls[0].function.name != terminal_tool {
+                bail!("{terminal_tool} must be the only tool call in its response");
+            }
+            return serde_json::from_value(calls[0].function.arguments.clone())
+                .with_context(|| format!("invalid {terminal_tool} arguments"));
+        }
+        if round + 1 >= 8 {
+            bail!("{} exceeded {} tool rounds", agent.display_name(), terminal_tool);
+        }
+        for call in calls {
+            messages.push(execute_project_tool_message(agent, tool_runtime, &call));
+        }
+    }
+    unreachable!("bounded role tool loop must return or fail")
 }
 
 fn repair_progressed(
