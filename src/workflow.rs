@@ -1539,7 +1539,11 @@ async fn run_code_role_tool_loop<T: serde::de::DeserializeOwned>(
                 .with_context(|| format!("invalid {terminal_tool} arguments"));
         }
         if round + 1 >= 8 {
-            bail!("{} exceeded {} tool rounds", agent.display_name(), terminal_tool);
+            bail!(
+                "{} exceeded {} tool rounds",
+                agent.display_name(),
+                terminal_tool
+            );
         }
         for call in calls {
             messages.push(execute_project_tool_message(agent, tool_runtime, &call));
