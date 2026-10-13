@@ -1126,10 +1126,8 @@ impl<'a> CodingWorkflow<'a> {
 
         let (mut checkpoint, mut change_set_id) = match state.status.as_str() {
             "CODER" => {
-                let recovered = tool_runtime.resume_code_recovery(
-                    active_work.graph_version,
-                    &active_work.jobpack_id,
-                )?;
+                let recovered = tool_runtime
+                    .resume_code_recovery(active_work.graph_version, &active_work.jobpack_id)?;
                 if !recovered {
                     tool_runtime.clear_journal();
                 }
@@ -1187,10 +1185,8 @@ impl<'a> CodingWorkflow<'a> {
                     bail!("INTERNAL_FIX resume requires persisted or supplied findings");
                 }
                 let journal_len_before_fix = tool_runtime.journal().len();
-                tool_runtime.resume_code_recovery(
-                    active_work.graph_version,
-                    &active_work.jobpack_id,
-                )?;
+                tool_runtime
+                    .resume_code_recovery(active_work.graph_version, &active_work.jobpack_id)?;
                 coder_attempts += 1;
                 tasks = self
                     .registry
@@ -1328,10 +1324,8 @@ impl<'a> CodingWorkflow<'a> {
                 .registry
                 .jobpack_code_tasks(active_work.graph_version, &active_work.jobpack_id)?;
             let journal_len_before_fix = tool_runtime.journal().len();
-            tool_runtime.resume_code_recovery(
-                active_work.graph_version,
-                &active_work.jobpack_id,
-            )?;
+            tool_runtime
+                .resume_code_recovery(active_work.graph_version, &active_work.jobpack_id)?;
             let previous_change_set_id = change_set_id.clone();
             checkpoint = self
                 .invoke_code_agent(
