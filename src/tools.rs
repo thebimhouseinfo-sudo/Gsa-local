@@ -15,6 +15,7 @@ const MAX_SEARCH_RESULTS: usize = 200;
 const MAX_READ_BYTES: usize = 64 * 1024;
 const MAX_SEARCH_FILE_BYTES: usize = 256 * 1024;
 const MAX_WRITE_BYTES: usize = MAX_READ_BYTES;
+const CODE_RECOVERY_NAME: &str = "code_write_recovery.json";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MutationRecord {
@@ -36,10 +37,18 @@ pub struct ChangeEvidence {
     pub after_content: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CodeRecoveryLedger {
+    graph_version: i64,
+    jobpack_id: String,
+    records: Vec<MutationRecord>,
+}
+
 #[derive(Debug)]
 pub struct ProjectToolRuntime {
     root: PathBuf,
     journal: Vec<MutationRecord>,
+    code_recovery: Option<(i64, String)>,
 }
 
 impl ProjectToolRuntime {
@@ -50,6 +59,7 @@ impl ProjectToolRuntime {
         Ok(Self {
             root,
             journal: Vec::new(),
+            code_recovery: None,
         })
     }
 
