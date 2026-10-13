@@ -107,6 +107,58 @@ impl ProjectToolRuntime {
         self.journal.clear();
     }
 
+    fn code_recovery_path(&self) -> PathBuf {
+        self.root.join(".gsa/state").join(CODE_RECOVERY_NAME)
+    }
+
+    pub fn resume_code_recovery(&mut self, version: i64, jobpack: &str) -> Result<bool> {
+        let path = self.code_recovery_path();
+        self.code_recovery = Some((version, jobpack.to_owned()));
+        if !path.exists() {
+            return Ok(false);
+        }
+        let ledger: CodeRecoveryLedger = serde_json::from_slice(&fs::read(&path)?)
+            .context("invalid pending code recovery ledger")?;
+        if ledger.graph_version != version || ledger.jobpack_id != jobpack {
+            bail!("pending code writes belong to a different execution graph or Job Pack");
+        }
+        self.restore_journal(ledger.records)
+            .context("pending code write recovery requires human reconciliation")?;
+        Ok(true)
+    }
+
+    pub fn finish_code_recovery(&mut self) -> Result<()> {
+        let path = self.code_recovery_path();
+        if path.exists() {
+            fs::remove_file(&path)?;
+        }
+        self.code_recovery = None;
+        Ok(())
+    }
+
+    fn prepare_code_mutation(&self, mutation: &MutationRecord) -> Result<()> {
+        let Some((version, jobpack)) = &self.code_recovery else {
+            return Ok(());
+        };
+        let path = self.code_recovery_path();
+        let parent = path.parent().context("missing recovery directory")?;
+        self.assert_existing_components_inside(parent)?;
+        fs::create_dir_all(parent)?;
+        let ledger = CodeRecoveryLedger {
+            graph_version: *version,
+            jobpack_id: jobpack.clone(),
+            records: self.journal.iter().cloned().chain(std::iter::once(mutation.clone())).collect(),
+        };
+        let tmp = path.with_extension("pending");
+        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&tmp)
+            .context("stale recovery staging file; reconcile before retry")?;
+        file.write_all(&serde_json::to_vec(&ledger)?)?;
+        file.sync_all()?;
+        fs::rename(&tmp, &path)?;
+        Ok(())
+    }
+
+
     pub fn restore_journal(&mut self, records: Vec<MutationRecord>) -> Result<()> {
         let mut restored = Vec::with_capacity(records.len());
         for mut record in records {
