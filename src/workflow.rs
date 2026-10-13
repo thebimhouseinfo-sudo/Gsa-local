@@ -1533,6 +1533,20 @@ async fn run_code_role_tool_loop<T: serde::de::DeserializeOwned>(
         messages.push(response);
 
         if let Some(submission) = code_terminal_submission::<T>(&calls, terminal_tool)? {
+            if let Some(tasks) = tasks {
+                let checkpoint: CodeCheckpointSubmission =
+                    serde_json::from_value(calls[0].function.arguments.clone())?;
+                if let Err(error) = validate_code_claims(&checkpoint.completed_checklist, tasks) {
+                    code_role_round_budget(round, MAX_CODE_ROLE_TOOL_ROUNDS, agent, terminal_tool)?;
+                    messages.push(ChatMessage::tool(
+                        terminal_tool,
+                        json!({"ok": false, "error": format!("{error:#}"),
+                            "instruction": "Resubmit using only active Job Pack checklist positions"})
+                            .to_string(),
+                    ));
+                    continue;
+                }
+            }
             return Ok(submission);
         }
         code_role_round_budget(round, MAX_CODE_ROLE_TOOL_ROUNDS, agent, terminal_tool)?;
