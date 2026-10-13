@@ -21,6 +21,7 @@ use serde_json::json;
 use std::{fs, path::Path, time::Instant};
 
 const DEFAULT_MAX_ATTEMPTS: u32 = 5;
+const MAX_CODE_ROLE_TOOL_ROUNDS: usize = 8;
 const MAX_CONTEXT_PATHS: usize = 500;
 const MAX_PLANNING_SOURCE_TOOL_ROUNDS: usize = 4;
 const MAX_PLANNING_READ_CONTENT_BYTES: usize = 12 * 1024;
@@ -1521,7 +1522,7 @@ async fn run_code_role_tool_loop<T: serde::de::DeserializeOwned>(
 ) -> Result<T> {
     // Shared bounded Coder/Internal Fix/Reviewer model loop. Preserve role
     // tool permissions, terminal exclusivity and fail-closed semantics.
-    for round in 0..8usize {
+    for round in 0..MAX_CODE_ROLE_TOOL_ROUNDS {
         let response = ollama
             .chat_stream_with_tools(model, messages, definitions, |_| {})
             .await?;
@@ -1531,18 +1532,28 @@ async fn run_code_role_tool_loop<T: serde::de::DeserializeOwned>(
         if let Some(submission) = code_terminal_submission::<T>(&calls, terminal_tool)? {
             return Ok(submission);
         }
-        if round + 1 >= 8 {
-            bail!(
-                "{} exceeded {} tool rounds",
-                agent.display_name(),
-                terminal_tool
-            );
-        }
+        code_role_round_budget(round, MAX_CODE_ROLE_TOOL_ROUNDS, agent, terminal_tool)?;
         for call in calls {
             messages.push(execute_project_tool_message(agent, tool_runtime, &call));
         }
     }
     unreachable!("bounded role tool loop must return or fail")
+}
+
+fn code_role_round_budget(
+    round: usize,
+    max_rounds: usize,
+    agent: AgentId,
+    terminal_tool: &str,
+) -> Result<()> {
+    if round + 1 >= max_rounds {
+        bail!(
+            "{} exceeded {} tool rounds",
+            agent.display_name(),
+            terminal_tool
+        );
+    }
+    Ok(())
 }
 
 /// Classify a single completed model response before executing any action.
@@ -2760,4 +2771,45 @@ mod tests {
         assert!(!dir.path().join("denied.txt").exists());
         assert!(runtime.journal().is_empty());
     }
+    #[test]
+    fn uar4_code_tool_round_exhaustion_is_fail_closed_for_each_role() {
+        for agent in [AgentId::Coder, AgentId::InternalFix, AgentId::Reviewer] {
+            for round in 0..MAX_CODE_ROLE_TOOL_ROUNDS - 1 {
+                assert!(code_role_round_budget(
+                    round,
+                    MAX_CODE_ROLE_TOOL_ROUNDS,
+                    agent,
+                    "submit_code_checkpoint"
+                )
+                .is_ok());
+            }
+            assert!(code_role_round_budget(
+                MAX_CODE_ROLE_TOOL_ROUNDS - 1,
+                MAX_CODE_ROLE_TOOL_ROUNDS,
+                agent,
+                "submit_code_checkpoint"
+            )
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn uar4_malformed_tool_arguments_are_reported_without_mutation() {
+        use crate::ollama::{ToolCall, ToolFunctionCall};
+        let dir = tempfile::tempdir().unwrap();
+        let mut runtime = ProjectToolRuntime::new(dir.path()).unwrap();
+        let call = ToolCall {
+            kind: Some("function".into()),
+            function: ToolFunctionCall {
+                index: Some(0),
+                name: "project_write".into(),
+                arguments: serde_json::json!({"path": 100, "content":"bad"}),
+            },
+        };
+        let response = execute_project_tool_message(AgentId::Coder, &mut runtime, &call);
+        assert_eq!(response.role, "tool");
+        assert!(response.content.contains("\\"ok\\":false"));
+        assert!(runtime.journal().is_empty());
+    }
+
 }
