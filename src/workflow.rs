@@ -1126,12 +1126,25 @@ impl<'a> CodingWorkflow<'a> {
 
         let (mut checkpoint, mut change_set_id) = match state.status.as_str() {
             "CODER" => {
-                tool_runtime.clear_journal();
+                let recovered = tool_runtime.resume_code_recovery(
+                    active_work.graph_version,
+                    &active_work.jobpack_id,
+                )?;
+                if !recovered {
+                    tool_runtime.clear_journal();
+                }
+                let coder_instruction = if recovered {
+                    format!(
+                        "{requirement}\nRECOVERY: existing source mutations have been verified and restored. Inspect current files and submit the exact checklist claims without repeating completed edits."
+                    )
+                } else {
+                    requirement.to_owned()
+                };
                 coder_attempts += 1;
                 let checkpoint = self
                     .invoke_code_agent(
                         AgentId::Coder,
-                        requirement,
+                        &coder_instruction,
                         active_work,
                         &tasks,
                         initial_findings,
@@ -1174,6 +1187,10 @@ impl<'a> CodingWorkflow<'a> {
                     bail!("INTERNAL_FIX resume requires persisted or supplied findings");
                 }
                 let journal_len_before_fix = tool_runtime.journal().len();
+                tool_runtime.resume_code_recovery(
+                    active_work.graph_version,
+                    &active_work.jobpack_id,
+                )?;
                 coder_attempts += 1;
                 tasks = self
                     .registry
@@ -1311,6 +1328,10 @@ impl<'a> CodingWorkflow<'a> {
                 .registry
                 .jobpack_code_tasks(active_work.graph_version, &active_work.jobpack_id)?;
             let journal_len_before_fix = tool_runtime.journal().len();
+            tool_runtime.resume_code_recovery(
+                active_work.graph_version,
+                &active_work.jobpack_id,
+            )?;
             let previous_change_set_id = change_set_id.clone();
             checkpoint = self
                 .invoke_code_agent(
@@ -1353,7 +1374,7 @@ impl<'a> CodingWorkflow<'a> {
         &self,
         active_work: &ActiveWork,
         checkpoint: &CodeCheckpointSubmission,
-        tool_runtime: &ProjectToolRuntime,
+        tool_runtime: &mut ProjectToolRuntime,
         coder_attempts: u32,
         reviewer_attempts: u32,
     ) -> Result<String> {
@@ -1373,6 +1394,7 @@ impl<'a> CodingWorkflow<'a> {
             coder_attempts,
             reviewer_attempts,
         )?;
+        tool_runtime.finish_code_recovery()?;
         Ok(change_set_id)
     }
 
