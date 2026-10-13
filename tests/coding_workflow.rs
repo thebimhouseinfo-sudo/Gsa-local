@@ -954,3 +954,31 @@ fn uar4_simulate_model_invented_t1_position_four() {
     assert_eq!(state.status, "CODER");
     assert!(registry.persisted_code_checkpoint(version, "JP1", "sim-T1-4").unwrap().is_none());
 }
+
+#[test]
+fn uar4_simulate_resume_review_and_internal_fix() {
+    let (dir, registry, version) = setup();
+    registry.begin_code_workflow(dir.path(), "owner-a", version, "JP1").unwrap();
+    let valid = vec![ChecklistClaim { todo_id: "T1".into(), position: 1 }];
+    registry.record_code_checkpoint(
+        dir.path(), "owner-a", version, "JP1", "simulation-1",
+        "coder checkpoint", &valid, &[], &journal(), 1, 0,
+    ).unwrap();
+    let reopened = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    assert_eq!(reopened.code_workflow_state().unwrap().unwrap().status, "REVIEWER");
+    reopened.record_code_review(
+        dir.path(), "owner-a", version, "JP1", "simulation-1",
+        ReviewVerdict::Revise, &["needs correction".into()], 1, 1,
+    ).unwrap();
+    let resumed = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    assert_eq!(resumed.code_workflow_state().unwrap().unwrap().status, "INTERNAL_FIX");
+    resumed.record_code_checkpoint(
+        dir.path(), "owner-a", version, "JP1", "simulation-2",
+        "internal fix checkpoint", &valid, &[], &journal(), 2, 1,
+    ).unwrap();
+    resumed.record_code_review(
+        dir.path(), "owner-a", version, "JP1", "simulation-2",
+        ReviewVerdict::Pass, &[], 2, 2,
+    ).unwrap();
+    assert_eq!(resumed.code_workflow_state().unwrap().unwrap().status, "REVIEW_PASS");
+}
