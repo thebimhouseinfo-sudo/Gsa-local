@@ -148,3 +148,38 @@ fn macos_verifier_allows_dev_null_but_denies_outside_writes() {
     assert_ne!(escape.exit_code, Some(0), "{escape:?}");
     assert!(!denied.exists());
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_nested_context_runs_controls_without_second_sandbox() {
+    if std::env::var("GSA_VERIFICATION_SANDBOX").as_deref() == Ok("1") {
+        return;
+    }
+    use gsa_local::{
+        process_runner::LocalProcessRunner,
+        verification::{VerificationCapability, VerificationCommand, VerificationCommandKind},
+    };
+    let root = tempfile::tempdir().unwrap();
+    let executable = std::env::current_exe().unwrap();
+    let result = LocalProcessRunner::production()
+        .run(
+            root.path(),
+            &VerificationCommand {
+                id: "nested-context-regression".into(),
+                kind: VerificationCommandKind::Test,
+                capability: VerificationCapability::Integration,
+                argv: vec![
+                    executable.to_string_lossy().into_owned(),
+                    "--exact".into(),
+                    "macos_verifier_allows_dev_null_but_denies_outside_writes".into(),
+                    "--nocapture".into(),
+                ],
+                source_paths: vec![],
+                config_hash: "macos-nested-regression".into(),
+            },
+            std::time::Duration::from_secs(10),
+        )
+        .unwrap();
+    assert_eq!(result.exit_code, Some(0), "{result:?}");
+    assert!(result.stdout.contains("1 passed"), "{result:?}");
+}
