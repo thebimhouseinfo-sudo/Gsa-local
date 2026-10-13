@@ -1,3 +1,8 @@
+## UAR-4 post-TEST_PASS silent Local CR incident — 2026-10-13
+- Actual Mac GSA: `CODE_REVIEW_PASS` and `VERIFICATION_RESULT=TEST_PASS` for `M1/J1` exact change set `037c8481472875894f05ccc04828c1e352c52b0b06690dab5c5cff0ebcd378db`; then no CR output and no prompt. PID 24979 was sleeping (0% CPU), TCP to Ollama 127.0.0.1:11434 ESTABLISHED, `qwen38t:latest` loaded, Tokio waiting in kevent/condvar. User used Ctrl+C, host subsequently cooled. The observations do not prove request-inference activity, incorrect model mapping, or a deadlock.
+- Fix on main (source commit `a2694a044d440841c664047c829f643f73fbd5a4`): print `CODE_CR_START` before entering local CR, `CODE_CR_MODEL` after model resolution, `CODE_CR_ROUND` at each round; bound Ollama HTTP header wait and each stream idle wait to 300s with explicit error. No DB/reset or verification bypass. Timeout covers inactivity, not overall maximum model inference duration.
+- CI run https://github.com/thebimhouseinfo-sudo/Gsa-local/actions/runs/38428541529 was queued at update. Do not claim CI PASS until actual conclusion. On Mac, keep the old GSA process stopped; only copy `src/app.rs`, `src/workflow.rs`, `src/ollama.rs` to QA and resume existing J1 after CI PASS. Resume semantics post-TEST_PASS must be verified explicitly before claiming no re-verification. CR and terminal gates still pending.
+
 ## UAR-4 actual Mac acceptance — 2026-10-13
 - Human Mac QA `/Users/nam/Gsa-local-UAR3-QA.b5R8Pa` resumed from `DurableExact -> RunRequiredVerification` with code workflow `REVIEW_PASS`, `M1/J1`.
 - Exact source change set retained: `037c8481472875894f05ccc04828c1e352c52b0b06690dab5c5cff0ebcd378db`.
