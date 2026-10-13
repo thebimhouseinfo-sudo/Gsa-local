@@ -3,7 +3,7 @@
 - `src/app.rs`: Coder dispatch now compares whether an ACTIVE Job Pack was present before resolving due gates. If terminal gates completed it returns normally with `CODER_JOBPACK_COMPLETE`; when no ACTIVE Job Pack ever existed, the proper error remains (fail closed). No automatic activation of next Job Pack.
 - `src/workflow.rs`: Local CR compares its selected model with Coder's actual resolved model and fails explicitly with `CODE_CR_MODEL_NOT_INDEPENDENT` before submitting a new CR verdict if equal. Regression controls compare same-model rejection and distinct-model acceptance. Existing observed J1 CR used `qwen38t:latest`; it cannot retroactively be described as model-independent.
 - Human config for future independent CR: `/config` inside GSA should set **Coder** to `qwen38t:latest`, **CR** to `gemma4:31b-mlx`, or another installed distinct model. GSA model routing previously used `GSA_WORKFLOW_MODEL=qwen38t:latest` for CR because no explicit CR override was observed; config takes precedence.
-- All source changes are on main. Before human Mac acceptance of next Job Pack, confirm latest CI SUCCESS. J1 remains DONE and should not be re-executed.
+- All source changes are on main. CI SUCCESS for exact source on main@414a29f4f2263a22b88e8393b06e2cc47d2b1c91: https://github.com/thebimhouseinfo-sudo/Gsa-local/actions/runs/38451407843 . Human Mac acceptance is the next boundary, and J1 remains DONE: do not rerun it. J1 remains DONE and should not be re-executed.
 
 ## UAR-4 Mac terminal acceptance — 2026-10-14
 - User-local QA resumed `DurableExact -> ResumeLocalCr` for `M1/J1` with exact change set `037c8481472875894f05ccc04828c1e352c52b0b06690dab5c5cff0ebcd378db`.
