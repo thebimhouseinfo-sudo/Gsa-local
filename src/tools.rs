@@ -128,6 +128,9 @@ impl ProjectToolRuntime {
     }
 
     pub fn finish_code_recovery(&mut self) -> Result<()> {
+        if self.code_recovery.is_none() {
+            return Ok(());
+        }
         let path = self.code_recovery_path();
         if path.exists() {
             fs::remove_file(&path)?;
