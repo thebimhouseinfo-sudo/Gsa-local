@@ -1,3 +1,10 @@
+## UAR-4 Mac terminal acceptance — 2026-10-14
+- User-local QA resumed `DurableExact -> ResumeLocalCr` for `M1/J1` with exact change set `037c8481472875894f05ccc04828c1e352c52b0b06690dab5c5cff0ebcd378db`.
+- Observed `CODE_CR_START jobpack=J1 boundary=JOBPACK_TERMINAL`, `CODE_CR_MODEL ... model=qwen38t:latest`, rounds 1–5, then `CODE_CR_PASS jobpack=J1 boundary=JOBPACK_TERMINAL`, then `JOBPACK_DONE jobpack=J1`. Terminal returned to `>`.
+- After `JOBPACK_DONE`, CLI printed `error: no ACTIVE Job Pack is available for Coder`. This is a post-completion routing defect: Coder dispatch continues after terminal closure and tries to access a nonexistent ACTIVE Job Pack. Do not undo DONE or rerun J1 to work around it.
+- Independence caveat: observed Local CR model is `qwen38t:latest`; confirm CR model-routing requirements before asserting model-independent review.
+- UAR-4 core terminal flow observed to completion on Mac; leave cleanup defect to a targeted regression and verify any overall phase closure criteria separately. No automatic activation of the next phase.
+
 ## UAR-4 post-TEST_PASS runtime — CI green, human Mac QA required (2026-10-13)
 - Verified CI SUCCESS on exact runtime source revision `859da6e98a7407a9ea4f133fb6c7652c508e70f6`: https://github.com/thebimhouseinfo-sudo/Gsa-local/actions/runs/38428689362 .
 - Runtime changes: visible `CODE_CR_START`, `CODE_CR_MODEL`, `CODE_CR_ROUND`; Ollama chat response header and stream per-chunk idle timeout at 300 seconds; error does not fabricate PASS.
