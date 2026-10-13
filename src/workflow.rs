@@ -1983,6 +1983,7 @@ impl<'a> CodeCrWorkflow<'a> {
 
         let model =
             resolve_model_name(self.ollama, self.session, self.config, AgentId::LocalCr).await?;
+        println!("CODE_CR_MODEL boundary={} model={}", cr_work.key.boundary_id, model);
         let mut system = self.harnesses.compose(AgentId::LocalCr)?;
         system.push_str(&format!(
             "\n\nPROJECT ROOT: {}\nThis is a fresh read-only code boundary review. Inspect live source with read tools as needed. Do not repair source. Submit exactly one code CR verdict bound to the supplied boundary key.",
@@ -2004,6 +2005,7 @@ impl<'a> CodeCrWorkflow<'a> {
         definitions.push(code_cr_review_tool());
 
         for round in 0..8usize {
+            println!("CODE_CR_ROUND boundary={} round={}", cr_work.key.boundary_id, round + 1);
             let response = self
                 .ollama
                 .chat_stream_with_tools(&model, &messages, &definitions, |_| {})
