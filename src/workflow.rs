@@ -2772,6 +2772,45 @@ mod tests {
         assert!(runtime.journal().is_empty());
     }
     #[test]
+    fn uar4_coder_and_internal_fix_share_terminal_contract() {
+        use crate::ollama::{ToolCall, ToolFunctionCall};
+        let valid = ToolCall {
+            kind: Some("function".into()),
+            function: ToolFunctionCall {
+                index: Some(0),
+                name: "submit_code_checkpoint".into(),
+                arguments: serde_json::json!({
+                    "summary":"checkpoint",
+                    "completed_checklist":[],
+                    "goal_recheck":["checked"]
+                }),
+            },
+        };
+        for agent in [AgentId::Coder, AgentId::InternalFix] {
+            let result = code_terminal_submission::<CodeCheckpointSubmission>(
+                &[valid.clone()],
+                "submit_code_checkpoint",
+            )
+            .unwrap()
+            .unwrap();
+            assert_eq!(result.summary, "checkpoint", "{}", agent.display_name());
+            assert_eq!(result.goal_recheck, vec!["checked"]);
+        }
+        let missing = ToolCall {
+            function: ToolFunctionCall {
+                arguments: serde_json::json!({"summary":"missing arrays"}),
+                ..valid.function
+            },
+            ..valid
+        };
+        assert!(code_terminal_submission::<CodeCheckpointSubmission>(
+            &[missing],
+            "submit_code_checkpoint",
+        )
+        .is_err());
+    }
+
+    #[test]
     fn uar4_code_tool_round_exhaustion_is_fail_closed_for_each_role() {
         for agent in [AgentId::Coder, AgentId::InternalFix, AgentId::Reviewer] {
             for round in 0..MAX_CODE_ROLE_TOOL_ROUNDS - 1 {
