@@ -1,6 +1,9 @@
 use anyhow::{bail, Context, Result};
 use futures_util::StreamExt;
 use reqwest::Client;
+use std::time::Duration;
+
+const OLLAMA_RESPONSE_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -278,13 +281,16 @@ impl OllamaClient {
             body["tools"] = serde_json::to_value(tools)?;
         }
 
-        let response = self
-            .http
-            .post(format!("{}/api/chat", self.base_url))
-            .json(&body)
-            .send()
-            .await
-            .context("failed to connect to Ollama /api/chat")?;
+        let response = tokio::time::timeout(
+            OLLAMA_RESPONSE_IDLE_TIMEOUT,
+            self.http
+                .post(format!("{}/api/chat", self.base_url))
+                .json(&body)
+                .send(),
+        )
+        .await
+        .context("Ollama /api/chat response headers timed out after 300s")?
+        .context("failed to connect to Ollama /api/chat")?;
 
         let status = response.status();
         if !status.is_success() {
@@ -303,7 +309,11 @@ impl OllamaClient {
             ..OllamaChatTelemetry::default()
         };
 
-        while let Some(chunk) = stream.next().await {
+        loop {
+            let chunk = tokio::time::timeout(OLLAMA_RESPONSE_IDLE_TIMEOUT, stream.next())
+                .await
+                .context("Ollama /api/chat stream stalled for 300s without data")?;
+            let Some(chunk) = chunk else { break };
             let chunk = chunk.context("failed while reading Ollama stream")?;
             pending.extend_from_slice(&chunk);
             consume_complete_lines(&mut pending, &mut assistant, &mut telemetry, &mut on_token)?;
