@@ -2977,6 +2977,4 @@ mod tests {
         assert!(error.to_string().contains("CODE_CR_MODEL_NOT_INDEPENDENT"));
         ensure_distinct_cr_model("qwen38t:latest", "gemma4:31b-mlx").unwrap();
     }
-
-
 }
