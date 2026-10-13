@@ -49,6 +49,14 @@ Updated: 2026-10-13 (Asia/Ho_Chi_Minh)
 - Exact implementation `main@8c68f06853178aaaaa553b2797c1b6284d7c0ec8` CI SUCCESS: https://github.com/thebimhouseinfo-sudo/Gsa-local/actions/runs/38400827685
 - Human next: after gracefully stopping existing QA session, copy only verified new `src/verification.rs` to isolated QA preserving SQLite/README/recovery evidence, restart GSA and trigger existing J1 verification without recoding. Capture real `VERIFICATION_RESULT`, CR/TM gates. Do not mark J1 or UAR-4 PASS before real result.
 
+## UAR-4 macOS sandbox cargo-test remediation — 2026-10-13
+- Human QA exact evidence: `cargo check` inside GSA sandbox exited 0; `cargo test` exited 101 while `rustix v1.1.5` build script attempted a subprocess (`Operation not permitted`). The same Cargo test using the GSA-target directory outside sandbox PASSED (unit/integration tests).
+- Root cause hypothesis (not yet verified on user's Mac): `rustix` build script executes a `rustc` capability probe with `Stdio::null()`, which can require opening `/dev/null` for writing. Sandbox previously denied all file writes except GSA CI runtime/temp paths.
+- Narrow implementation: `src/process_runner.rs` verifier sandbox profile permits write to the literal `/dev/null` only, in addition to scoped runtime/temp paths; network and outside-file writes remain denied. macOS regression tests exercise allowed sink write and denied outside workspace write. No source J1, README, verification DB, or workflow state edited.
+- Exact code commit `main@20a40cb4509799344afd326c249b0c67ac365433`, CI SUCCESS: https://github.com/thebimhouseinfo-sudo/Gsa-local/actions/runs/38422247115
+- **NEXT HUMAN GATE:** Gracefully close old QA GSA, update main, copy only `src/process_runner.rs` into isolated QA, restart existing persisted REVIEW_PASS J1, and rerun required verification. Confirm exact J1 change_set `037c8481472875894f05ccc04828c1e352c52b0b06690dab5c5cff0ebcd378db` unchanged, `VERIFICATION_RESULT=TEST_PASS` and subsequent CR/terminal gates. A passing macOS regression is not yet proof that user-local rustix Cargo Test passes.
+- On continued `FAIL`: capture only new verification stderr/reason from SQLite (do not repeat Coder or reset DB), determine next denied resource precisely before broadening policy. UAR-4 remains IN_PROGRESS.
+
 ## Next work — resume UAR-4
 - Inspect latest `main`, actual coding workflow in `src/workflow.rs`, coding tests in `tests/coding_workflow.rs`, and role contracts in `harnesses/`.
 - Continue unifying only genuinely duplicated code-model submission/tool-loop behavior across Coder, Internal Fix and code Reviewer; preserve role-specific tool scopes and Reviewer read-only boundary.
