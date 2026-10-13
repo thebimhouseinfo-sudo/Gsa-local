@@ -30,3 +30,6 @@ bash scripts/uar4-legacy-qa-recovery.sh
 ```
 This checks exact v1/J1/CODER SQLite state, README equality with the human backup, the absence of a canonical README on main, the lack of a competing GSA process/ledger, backs up QA Rust source and creates a consistent SQLite snapshot via `.backup`. It then copies the current tested `src/workflow.rs` and `src/tools.rs`, imports README's exact hash as a created-file recovery record, and launches GSA. The script never resets SQLite or overwrites README. It fails closed on mismatches and is not safe to re-run after successful ledger creation.
 The script's Bash syntax is a mandatory GitHub CI check. This does NOT replace actual human approval of treating the old README as a Coder-created file.
+
+## Model configuration at the GSA prompt
+The prior QA run hit `MODEL_SELECTION_REQUIRED` before selecting models. Session-only `/model` for Coder/Reviewer does not configure internal-only Internal Fix. For a full Coder -> Reviewer -> Internal Fix test, use `/config` once to set the default model to `qwen38t:latest`; then select a distinct installed Reviewer model (such as `gemma4:31b-mlx`) with `/agent reviewer` and `/model`, return to `/agent coder` and give the existing Job Pack continuation request. Do not use a fresh planning request.
