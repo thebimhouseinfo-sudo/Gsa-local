@@ -130,16 +130,14 @@ fn macos_production_runner_cannot_falsely_pass_missing_executable() {
 fn macos_verifier_allows_dev_null_but_denies_outside_writes() {
     let root = tempfile::tempdir().unwrap();
     let run = |id: &str, script: String| {
-        observed_sandbox_command(
-            root.path(),
-            id,
-            vec!["/bin/sh".into(), "-c".into(), script],
-        )
+        observed_sandbox_command(root.path(), id, vec!["/bin/sh".into(), "-c".into(), script])
     };
     let sink = run("dev-null-control", "printf probe >/dev/null".into());
     assert_eq!(sink.exit_code, Some(0), "{sink:?}");
     let denied = if std::env::var("GSA_VERIFICATION_SANDBOX").as_deref() == Ok("1") {
-        std::env::current_dir().unwrap().join("gsa-verifier-denied-control.txt")
+        std::env::current_dir()
+            .unwrap()
+            .join("gsa-verifier-denied-control.txt")
     } else {
         tempfile::tempdir().unwrap().keep().join("unauthorized.txt")
     };
