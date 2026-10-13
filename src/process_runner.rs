@@ -753,8 +753,8 @@ mod tests {
         let profile = sandbox_profile(root.path(), &temp).unwrap();
         assert!(profile.contains("(deny file-write*)"));
         assert!(profile.contains("(deny network*)"));
-        assert!(profile.contains("(literal \\"/dev/null\\")"));
-        assert!(!profile.contains("(subpath \\"/dev\\")"));
+        assert!(profile.contains(r#"(literal "/dev/null")"#));
+        assert!(!profile.contains(r#"(subpath "/dev")"#));
     }
 
     #[test]
