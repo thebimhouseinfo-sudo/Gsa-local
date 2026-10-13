@@ -160,22 +160,25 @@ impl ProjectToolRuntime {
 
 
     pub fn restore_journal(&mut self, records: Vec<MutationRecord>) -> Result<()> {
-        let mut restored = Vec::with_capacity(records.len());
-        for mut record in records {
-            let resolved = self.resolve_existing(&record.path, false)?;
-            let current = sha256_file(&resolved)?;
-            if current != record.after_sha256 {
-                bail!(
-                    "stale restored change set: {} expected {}, current {}",
-                    record.path,
-                    record.after_sha256,
-                    current
-                );
-            }
-            record.after_content = fs::read_to_string(&resolved).unwrap_or_default();
-            record.before_content = None;
-            restored.push(record);
+        let mut last_hash = BTreeMap::new();
+        for record in &records {
+            last_hash.insert(record.path.as_str(), record.after_sha256.as_str());
         }
+        for (path, hash) in last_hash {
+            let resolved = self.resolve_existing(path, false)?;
+            let current = sha256_file(&resolved)?;
+            if current != hash {
+                bail!("stale restored change set: {path} expected {hash}, current {current}");
+            }
+        }
+        let restored = records
+            .into_iter()
+            .map(|mut record| {
+                record.before_content = None;
+                record.after_content = String::new();
+                record
+            })
+            .collect();
         self.journal = restored;
         Ok(())
     }
