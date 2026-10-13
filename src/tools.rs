@@ -147,7 +147,7 @@ impl ProjectToolRuntime {
         let ledger: CodeRecoveryLedger = serde_json::from_slice(&fs::read(&path)?)?;
         if ledger.graph_version != version
             || ledger.jobpack_id != jobpack
-            || ledger.records != self.journal
+            || serde_json::to_value(&ledger.records)? != serde_json::to_value(&self.journal)?
         {
             bail!("pending code recovery does not match committed checkpoint");
         }
