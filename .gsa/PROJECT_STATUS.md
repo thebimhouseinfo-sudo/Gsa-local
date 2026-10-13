@@ -33,6 +33,15 @@ Updated: 2026-10-13 (Asia/Ho_Chi_Minh)
 - **NEXT HUMAN GATE:** Mac QA must run fresh UAR-4 source with the original QA SQLite untouched; preserve other QA-local source edits before updating. Inspect actual Coder invalid-claim retry, Reviewer and Internal Fix flows. Avoid re-running prior source mutations unconditionally; capture status and logs first. UAR-4 remains IN_PROGRESS.
 - New simulation matrix: `.gsa/UAR4_SIMULATION_MATRIX.md`; unresolved crash-before-checkpoint recovery is tracked there.
 
+## UAR-4 recovery simulation + Human Gate — 2026-10-13
+- Simulation-first crash finding confirmed from Mac: old QA M1/J1 remains CODER with coder_attempts=0 and no code checkpoint, while QA README source was changed. Human backed up `README.md` and `gsa.db` to `/Users/nam/Gsa-local-UAR4-recovery-backup`.
+- Implemented code mutation write-ahead ledger for Coder/Internal Fix, exact graph and Job Pack binding, final per-path hash verification, reviewer file content restoration, multi-write handling, guarded cleanup after durable code checkpoint, strict wrong-job/stale-hash rejection, and denied project_write to `.gsa/state`.
+- Source crash-recovery simulation suite CI PASS on main@026eb29ec98f9bcf51ba4e0ff375cc38d84e3f47: https://github.com/thebimhouseinfo-sudo/Gsa-local/actions/runs/38392070899.
+- Explicit legacy-created-file import simulation on main@48a0fc82412329657ca3637f52c3f7214118a10c CI PASS: https://github.com/thebimhouseinfo-sudo/Gsa-local/actions/runs/38392450904.
+- **NEXT HUMAN GATE**: `.gsa/UAR4_HUMAN_GATE.md`. Stop the old Mac QA GSA process gracefully; preserve original SQLite, confirm README exact backup + absent canonical README + state v1/J1/CODER, take consistent SQLite backup, then deliberately create a bound recovery ledger for the old README and copy tested source files. Do not silently assume an old write-ahead ledger exists.
+- Only after Human Mac runtime acceptance and independent second-model code review may UAR-4 be marked PASS. UAR-5 remains unstarted.
+- No lifecycle mutation, no abandonment/reset of historical graph, and no source branch divergence is authorized by this checkpoint.
+
 ## Next work — resume UAR-4
 - Inspect latest `main`, actual coding workflow in `src/workflow.rs`, coding tests in `tests/coding_workflow.rs`, and role contracts in `harnesses/`.
 - Continue unifying only genuinely duplicated code-model submission/tool-loop behavior across Coder, Internal Fix and code Reviewer; preserve role-specific tool scopes and Reviewer read-only boundary.
