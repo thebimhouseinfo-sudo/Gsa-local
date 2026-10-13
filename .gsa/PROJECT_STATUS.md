@@ -42,6 +42,13 @@ Updated: 2026-10-13 (Asia/Ho_Chi_Minh)
 - Only after Human Mac runtime acceptance and independent second-model code review may UAR-4 be marked PASS. UAR-5 remains unstarted.
 - No lifecycle mutation, no abandonment/reset of historical graph, and no source branch divergence is authorized by this checkpoint.
 
+## UAR-4 Mac verification discovery finding — 2026-10-13
+- Mac actual Coder -> Reviewer returned `CODE_REVIEW_PASS` on J1 change_set `037c8481472875894f05ccc04828c1e352c52b0b06690dab5c5cff0ebcd378db`. `VERIFICATION_RESULT=BLOCKED`; J1 ACTIVE.
+- SQL exact reason: `scripts/ci.sh contains unsupported verification command: for script in scripts/ci.sh ...; do`, with empty `commands_json`. This is deterministic verifier discovery, not Coder/Reviewer failure.
+- Corrected `src/verification.rs` to fall back to fixed `cargo check` and `cargo test` argv when complex CI script syntax is unsupported and `Cargo.toml` exists. Never execute complex Bash through the runtime; simple recognized CI command list behavior retained. Regression on a complex `scripts/ci.sh` fixture.
+- Exact implementation `main@8c68f06853178aaaaa553b2797c1b6284d7c0ec8` CI SUCCESS: https://github.com/thebimhouseinfo-sudo/Gsa-local/actions/runs/38400827685
+- Human next: after gracefully stopping existing QA session, copy only verified new `src/verification.rs` to isolated QA preserving SQLite/README/recovery evidence, restart GSA and trigger existing J1 verification without recoding. Capture real `VERIFICATION_RESULT`, CR/TM gates. Do not mark J1 or UAR-4 PASS before real result.
+
 ## Next work — resume UAR-4
 - Inspect latest `main`, actual coding workflow in `src/workflow.rs`, coding tests in `tests/coding_workflow.rs`, and role contracts in `harnesses/`.
 - Continue unifying only genuinely duplicated code-model submission/tool-loop behavior across Coder, Internal Fix and code Reviewer; preserve role-specific tool scopes and Reviewer read-only boundary.
