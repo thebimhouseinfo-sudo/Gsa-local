@@ -1015,3 +1015,49 @@ fn uar4_simulate_process_death_after_source_write_before_checkpoint() {
     assert!(state.change_set_id.is_none());
     assert!(persisted.persisted_code_checkpoint(version, "JP1", "uncommitted").unwrap().is_none());
 }
+
+#[rustfmt::skip]
+#[test]
+fn uar4_simulate_recovery_rejects_stale_hash_and_wrong_jobpack() {
+    use gsa_local::harness::AgentId;
+    let (dir, registry, version) = setup();
+    registry.begin_code_workflow(dir.path(), "owner-a", version, "JP1").unwrap();
+    std::fs::create_dir_all(dir.path().join(".gsa/state")).unwrap();
+    let original = Sha256::digest(b"after").iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let mut runtime = ProjectToolRuntime::new(dir.path()).unwrap();
+    assert!(!runtime.resume_code_recovery(version, "JP1").unwrap());
+    runtime.execute(AgentId::Coder, "project_write", &json!({
+        "path":"src/example.rs", "content":"one", "expected_sha256":original
+    })).unwrap();
+    let mut wrong_job = ProjectToolRuntime::new(dir.path()).unwrap();
+    assert!(wrong_job.resume_code_recovery(version, "JP2").is_err());
+    std::fs::write(dir.path().join("src/example.rs"), "tampered").unwrap();
+    let mut stale = ProjectToolRuntime::new(dir.path()).unwrap();
+    assert!(stale.resume_code_recovery(version, "JP1").is_err());
+}
+
+#[rustfmt::skip]
+#[test]
+fn uar4_simulate_recovery_preserves_multiple_writes_same_path() {
+    use gsa_local::harness::AgentId;
+    let (dir, registry, version) = setup();
+    registry.begin_code_workflow(dir.path(), "owner-a", version, "JP1").unwrap();
+    std::fs::create_dir_all(dir.path().join(".gsa/state")).unwrap();
+    let original = Sha256::digest(b"after").iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let mut runtime = ProjectToolRuntime::new(dir.path()).unwrap();
+    runtime.resume_code_recovery(version, "JP1").unwrap();
+    runtime.execute(AgentId::Coder, "project_write", &json!({
+        "path":"src/example.rs", "content":"first", "expected_sha256":original
+    })).unwrap();
+    let middle = Sha256::digest(b"first").iter().map(|b| format!("{b:02x}")).collect::<String>();
+    runtime.execute(AgentId::Coder, "project_write", &json!({
+        "path":"src/example.rs", "content":"second", "expected_sha256":middle
+    })).unwrap();
+    drop(runtime);
+    let mut recovered = ProjectToolRuntime::new(dir.path()).unwrap();
+    assert!(recovered.resume_code_recovery(version, "JP1").unwrap());
+    assert_eq!(recovered.journal().len(), 2);
+    recovered.verify_journal_current().unwrap();
+    recovered.finish_code_recovery().unwrap();
+    assert!(!dir.path().join(".gsa/state/code_write_recovery.json").exists());
+}
