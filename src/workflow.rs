@@ -1983,6 +1983,9 @@ impl<'a> CodeCrWorkflow<'a> {
 
         let model =
             resolve_model_name(self.ollama, self.session, self.config, AgentId::LocalCr).await?;
+        let coder_model =
+            resolve_model_name(self.ollama, self.session, self.config, AgentId::Coder).await?;
+        ensure_distinct_cr_model(&coder_model, &model)?;
         println!(
             "CODE_CR_MODEL boundary={} model={}",
             cr_work.key.boundary_id, model
@@ -2065,6 +2068,15 @@ impl<'a> CodeCrWorkflow<'a> {
         }
         unreachable!("bounded code CR tool loop must return or fail")
     }
+}
+
+fn ensure_distinct_cr_model(coder_model: &str, cr_model: &str) -> Result<()> {
+    if coder_model == cr_model {
+        bail!(
+            "CODE_CR_MODEL_NOT_INDEPENDENT: Local CR model ({cr_model}) equals Coder model; configure a distinct Local CR model with /config before retrying. Existing verified checkpoints remain unchanged."
+        );
+    }
+    Ok(())
 }
 
 fn plan_tool() -> ToolDefinition {
