@@ -2811,5 +2811,4 @@ mod tests {
         assert!(response.content.contains(r#""ok":false"#));
         assert!(runtime.journal().is_empty());
     }
-
 }
