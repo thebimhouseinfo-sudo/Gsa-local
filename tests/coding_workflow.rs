@@ -939,3 +939,18 @@ fn internal_fix_resume_survives_registry_reopen_with_reviewer_findings() {
         .unwrap()
         .is_some());
 }
+
+#[test]
+fn uar4_simulate_model_invented_t1_position_four() {
+    let (dir, registry, version) = setup();
+    registry.begin_code_workflow(dir.path(), "owner-a", version, "JP1").unwrap();
+    let invented = vec![ChecklistClaim { todo_id: "T1".into(), position: 4 }];
+    let error = registry.record_code_checkpoint(
+        dir.path(), "owner-a", version, "JP1", "sim-T1-4",
+        "model submitted invented position", &invented, &[], &journal(), 1, 0,
+    ).unwrap_err();
+    assert!(format!("{error:#}").contains("T1#4"));
+    let state = registry.code_workflow_state().unwrap().unwrap();
+    assert_eq!(state.status, "CODER");
+    assert!(registry.persisted_code_checkpoint(version, "JP1", "sim-T1-4").unwrap().is_none());
+}
