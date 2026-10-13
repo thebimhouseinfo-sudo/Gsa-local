@@ -1,3 +1,9 @@
+## UAR-4 actual Mac acceptance — 2026-10-13
+- Human Mac QA `/Users/nam/Gsa-local-UAR3-QA.b5R8Pa` resumed from `DurableExact -> RunRequiredVerification` with code workflow `REVIEW_PASS`, `M1/J1`.
+- Exact source change set retained: `037c8481472875894f05ccc04828c1e352c52b0b06690dab5c5cff0ebcd378db`.
+- GSA output after sandbox fixes: `CODE_REVIEW_PASS jobpack=J1 change_set=037c8481472875894f05ccc04828c1e352c52b0b06690dab5c5cff0ebcd378db`; `VERIFICATION_RESULT jobpack=J1 change_set=037c8481472875894f05ccc04828c1e352c52b0b06690dab5c5cff0ebcd378db result=TEST_PASS`.
+- Mac verification **PASS confirmed by actual GSA output**, not inferred from CI or unsandboxed cargo. No evidence yet of independent code CR PASS or terminal/milestone completion; **UAR-4 remains IN_PROGRESS** pending these gates and restart acceptance. Do not rerun Coder, reset SQLite, or fabricate CR evidence.
+
 ## UAR-4 nested macOS sandbox verification — 2026-10-13
 - Human local evidence: `cargo check` PASS, `cargo test` dependency compilation PASS, but `tests/process_runner.rs` failed with `sandbox-exec: sandbox_apply: Operation not permitted` exit 71. Root cause: tests invoke `LocalProcessRunner::production()` and create a second `sandbox-exec` beneath verification's first sandbox.
 - Implementation on main: macOS verification runner marks verified sandbox descendants with `GSA_VERIFICATION_SANDBOX=1`; macOS integration tests run real child controls in that existing sandbox, never nest another sandbox-exec. Outside existing sandbox the same tests continue to exercise real production runner. Negative outside-workspace write control and allowed /dev/null control both remain mandatory, with a separate outer-sandbox test spawning the controls inside production sandbox.
