@@ -101,3 +101,41 @@ fn macos_production_runner_cannot_falsely_pass_missing_executable() {
     );
     assert!(!result.timed_out, "missing executable must not hang");
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_verifier_allows_dev_null_but_denies_outside_writes() {
+    use gsa_local::{
+        process_runner::LocalProcessRunner,
+        verification::{VerificationCapability, VerificationCommand, VerificationCommandKind},
+    };
+    use std::time::Duration;
+    let root = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    let runner = LocalProcessRunner::production();
+    let run = |id: &str, script: String| {
+        runner
+            .run(
+                root.path(),
+                &VerificationCommand {
+                    id: id.into(),
+                    kind: VerificationCommandKind::Test,
+                    capability: VerificationCapability::Unit,
+                    argv: vec!["/bin/sh".into(), "-c".into(), script],
+                    source_paths: vec![],
+                    config_hash: "sandbox-regression".into(),
+                },
+                Duration::from_secs(5),
+            )
+            .unwrap()
+    };
+    let sink = run("dev-null-control", "printf probe >/dev/null".into());
+    assert_eq!(sink.exit_code, Some(0), "{sink:?}");
+    let denied = outside.path().join("unauthorized.txt");
+    let escape = run(
+        "outside-write-negative-control",
+        format!("printf forbidden > {}", denied.display()),
+    );
+    assert_ne!(escape.exit_code, Some(0), "{escape:?}");
+    assert!(!denied.exists());
+}
