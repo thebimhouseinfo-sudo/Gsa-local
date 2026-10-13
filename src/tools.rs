@@ -150,17 +150,24 @@ impl ProjectToolRuntime {
         let ledger = CodeRecoveryLedger {
             graph_version: *version,
             jobpack_id: jobpack.clone(),
-            records: self.journal.iter().cloned().chain(std::iter::once(mutation.clone())).collect(),
+            records: self
+                .journal
+                .iter()
+                .cloned()
+                .chain(std::iter::once(mutation.clone()))
+                .collect(),
         };
         let tmp = path.with_extension("pending");
-        let mut file = fs::OpenOptions::new().write(true).create_new(true).open(&tmp)
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
             .context("stale recovery staging file; reconcile before retry")?;
         file.write_all(&serde_json::to_vec(&ledger)?)?;
         file.sync_all()?;
         fs::rename(&tmp, &path)?;
         Ok(())
     }
-
 
     pub fn restore_journal(&mut self, records: Vec<MutationRecord>) -> Result<()> {
         let mut last_hash = BTreeMap::new();
