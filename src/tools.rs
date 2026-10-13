@@ -205,8 +205,12 @@ impl ProjectToolRuntime {
             .into_iter()
             .map(|mut record| {
                 record.before_content = None;
-                record.after_content = if last_hash.get(&record.path) == Some(&record.after_sha256) {
-                    final_contents.get(&record.path).cloned().unwrap_or_default()
+                record.after_content = if last_hash.get(&record.path) == Some(&record.after_sha256)
+                {
+                    final_contents
+                        .get(&record.path)
+                        .cloned()
+                        .unwrap_or_default()
                 } else {
                     String::new()
                 };
