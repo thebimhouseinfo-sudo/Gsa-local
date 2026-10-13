@@ -1165,6 +1165,10 @@ impl<'a> CodingWorkflow<'a> {
                     .change_set_id
                     .context("REVIEWER resume requires exact change set")?;
                 let checkpoint = load_checkpoint(&change_set_id, tool_runtime)?;
+                tool_runtime.reconcile_committed_code_recovery(
+                    active_work.graph_version,
+                    &active_work.jobpack_id,
+                )?;
                 (checkpoint, change_set_id)
             }
             "INTERNAL_FIX" => {
@@ -1230,6 +1234,11 @@ impl<'a> CodingWorkflow<'a> {
                 let change_set_id = state
                     .change_set_id
                     .context("REVIEW_PASS resume requires exact change set")?;
+                load_checkpoint(&change_set_id, tool_runtime)?;
+                tool_runtime.reconcile_committed_code_recovery(
+                    active_work.graph_version,
+                    &active_work.jobpack_id,
+                )?;
                 return Ok(CodingOutcome::ReviewPass { change_set_id });
             }
             "PAUSED" => {
