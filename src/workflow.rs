@@ -2720,4 +2720,26 @@ mod tests {
         assert!(result.findings.is_empty());
     }
 
+    #[test]
+    fn uar4_reviewer_tool_boundary_denies_writes_even_if_model_requests_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut runtime = ProjectToolRuntime::new(dir.path()).unwrap();
+        let definitions = runtime.tool_definitions(AgentId::Reviewer);
+        assert!(!definitions.iter().any(|definition| {
+            serde_json::to_string(definition).unwrap().contains("project_write")
+        }));
+        let denied = runtime.execute(
+            AgentId::Reviewer,
+            "project_write",
+            &serde_json::json!({
+                "path":"denied.txt",
+                "content":"must not exist",
+                "create_only":true
+            }),
+        );
+        assert!(denied.is_err());
+        assert!(!dir.path().join("denied.txt").exists());
+        assert!(runtime.journal().is_empty());
+    }
+
 }
