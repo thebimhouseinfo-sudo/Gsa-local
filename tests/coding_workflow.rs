@@ -1061,3 +1061,32 @@ fn uar4_simulate_recovery_preserves_multiple_writes_same_path() {
     recovered.finish_code_recovery().unwrap();
     assert!(!dir.path().join(".gsa/state/code_write_recovery.json").exists());
 }
+
+#[rustfmt::skip]
+#[test]
+fn uar4_simulate_crash_after_checkpoint_before_ledger_cleanup() {
+    use gsa_local::harness::AgentId;
+    let (dir, registry, version) = setup();
+    registry.begin_code_workflow(dir.path(), "owner-a", version, "JP1").unwrap();
+    std::fs::create_dir_all(dir.path().join(".gsa/state")).unwrap();
+    let original = Sha256::digest(b"after").iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let mut writer = ProjectToolRuntime::new(dir.path()).unwrap();
+    writer.resume_code_recovery(version, "JP1").unwrap();
+    writer.execute(AgentId::Coder, "project_write", &json!({
+        "path":"src/example.rs", "content":"checkpointed", "expected_sha256":original
+    })).unwrap();
+    let id = writer.change_set_id().unwrap();
+    let evidence = serde_json::to_value(writer.journal()).unwrap();
+    registry.record_code_checkpoint(
+        dir.path(), "owner-a", version, "JP1", &id,
+        "durable checkpoint", &[ChecklistClaim { todo_id: "T1".into(), position: 1 }],
+        &[], &evidence, 1, 0
+    ).unwrap();
+    drop(writer);
+    let checkpoint = registry.persisted_code_checkpoint(version, "JP1", &id).unwrap().unwrap();
+    let mut reopened = ProjectToolRuntime::new(dir.path()).unwrap();
+    reopened.restore_journal(checkpoint.mutation_journal).unwrap();
+    reopened.reconcile_committed_code_recovery(version, "JP1").unwrap();
+    assert!(!dir.path().join(".gsa/state/code_write_recovery.json").exists());
+    assert_eq!(registry.code_workflow_state().unwrap().unwrap().status, "REVIEWER");
+}
