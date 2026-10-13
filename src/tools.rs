@@ -442,8 +442,8 @@ impl ProjectToolRuntime {
             bail!("project_write content exceeds {} bytes", MAX_WRITE_BYTES);
         }
         let relative = normalize_relative(&args.path)?;
-        if is_tester_workspace_path(&relative) {
-            bail!("project_write cannot modify Tester-owned workspace paths under .gsa/tester");
+        if is_tester_workspace_path(&relative) || is_internal_state_path(&relative) {
+            bail!("project_write cannot modify protected .gsa runtime state or Tester-owned files");
         }
         let display = relative.to_string_lossy().replace('\\', "/");
         let target = self.root.join(&relative);
@@ -665,6 +665,15 @@ fn normalize_display(raw: &str) -> Result<String> {
     Ok(normalize_relative(raw)?
         .to_string_lossy()
         .replace('\\', "/"))
+}
+
+fn is_internal_state_path(path: &Path) -> bool {
+    let mut components = path.components().filter_map(|component| match component {
+        Component::Normal(part) => part.to_str(),
+        _ => None,
+    });
+    matches!((components.next(), components.next()), (Some(a), Some(b))
+        if a.eq_ignore_ascii_case(".gsa") && b.eq_ignore_ascii_case("state"))
 }
 
 fn is_tester_workspace_path(path: &Path) -> bool {
