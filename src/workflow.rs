@@ -2695,27 +2695,44 @@ mod tests {
                 },
             }
         }
-        let terminal = call("submit_code_review", serde_json::json!({
-            "verdict":"PASS","findings":[]
-        }));
-        let read = call("project_read", serde_json::json!({"path":"src/workflow.rs"}));
+        let terminal = call(
+            "submit_code_review",
+            serde_json::json!({
+                "verdict":"PASS","findings":[]
+            }),
+        );
+        let read = call(
+            "project_read",
+            serde_json::json!({"path":"src/workflow.rs"}),
+        );
         assert!(code_terminal_submission::<CodeReviewDecision>(&[], "submit_code_review").is_err());
         assert!(code_terminal_submission::<CodeReviewDecision>(
-            &[terminal.clone(), read.clone()], "submit_code_review"
-        ).is_err());
-        assert!(code_terminal_submission::<CodeReviewDecision>(
-            &[terminal.clone(), terminal.clone()], "submit_code_review"
-        ).is_err());
-        assert!(code_terminal_submission::<CodeReviewDecision>(
-            &[call("submit_code_review", serde_json::json!({"verdict":42}))],
+            &[terminal.clone(), read.clone()],
             "submit_code_review"
-        ).is_err());
+        )
+        .is_err());
         assert!(code_terminal_submission::<CodeReviewDecision>(
-            &[read], "submit_code_review"
-        ).unwrap().is_none());
-        let result = code_terminal_submission::<CodeReviewDecision>(
-            &[terminal], "submit_code_review"
-        ).unwrap().unwrap();
+            &[terminal.clone(), terminal.clone()],
+            "submit_code_review"
+        )
+        .is_err());
+        assert!(code_terminal_submission::<CodeReviewDecision>(
+            &[call(
+                "submit_code_review",
+                serde_json::json!({"verdict":42})
+            )],
+            "submit_code_review"
+        )
+        .is_err());
+        assert!(
+            code_terminal_submission::<CodeReviewDecision>(&[read], "submit_code_review")
+                .unwrap()
+                .is_none()
+        );
+        let result =
+            code_terminal_submission::<CodeReviewDecision>(&[terminal], "submit_code_review")
+                .unwrap()
+                .unwrap();
         assert_eq!(result.verdict, "PASS");
         assert!(result.findings.is_empty());
     }
@@ -2726,7 +2743,9 @@ mod tests {
         let mut runtime = ProjectToolRuntime::new(dir.path()).unwrap();
         let definitions = runtime.tool_definitions(AgentId::Reviewer);
         assert!(!definitions.iter().any(|definition| {
-            serde_json::to_string(definition).unwrap().contains("project_write")
+            serde_json::to_string(definition)
+                .unwrap()
+                .contains("project_write")
         }));
         let denied = runtime.execute(
             AgentId::Reviewer,
@@ -2741,5 +2760,4 @@ mod tests {
         assert!(!dir.path().join("denied.txt").exists());
         assert!(runtime.journal().is_empty());
     }
-
 }
