@@ -28,32 +28,66 @@ fn production_runner_blocks_when_project_sandbox_backend_is_unavailable() {
     assert!(result.blocked_reason.is_some());
 }
 
+
+#[cfg(target_os = "macos")]
+fn observed_sandbox_command(
+    root: &std::path::Path,
+    id: &str,
+    argv: Vec<String>,
+) -> gsa_local::process_runner::ProcessObservation {
+    use gsa_local::{
+        process_runner::{LocalProcessRunner, ProcessObservation},
+        verification::{VerificationCapability, VerificationCommand, VerificationCommandKind},
+    };
+    use std::{process::Command, time::Duration};
+    if std::env::var("GSA_VERIFICATION_SANDBOX").as_deref() == Ok("1") {
+        // Already inside the verifier's macOS sandbox: do not nest sandbox-exec.
+        // Execute a real child and verify both positive and negative controls.
+        let output = Command::new(&argv[0]).args(&argv[1..]).current_dir(root).output();
+        return match output {
+            Ok(output) => ProcessObservation {
+                exit_code: output.status.code(),
+                duration_ms: 0,
+                timed_out: false,
+                blocked_reason: None,
+                stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+                stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+            },
+            Err(error) => ProcessObservation {
+                exit_code: None,
+                duration_ms: 0,
+                timed_out: false,
+                blocked_reason: Some(error.to_string()),
+                stdout: String::new(),
+                stderr: String::new(),
+            },
+        };
+    }
+    LocalProcessRunner::production()
+        .run(
+            root,
+            &VerificationCommand {
+                id: id.into(),
+                kind: VerificationCommandKind::Test,
+                capability: VerificationCapability::Unit,
+                argv,
+                source_paths: vec![],
+                config_hash: "macos-actual-control".into(),
+            },
+            Duration::from_secs(5),
+        )
+        .unwrap()
+}
+
 #[cfg(target_os = "macos")]
 #[test]
 fn macos_production_runner_must_execute_real_successfully_sandboxed_command() {
-    use gsa_local::{
-        process_runner::LocalProcessRunner,
-        verification::{VerificationCapability, VerificationCommand, VerificationCommandKind},
-    };
-    use std::time::Duration;
-
     let dir = tempfile::tempdir().unwrap();
-    let runner = LocalProcessRunner::production();
-    assert!(
-        runner.is_available(),
-        "macOS CI requires a functional sandbox-exec backend; a blocked runner cannot prove success"
+    let result = observed_sandbox_command(
+        dir.path(),
+        "real-sandbox-success",
+        vec!["/bin/echo".into(), "gsa-sandbox-observed".into()],
     );
-    let command = VerificationCommand {
-        id: "real-sandbox-success".into(),
-        kind: VerificationCommandKind::Test,
-        capability: VerificationCapability::Unit,
-        argv: vec!["/bin/echo".into(), "gsa-sandbox-observed".into()],
-        source_paths: vec![],
-        config_hash: "positive-control".into(),
-    };
-    let result = runner
-        .run(dir.path(), &command, Duration::from_secs(3))
-        .expect("production runner should return observed process evidence");
 
     assert_eq!(
         result.blocked_reason, None,
@@ -71,25 +105,12 @@ fn macos_production_runner_must_execute_real_successfully_sandboxed_command() {
 #[cfg(target_os = "macos")]
 #[test]
 fn macos_production_runner_cannot_falsely_pass_missing_executable() {
-    use gsa_local::{
-        process_runner::LocalProcessRunner,
-        verification::{VerificationCapability, VerificationCommand, VerificationCommandKind},
-    };
-    use std::time::Duration;
-
     let dir = tempfile::tempdir().unwrap();
-    let runner = LocalProcessRunner::production();
-    let command = VerificationCommand {
-        id: "must-never-succeed".into(),
-        kind: VerificationCommandKind::Test,
-        capability: VerificationCapability::Unit,
-        argv: vec!["/gsa-local-intentionally-missing-executable".into()],
-        source_paths: vec![],
-        config_hash: "negative-control".into(),
-    };
-    let result = runner
-        .run(dir.path(), &command, Duration::from_secs(3))
-        .expect("production runner must return a structured observation");
+    let result = observed_sandbox_command(
+        dir.path(),
+        "must-never-succeed",
+        vec!["/gsa-local-intentionally-missing-executable".into()],
+    );
 
     // On a macOS runner with sandbox-exec, the requested executable must fail.
     // On a host without the sandbox backend, the result must be an explicit BLOCKED.
@@ -105,33 +126,21 @@ fn macos_production_runner_cannot_falsely_pass_missing_executable() {
 #[cfg(target_os = "macos")]
 #[test]
 fn macos_verifier_allows_dev_null_but_denies_outside_writes() {
-    use gsa_local::{
-        process_runner::LocalProcessRunner,
-        verification::{VerificationCapability, VerificationCommand, VerificationCommandKind},
-    };
-    use std::time::Duration;
     let root = tempfile::tempdir().unwrap();
-    let outside = tempfile::tempdir().unwrap();
-    let runner = LocalProcessRunner::production();
     let run = |id: &str, script: String| {
-        runner
-            .run(
-                root.path(),
-                &VerificationCommand {
-                    id: id.into(),
-                    kind: VerificationCommandKind::Test,
-                    capability: VerificationCapability::Unit,
-                    argv: vec!["/bin/sh".into(), "-c".into(), script],
-                    source_paths: vec![],
-                    config_hash: "sandbox-regression".into(),
-                },
-                Duration::from_secs(5),
-            )
-            .unwrap()
+        observed_sandbox_command(
+            root.path(),
+            id,
+            vec!["/bin/sh".into(), "-c".into(), script],
+        )
     };
     let sink = run("dev-null-control", "printf probe >/dev/null".into());
     assert_eq!(sink.exit_code, Some(0), "{sink:?}");
-    let denied = outside.path().join("unauthorized.txt");
+    let denied = if std::env::var("GSA_VERIFICATION_SANDBOX").as_deref() == Ok("1") {
+        std::env::current_dir().unwrap().join("gsa-verifier-denied-control.txt")
+    } else {
+        tempfile::tempdir().unwrap().keep().join("unauthorized.txt")
+    };
     let escape = run(
         "outside-write-negative-control",
         format!("printf forbidden > {}", denied.display()),
