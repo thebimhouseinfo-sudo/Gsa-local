@@ -2808,7 +2808,7 @@ mod tests {
         };
         let response = execute_project_tool_message(AgentId::Coder, &mut runtime, &call);
         assert_eq!(response.role, "tool");
-        assert!(response.content.contains("\\"ok\\":false"));
+        assert!(response.content.contains(r#""ok":false"#));
         assert!(runtime.journal().is_empty());
     }
 
