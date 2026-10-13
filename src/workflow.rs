@@ -1575,6 +1575,24 @@ fn code_terminal_submission<T: serde::de::DeserializeOwned>(
     Ok(None)
 }
 
+fn validate_code_claims(claims: &[ChecklistClaim], tasks: &[CodeTodoState]) -> Result<()> {
+    let mut seen = std::collections::HashSet::new();
+    for claim in claims {
+        if claim.todo_id.trim().is_empty() || claim.position <= 0
+            || !seen.insert((claim.todo_id.as_str(), claim.position))
+        {
+            bail!("invalid or duplicate checklist claim {}#{}", claim.todo_id, claim.position);
+        }
+        if !tasks.iter().any(|task| {
+            task.todo_id == claim.todo_id
+                && task.checklist.iter().any(|item| item.position == claim.position)
+        }) {
+            bail!("checklist claim {}#{} is not part of active Job Pack", claim.todo_id, claim.position);
+        }
+    }
+    Ok(())
+}
+
 fn repair_progressed(
     journal_len_before: usize,
     journal_len_after: usize,
@@ -2771,6 +2789,28 @@ mod tests {
         assert!(!dir.path().join("denied.txt").exists());
         assert!(runtime.journal().is_empty());
     }
+    #[test]
+    fn uar4_model_response_simulation_rejects_invented_claim_without_dropping_valid_claim() {
+        let tasks = vec![CodeTodoState {
+            todo_id: "T1".into(),
+            title: "Scoped todo".into(),
+            status: "PENDING".into(),
+            checklist: vec![crate::registry::CodeChecklistState {
+                position: 1,
+                item: "Real item".into(),
+                checked: false,
+            }],
+        }];
+        let invented = [ChecklistClaim { todo_id: "T1".into(), position: 4 }];
+        assert!(validate_code_claims(&invented, &tasks).is_err());
+        let valid = [ChecklistClaim { todo_id: "T1".into(), position: 1 }];
+        assert!(validate_code_claims(&valid, &tasks).is_ok());
+        let mixed = [valid[0].clone(), invented[0].clone()];
+        assert!(validate_code_claims(&mixed, &tasks).is_err());
+        let duplicate = [valid[0].clone(), valid[0].clone()];
+        assert!(validate_code_claims(&duplicate, &tasks).is_err());
+    }
+
     #[test]
     fn uar4_coder_and_internal_fix_share_terminal_contract() {
         use crate::ollama::{ToolCall, ToolFunctionCall};
