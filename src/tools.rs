@@ -139,6 +139,28 @@ impl ProjectToolRuntime {
         Ok(())
     }
 
+    pub fn reconcile_committed_code_recovery(
+        &mut self,
+        version: i64,
+        jobpack: &str,
+    ) -> Result<()> {
+        let path = self.code_recovery_path();
+        if !path.exists() {
+            return Ok(());
+        }
+        let ledger: CodeRecoveryLedger = serde_json::from_slice(&fs::read(&path)?)?;
+        if ledger.graph_version != version
+            || ledger.jobpack_id != jobpack
+            || ledger.records != self.journal
+        {
+            bail!("pending code recovery does not match committed checkpoint");
+        }
+        self.verify_journal_current()?;
+        fs::remove_file(&path)?;
+        self.code_recovery = None;
+        Ok(())
+    }
+
     fn prepare_code_mutation(&self, mutation: &MutationRecord) -> Result<()> {
         let Some((version, jobpack)) = &self.code_recovery else {
             return Ok(());
