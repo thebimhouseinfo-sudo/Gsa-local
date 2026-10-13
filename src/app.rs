@@ -365,7 +365,10 @@ Do not edit Tester-owned artifacts as the product fix. Use the structured repair
                     }
                 }
                 Some(NextWork::Cr(cr_work)) => {
-                    println!("CODE_CR_START jobpack={} boundary={} change_set={}", cr_work.key.jobpack_id, cr_work.key.boundary_id, cr_work.key.change_set_id);
+                    println!(
+                        "CODE_CR_START jobpack={} boundary={} change_set={}",
+                        cr_work.key.jobpack_id, cr_work.key.boundary_id, cr_work.key.change_set_id
+                    );
                     let active_work: ActiveWork = self
                         .registry
                         .current_active_work()?
