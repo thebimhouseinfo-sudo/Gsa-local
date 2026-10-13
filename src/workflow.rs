@@ -1448,6 +1448,7 @@ impl<'a> CodingWorkflow<'a> {
             &definitions,
             "submit_code_checkpoint",
             tool_runtime,
+            Some(tasks),
         )
         .await
     }
@@ -1502,6 +1503,7 @@ impl<'a> CodingWorkflow<'a> {
             &definitions,
             "submit_code_review",
             tool_runtime,
+            None,
         )
         .await
     }
@@ -1519,6 +1521,7 @@ async fn run_code_role_tool_loop<T: serde::de::DeserializeOwned>(
     definitions: &[ToolDefinition],
     terminal_tool: &str,
     tool_runtime: &mut ProjectToolRuntime,
+    tasks: Option<&[CodeTodoState]>,
 ) -> Result<T> {
     // Shared bounded Coder/Internal Fix/Reviewer model loop. Preserve role
     // tool permissions, terminal exclusivity and fail-closed semantics.
