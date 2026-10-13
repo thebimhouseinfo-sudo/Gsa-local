@@ -1528,15 +1528,8 @@ async fn run_code_role_tool_loop<T: serde::de::DeserializeOwned>(
         let calls = response.tool_calls.clone();
         messages.push(response);
 
-        if calls.is_empty() {
-            bail!("{} stopped without {}", agent.display_name(), terminal_tool);
-        }
-        if calls.iter().any(|call| call.function.name == terminal_tool) {
-            if calls.len() != 1 || calls[0].function.name != terminal_tool {
-                bail!("{terminal_tool} must be the only tool call in its response");
-            }
-            return serde_json::from_value(calls[0].function.arguments.clone())
-                .with_context(|| format!("invalid {terminal_tool} arguments"));
+        if let Some(submission) = code_terminal_submission::<T>(&calls, terminal_tool)? {
+            return Ok(submission);
         }
         if round + 1 >= 8 {
             bail!(
@@ -1550,6 +1543,25 @@ async fn run_code_role_tool_loop<T: serde::de::DeserializeOwned>(
         }
     }
     unreachable!("bounded role tool loop must return or fail")
+}
+
+/// Classify a single completed model response before executing any action.
+fn code_terminal_submission<T: serde::de::DeserializeOwned>(
+    calls: &[ToolCall],
+    terminal_tool: &str,
+) -> Result<Option<T>> {
+    if calls.is_empty() {
+        bail!("code role stopped without {terminal_tool}");
+    }
+    if calls.iter().any(|call| call.function.name == terminal_tool) {
+        if calls.len() != 1 || calls[0].function.name != terminal_tool {
+            bail!("{terminal_tool} must be the only tool call in its response");
+        }
+        let submission = serde_json::from_value(calls[0].function.arguments.clone())
+            .with_context(|| format!("invalid {terminal_tool} arguments"))?;
+        return Ok(Some(submission));
+    }
+    Ok(None)
 }
 
 fn repair_progressed(
@@ -2670,4 +2682,42 @@ mod tests {
         assert!(!route.enter_reviewer());
         assert_eq!(route.stage, PlanningStage::Paused);
     }
+    #[test]
+    fn uar4_terminal_submission_fail_closed_regressions() {
+        use crate::ollama::{ToolCall, ToolFunctionCall};
+        fn call(name: &str, args: serde_json::Value) -> ToolCall {
+            ToolCall {
+                kind: Some("function".into()),
+                function: ToolFunctionCall {
+                    index: Some(0),
+                    name: name.into(),
+                    arguments: args,
+                },
+            }
+        }
+        let terminal = call("submit_code_review", serde_json::json!({
+            "verdict":"PASS","findings":[]
+        }));
+        let read = call("project_read", serde_json::json!({"path":"src/workflow.rs"}));
+        assert!(code_terminal_submission::<CodeReviewDecision>(&[], "submit_code_review").is_err());
+        assert!(code_terminal_submission::<CodeReviewDecision>(
+            &[terminal.clone(), read.clone()], "submit_code_review"
+        ).is_err());
+        assert!(code_terminal_submission::<CodeReviewDecision>(
+            &[terminal.clone(), terminal.clone()], "submit_code_review"
+        ).is_err());
+        assert!(code_terminal_submission::<CodeReviewDecision>(
+            &[call("submit_code_review", serde_json::json!({"verdict":42}))],
+            "submit_code_review"
+        ).is_err());
+        assert!(code_terminal_submission::<CodeReviewDecision>(
+            &[read], "submit_code_review"
+        ).unwrap().is_none());
+        let result = code_terminal_submission::<CodeReviewDecision>(
+            &[terminal], "submit_code_review"
+        ).unwrap().unwrap();
+        assert_eq!(result.verdict, "PASS");
+        assert!(result.findings.is_empty());
+    }
+
 }
