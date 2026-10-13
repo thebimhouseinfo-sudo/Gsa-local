@@ -1,5 +1,5 @@
 # GSA Local — Project Resume / Handoff
-Updated: 2026-10-12 (Asia/Ho_Chi_Minh)
+Updated: 2026-10-13 (Asia/Ho_Chi_Minh)
 
 ## Authority and entry point
 - GitHub repository: https://github.com/thebimhouseinfo-sudo/Gsa-local
@@ -16,6 +16,14 @@ Updated: 2026-10-12 (Asia/Ho_Chi_Minh)
    - https://github.com/thebimhouseinfo-sudo/Gsa-local/actions/runs/38194166443
    - https://github.com/thebimhouseinfo-sudo/Gsa-local/actions/runs/38194209699
    This is **not** UAR-4 final verification or a new real Mac Ollama test.
+
+## UAR-4 follow-up checkpoint — 2026-10-13
+- Current validated UAR-4 source checkpoint: **main@9c55f374565729c14142aaf5be51ccdfd98e2ef9**. Exact GitHub Actions CI **SUCCESS**: https://github.com/thebimhouseinfo-sudo/Gsa-local/actions/runs/38338361527.
+- Previous source test checkpoint main@a9a11f35eae5ec20cadd6fa64c3cfb703fd91ecf also SUCCESS: https://github.com/thebimhouseinfo-sudo/Gsa-local/actions/runs/38337593517.
+- Shared Coder/Internal Fix/Reviewer loop and terminal classifier regression coverage now includes missing/duplicate/mixed terminal calls, malformed terminal payload, Reviewer write denial, malformed action tool arguments without a mutation, bounded tool-round exhaustion across roles, and Coder/Internal Fix terminal parity.
+- **Do not mark UAR-4 PASS yet.** GitHub CI verifies synthetic code tests only. No fresh real Mac Ollama coding execution, independent second-model code review, or full workflow acceptance recorded. Prior UAR-3 acceptance cannot be reused as UAR-4 acceptance.
+- **NEXT HUMAN GATE**: run isolated Mac Ollama acceptance against this exact main source (not the original `~/Gsa-local/.gsa/state/gsa.db`), exercising an actual ACTIVE Job Pack with Coder submission -> Reviewer verdict -> optional Internal Fix -> Reviewer PASS and restart/resume. Share terminal output and exact tested commit. Do not abandon/overwrite persistent QA state without explicit Human consent.
+- Following the Mac outcome, inspect failures, repair if needed, rerun exact-commit CI, perform independent code review/acceptance and only then consider UAR-4 closure and UAR-5.
 
 ## Next work — resume UAR-4
 - Inspect latest `main`, actual coding workflow in `src/workflow.rs`, coding tests in `tests/coding_workflow.rs`, and role contracts in `harnesses/`.
