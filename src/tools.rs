@@ -427,15 +427,17 @@ impl ProjectToolRuntime {
                 .create_new(true)
                 .open(&target)
                 .with_context(|| format!("failed create-only write for {display}"))?;
-            file.write_all(args.content.as_bytes())?;
             let after = sha256_bytes(args.content.as_bytes());
-            self.journal.push(MutationRecord {
+            let record = MutationRecord {
                 path: display.clone(),
                 before_sha256: None,
                 after_sha256: after.clone(),
                 before_content: None,
                 after_content: args.content.clone(),
-            });
+            };
+            self.prepare_code_mutation(&record)?;
+            file.write_all(args.content.as_bytes())?;
+            self.journal.push(record);
             return Ok(WriteResult {
                 path: display,
                 before_sha256: None,
@@ -470,14 +472,16 @@ impl ProjectToolRuntime {
         if after == before {
             bail!("project_write refuses a no-op edit for {display}");
         }
-        fs::write(&resolved, args.content.as_bytes())?;
-        self.journal.push(MutationRecord {
+        let record = MutationRecord {
             path: display.clone(),
             before_sha256: Some(before.clone()),
             after_sha256: after.clone(),
             before_content: Some(before_content),
             after_content: args.content.clone(),
-        });
+        };
+        self.prepare_code_mutation(&record)?;
+        fs::write(&resolved, args.content.as_bytes())?;
+        self.journal.push(record);
         Ok(WriteResult {
             path: display,
             before_sha256: Some(before),
