@@ -422,11 +422,6 @@ impl ProjectToolRuntime {
             if args.expected_sha256.is_some() {
                 bail!("create-only write must not provide expected_sha256");
             }
-            let mut file = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&target)
-                .with_context(|| format!("failed create-only write for {display}"))?;
             let after = sha256_bytes(args.content.as_bytes());
             let record = MutationRecord {
                 path: display.clone(),
@@ -436,6 +431,11 @@ impl ProjectToolRuntime {
                 after_content: args.content.clone(),
             };
             self.prepare_code_mutation(&record)?;
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&target)
+                .with_context(|| format!("failed create-only write for {display}"))?;
             file.write_all(args.content.as_bytes())?;
             self.journal.push(record);
             return Ok(WriteResult {
