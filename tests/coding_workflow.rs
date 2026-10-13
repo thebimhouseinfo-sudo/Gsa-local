@@ -1057,6 +1057,7 @@ fn uar4_simulate_recovery_preserves_multiple_writes_same_path() {
     let mut recovered = ProjectToolRuntime::new(dir.path()).unwrap();
     assert!(recovered.resume_code_recovery(version, "JP1").unwrap());
     assert_eq!(recovered.journal().len(), 2);
+    assert_eq!(recovered.review_evidence()[0].after_content, "second");
     recovered.verify_journal_current().unwrap();
     recovered.finish_code_recovery().unwrap();
     assert!(!dir.path().join(".gsa/state/code_write_recovery.json").exists());
