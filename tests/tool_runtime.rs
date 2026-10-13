@@ -469,3 +469,21 @@ fn no_op_and_unreviewably_large_writes_are_rejected() {
         .is_err());
     assert!(!dir.path().join("large.txt").exists());
 }
+
+#[rustfmt::skip]
+#[test]
+fn uar4_model_cannot_modify_internal_recovery_or_registry() {
+    let dir = tempdir().unwrap();
+    let state = dir.path().join(".gsa/state");
+    std::fs::create_dir_all(&state).unwrap();
+    std::fs::write(state.join("code_write_recovery.json"), "original").unwrap();
+    let mut runtime = ProjectToolRuntime::new(dir.path()).unwrap();
+    for path in [".gsa/state/code_write_recovery.json", ".gsa/state/gsa.db"] {
+        assert!(runtime.execute(
+            AgentId::Coder, "project_write",
+            &json!({"path":path, "content":"tampered", "create_only":true})
+        ).is_err());
+    }
+    assert_eq!(std::fs::read_to_string(state.join("code_write_recovery.json")).unwrap(), "original");
+    assert!(runtime.journal().is_empty());
+}
