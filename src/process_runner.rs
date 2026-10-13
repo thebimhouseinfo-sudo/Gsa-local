@@ -148,6 +148,10 @@ impl LocalProcessRunner {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
+        if matches!(self.backend, SandboxBackend::MacOs(_)) {
+            process.env("GSA_VERIFICATION_SANDBOX", "1");
+        }
+
         #[cfg(unix)]
         process.process_group(0);
 
