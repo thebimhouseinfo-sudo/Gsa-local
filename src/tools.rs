@@ -139,11 +139,7 @@ impl ProjectToolRuntime {
         Ok(())
     }
 
-    pub fn reconcile_committed_code_recovery(
-        &mut self,
-        version: i64,
-        jobpack: &str,
-    ) -> Result<()> {
+    pub fn reconcile_committed_code_recovery(&mut self, version: i64, jobpack: &str) -> Result<()> {
         let path = self.code_recovery_path();
         if !path.exists() {
             return Ok(());
