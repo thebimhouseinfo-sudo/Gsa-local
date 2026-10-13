@@ -990,11 +990,13 @@ fn uar4_simulate_resume_review_and_internal_fix() {
 fn uar4_simulate_process_death_after_source_write_before_checkpoint() {
     use gsa_local::harness::AgentId;
     let (dir, registry, version) = setup();
+    std::fs::create_dir_all(dir.path().join(".gsa/state")).unwrap();
     registry.begin_code_workflow(dir.path(), "owner-a", version, "JP1").unwrap();
     let path = dir.path().join("src/example.rs");
     let old_sha = Sha256::digest(b"after").iter().map(|b| format!("{b:02x}")).collect::<String>();
     {
         let mut writer = ProjectToolRuntime::new(dir.path()).unwrap();
+        assert!(!writer.resume_code_recovery(version, "JP1").unwrap());
         writer.execute(AgentId::Coder, "project_write", &json!({
             "path": "src/example.rs",
             "content": "new content from coder",
@@ -1003,8 +1005,10 @@ fn uar4_simulate_process_death_after_source_write_before_checkpoint() {
         assert_eq!(writer.journal().len(), 1);
     }
     assert_eq!(std::fs::read_to_string(path).unwrap(), "new content from coder");
-    let resumed = ProjectToolRuntime::new(dir.path()).unwrap();
-    assert!(resumed.journal().is_empty(), "known pre-recovery gap: mutation evidence is RAM-only");
+    let mut resumed = ProjectToolRuntime::new(dir.path()).unwrap();
+    assert!(resumed.resume_code_recovery(version, "JP1").unwrap());
+    assert_eq!(resumed.journal().len(), 1);
+    resumed.verify_journal_current().unwrap();
     let persisted = Registry::open_at(&dir.path().join("state.db")).unwrap();
     let state = persisted.code_workflow_state().unwrap().unwrap();
     assert_eq!(state.status, "CODER");
