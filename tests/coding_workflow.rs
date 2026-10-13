@@ -940,6 +940,7 @@ fn internal_fix_resume_survives_registry_reopen_with_reviewer_findings() {
         .is_some());
 }
 
+#[rustfmt::skip]
 #[test]
 fn uar4_simulate_model_invented_t1_position_four() {
     let (dir, registry, version) = setup();
@@ -955,6 +956,7 @@ fn uar4_simulate_model_invented_t1_position_four() {
     assert!(registry.persisted_code_checkpoint(version, "JP1", "sim-T1-4").unwrap().is_none());
 }
 
+#[rustfmt::skip]
 #[test]
 fn uar4_simulate_resume_review_and_internal_fix() {
     let (dir, registry, version) = setup();
