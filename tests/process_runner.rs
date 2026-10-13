@@ -28,7 +28,6 @@ fn production_runner_blocks_when_project_sandbox_backend_is_unavailable() {
     assert!(result.blocked_reason.is_some());
 }
 
-
 #[cfg(target_os = "macos")]
 fn observed_sandbox_command(
     root: &std::path::Path,
@@ -43,7 +42,10 @@ fn observed_sandbox_command(
     if std::env::var("GSA_VERIFICATION_SANDBOX").as_deref() == Ok("1") {
         // Already inside the verifier's macOS sandbox: do not nest sandbox-exec.
         // Execute a real child and verify both positive and negative controls.
-        let output = Command::new(&argv[0]).args(&argv[1..]).current_dir(root).output();
+        let output = Command::new(&argv[0])
+            .args(&argv[1..])
+            .current_dir(root)
+            .output();
         return match output {
             Ok(output) => ProcessObservation {
                 exit_code: output.status.code(),
