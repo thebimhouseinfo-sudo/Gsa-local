@@ -278,7 +278,12 @@ pub fn discover_profile(project_root: &Path) -> Result<VerificationProfile> {
         let config_hash = hash_config_paths(&root, &source_paths)?;
         let content = fs::read_to_string(&ci)
             .context("scripts/ci.sh must be UTF-8 text for deterministic verification discovery")?;
-        return discover_validated_ci_script(&content, source_paths, config_hash, rust_tests);
+        let profile = discover_validated_ci_script(&content, source_paths, config_hash, rust_tests)?;
+        // Complex CI shell syntax is not a verification command. Never execute
+        // arbitrary script content: derive fixed Cargo argv from the manifest.
+        if profile.status != DiscoveryStatus::Blocked || !root.join("Cargo.toml").is_file() {
+            return Ok(profile);
+        }
     }
 
     let cargo = root.join("Cargo.toml");
@@ -748,6 +753,23 @@ mod tests {
         assert!(profile
             .capabilities
             .contains(&VerificationCapability::Integration));
+    }
+
+    #[test]
+    fn complex_ci_script_falls_back_to_fixed_cargo_commands() {
+        let dir = tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("scripts")).unwrap();
+        fs::create_dir_all(dir.path().join("tests")).unwrap();
+        fs::write(dir.path().join("Cargo.toml"), "[package]\\nname='qa'\\nversion='0.1.0'\\n").unwrap();
+        fs::write(dir.path().join("tests/smoke.rs"), "#[test]\\nfn smoke() {}\\n").unwrap();
+        fs::write(dir.path().join("scripts/ci.sh"),
+            "set -euo pipefail\\nfor script in scripts/ci.sh; do\\n  bash -n \\"$script\\"\\ndone\\ncargo fmt --check\\ncargo check\\ncargo test\\n").unwrap();
+        let profile = discover_profile(dir.path()).unwrap();
+        assert_eq!(profile.status, DiscoveryStatus::Applicable);
+        assert_eq!(profile.commands.iter().map(|c| c.argv.clone()).collect::<Vec<_>>(),
+            vec![vec!["cargo".to_owned(), "check".to_owned()],
+                 vec!["cargo".to_owned(), "test".to_owned()]]);
+        assert!(profile.commands.iter().all(|c| c.config_hash == profile.commands[0].config_hash));
     }
 
     #[test]
