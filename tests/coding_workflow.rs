@@ -1091,3 +1091,35 @@ fn uar4_simulate_crash_after_checkpoint_before_ledger_cleanup() {
     assert!(!dir.path().join(".gsa/state/code_write_recovery.json").exists());
     assert_eq!(registry.code_workflow_state().unwrap().unwrap().status, "REVIEWER");
 }
+
+#[rustfmt::skip]
+#[test]
+fn uar4_simulate_explicit_legacy_created_file_recovery_import() {
+    let (dir, registry, version) = setup();
+    registry.begin_code_workflow(dir.path(), "owner-a", version, "JP1").unwrap();
+    std::fs::create_dir_all(dir.path().join(".gsa/state")).unwrap();
+    let body = "# Recovered Coder artifact\n";
+    std::fs::write(dir.path().join("README.md"), body).unwrap();
+    let hash = Sha256::digest(body.as_bytes()).iter().map(|b| format!("{b:02x}")).collect::<String>();
+    let ledger = json!({
+        "graph_version": version,
+        "jobpack_id":"JP1",
+        "records":[{"path":"README.md","before_sha256":null,"after_sha256":hash}]
+    });
+    std::fs::write(
+        dir.path().join(".gsa/state/code_write_recovery.json"),
+        serde_json::to_vec(&ledger).unwrap(),
+    ).unwrap();
+    let mut runtime = ProjectToolRuntime::new(dir.path()).unwrap();
+    assert!(runtime.resume_code_recovery(version, "JP1").unwrap());
+    assert_eq!(runtime.journal().len(), 1);
+    assert_eq!(runtime.review_evidence()[0].after_content, body);
+    let id = runtime.change_set_id().unwrap();
+    let journal = serde_json::to_value(runtime.journal()).unwrap();
+    registry.record_code_checkpoint(
+        dir.path(), "owner-a", version, "JP1", &id, "manual legacy import",
+        &[ChecklistClaim { todo_id: "T1".into(), position: 1 }], &[], &journal, 1, 0
+    ).unwrap();
+    runtime.finish_code_recovery().unwrap();
+    assert_eq!(registry.code_workflow_state().unwrap().unwrap().status, "REVIEWER");
+}
