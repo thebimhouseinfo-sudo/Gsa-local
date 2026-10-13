@@ -746,6 +746,18 @@ mod tests {
     }
 
     #[test]
+    fn verifier_sandbox_allows_only_dev_null_besides_scoped_writes() {
+        let root = tempfile::tempdir().unwrap();
+        let temp = root.path().join("tmp");
+        std::fs::create_dir(&temp).unwrap();
+        let profile = sandbox_profile(root.path(), &temp).unwrap();
+        assert!(profile.contains("(deny file-write*)"));
+        assert!(profile.contains("(deny network*)"));
+        assert!(profile.contains("(literal \\"/dev/null\\")"));
+        assert!(!profile.contains("(subpath \\"/dev\\")"));
+    }
+
+    #[test]
     fn tester_sandbox_profile_is_network_write_and_exec_scoped() {
         let workspace = tempfile::tempdir().unwrap();
         let temp = workspace.path().join("tmp");
