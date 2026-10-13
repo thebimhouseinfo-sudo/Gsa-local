@@ -757,10 +757,14 @@ Do not edit Tester-owned artifacts as the product fix. Use the structured repair
         }
 
         if agent == AgentId::Coder {
+            let had_active_jobpack = self.registry.current_active_work()?.is_some();
             self.active_work = self.resolve_coder_work_after_testers().await?;
             let Some(active_work) = self.active_work.clone() else {
-                println!("CODER_NO_ACTIVE_JOBPACK: workflow gates resolved; no further coding requested.");
-                return Ok(());
+                if had_active_jobpack {
+                    println!("CODER_JOBPACK_COMPLETE: terminal gates resolved; no further coding requested.");
+                    return Ok(());
+                }
+                bail!("no ACTIVE Job Pack is available for Coder");
             };
 
             println!(
