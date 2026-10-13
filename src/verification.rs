@@ -278,7 +278,8 @@ pub fn discover_profile(project_root: &Path) -> Result<VerificationProfile> {
         let config_hash = hash_config_paths(&root, &source_paths)?;
         let content = fs::read_to_string(&ci)
             .context("scripts/ci.sh must be UTF-8 text for deterministic verification discovery")?;
-        let profile = discover_validated_ci_script(&content, source_paths, config_hash, rust_tests)?;
+        let profile =
+            discover_validated_ci_script(&content, source_paths, config_hash, rust_tests)?;
         // Complex CI shell syntax is not a verification command. Never execute
         // arbitrary script content: derive fixed Cargo argv from the manifest.
         if profile.status != DiscoveryStatus::Blocked || !root.join("Cargo.toml").is_file() {
@@ -765,7 +766,11 @@ mod tests {
             "[package]\nname='qa'\nversion='0.1.0'\n",
         )
         .unwrap();
-        fs::write(dir.path().join("tests/smoke.rs"), "#[test]\nfn smoke() {}\n").unwrap();
+        fs::write(
+            dir.path().join("tests/smoke.rs"),
+            "#[test]\nfn smoke() {}\n",
+        )
+        .unwrap();
         fs::write(
             dir.path().join("scripts/ci.sh"),
             "set -euo pipefail\nfor script in scripts/ci.sh; do\n  bash -n \"$script\"\ndone\ncargo fmt --check\ncargo check\ncargo test\n",
