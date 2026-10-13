@@ -463,7 +463,7 @@ fn sandbox_profile(runtime_dir: &Path, temp_dir: &Path) -> Result<String> {
     );
 
     Ok(format!(
-        "(version 1)\n(allow default)\n(deny network*)\n(deny file-write*)\n(allow file-write* (subpath \"{runtime}\") (subpath \"{temp}\"))\n"
+        "(version 1)\n(allow default)\n(deny network*)\n(deny file-write*)\n(allow file-write* (subpath \"{runtime}\") (subpath \"{temp}\") (literal \"/dev/null\"))\n"
     ))
 }
 
