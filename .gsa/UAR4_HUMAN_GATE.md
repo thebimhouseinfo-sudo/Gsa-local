@@ -22,3 +22,11 @@ Date: 2026-10-13. State: PENDING HUMAN. Do not claim UAR-4 PASS from synthetic C
 - Do not run this migration on ~/Gsa-local/.gsa/state/gsa.db.
 - The backup may have been taken while GSA was active; use sqlite3 .backup after graceful shutdown for a consistent recovery copy.
 - No reset/abandon, no source overwrite of README, and no blind second Coder run without a verified ledger.
+
+## Guarded executable (after user confirms and stops the old GSA)
+The project includes `scripts/uar4-legacy-qa-recovery.sh`. After `git pull --ff-only origin main`, run:
+```bash
+bash scripts/uar4-legacy-qa-recovery.sh
+```
+This checks exact v1/J1/CODER SQLite state, README equality with the human backup, the absence of a canonical README on main, the lack of a competing GSA process/ledger, backs up QA Rust source and creates a consistent SQLite snapshot via `.backup`. It then copies the current tested `src/workflow.rs` and `src/tools.rs`, imports README's exact hash as a created-file recovery record, and launches GSA. The script never resets SQLite or overwrites README. It fails closed on mismatches and is not safe to re-run after successful ledger creation.
+The script's Bash syntax is a mandatory GitHub CI check. This does NOT replace actual human approval of treating the old README as a Coder-created file.
