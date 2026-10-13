@@ -2971,4 +2971,12 @@ mod tests {
         assert!(response.content.contains(r#""ok":false"#));
         assert!(runtime.journal().is_empty());
     }
+    #[test]
+    fn local_cr_rejects_same_model_and_accepts_distinct_model() {
+        let error = ensure_distinct_cr_model("qwen38t:latest", "qwen38t:latest").unwrap_err();
+        assert!(error.to_string().contains("CODE_CR_MODEL_NOT_INDEPENDENT"));
+        ensure_distinct_cr_model("qwen38t:latest", "gemma4:31b-mlx").unwrap();
+    }
+
+
 }
