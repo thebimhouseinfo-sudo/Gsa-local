@@ -1595,16 +1595,28 @@ fn code_terminal_submission<T: serde::de::DeserializeOwned>(
 fn validate_code_claims(claims: &[ChecklistClaim], tasks: &[CodeTodoState]) -> Result<()> {
     let mut seen = std::collections::HashSet::new();
     for claim in claims {
-        if claim.todo_id.trim().is_empty() || claim.position <= 0
+        if claim.todo_id.trim().is_empty()
+            || claim.position <= 0
             || !seen.insert((claim.todo_id.as_str(), claim.position))
         {
-            bail!("invalid or duplicate checklist claim {}#{}", claim.todo_id, claim.position);
+            bail!(
+                "invalid or duplicate checklist claim {}#{}",
+                claim.todo_id,
+                claim.position
+            );
         }
         if !tasks.iter().any(|task| {
             task.todo_id == claim.todo_id
-                && task.checklist.iter().any(|item| item.position == claim.position)
+                && task
+                    .checklist
+                    .iter()
+                    .any(|item| item.position == claim.position)
         }) {
-            bail!("checklist claim {}#{} is not part of active Job Pack", claim.todo_id, claim.position);
+            bail!(
+                "checklist claim {}#{} is not part of active Job Pack",
+                claim.todo_id,
+                claim.position
+            );
         }
     }
     Ok(())
@@ -2818,9 +2830,15 @@ mod tests {
                 checked: false,
             }],
         }];
-        let invented = [ChecklistClaim { todo_id: "T1".into(), position: 4 }];
+        let invented = [ChecklistClaim {
+            todo_id: "T1".into(),
+            position: 4,
+        }];
         assert!(validate_code_claims(&invented, &tasks).is_err());
-        let valid = [ChecklistClaim { todo_id: "T1".into(), position: 1 }];
+        let valid = [ChecklistClaim {
+            todo_id: "T1".into(),
+            position: 1,
+        }];
         assert!(validate_code_claims(&valid, &tasks).is_ok());
         let mixed = [valid[0].clone(), invented[0].clone()];
         assert!(validate_code_claims(&mixed, &tasks).is_err());
