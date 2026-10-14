@@ -1,9 +1,10 @@
 use crate::{
     checkpoint::{Checkpoint, RecoveryClassification, ResumeAction, ResumeDecision},
     execution_graph::{
-        CheckpointBoundaryKind, EvidenceRequirementSpec, ExecutionGraph, PrerequisiteState,
-        TestCheckpointSpec,
+        CheckpointBoundaryKind, EvidenceRequirementSpec, ExecutionGraph, JobPackSpec,
+        MilestoneSpec, PrerequisiteState, TestCheckpointSpec, TodoSpec,
     },
+    graph_contract::{stock_qa_timing_amendment, GraphContractAmendment},
     plan::{PlanArtifact, PlanRevision},
     tester_evidence::{
         AdapterObservationField, ApplicabilityContext, ApplicabilityDecision, EvidenceProvenance,
@@ -1845,6 +1846,28 @@ impl Registry {
         }
         tx.commit()?;
         Ok(version)
+    }
+
+    /// Read-only preview; never enrolls/mutates a legacy graph.
+    pub fn preview_stock_qa_graph_repair(&self) -> Result<GraphContractAmendment> {
+        let tx = self.conn.unchecked_transaction()?;
+        let (graph_version, plan_revision, plan_hash) = current_graph_binding_tx(&tx)?
+            .context("GRAPH_REPAIR_BLOCKED: no CURRENT approved execution graph")?;
+        let plan_json: String = tx.query_row(
+            "SELECT content FROM plan_revisions WHERE revision=?1 AND plan_hash=?2",
+            params![plan_revision, plan_hash],
+            |row| row.get(0),
+        )?;
+        let plan: PlanArtifact = serde_json::from_str(&plan_json)?;
+        let graph = reconstruct_effective_graph_tx(&tx, graph_version)?;
+        let (amendment, _) = stock_qa_timing_amendment(
+            &graph,
+            &plan,
+            graph_version,
+            plan_revision,
+            &plan_hash,
+        )?;
+        Ok(amendment)
     }
 
     pub fn current_execution_graph_version(&self) -> Result<Option<i64>> {
@@ -6802,6 +6825,137 @@ fn activate_eligible_jobpack_tx(
         Some("ACTIVE"),
     )?;
     active_work_tx(tx, graph_version)
+}
+
+
+fn reconstruct_effective_graph_tx(tx: &Transaction<'_>, version: i64) -> Result<ExecutionGraph> {
+    let milestones = {
+        let mut statement = tx.prepare(
+            "SELECT milestone_id, title, position FROM execution_milestones WHERE graph_version=?1 ORDER BY position, milestone_id",
+        )?;
+        let rows = statement.query_map(params![version], |row| {
+            Ok(MilestoneSpec {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                order: row.get::<_, i64>(2)? as u32,
+            })
+        })?.collect::<std::result::Result<Vec<_>, _>>()?;
+        rows
+    };
+    let mut jobpacks = {
+        let mut statement = tx.prepare(
+            "SELECT jobpack_id, milestone_id, title, goal, required_inputs, expected_outputs, acceptance, verification_hints FROM execution_jobpacks WHERE graph_version=?1 ORDER BY jobpack_id",
+        )?;
+        let rows = statement.query_map(params![version], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, String>(5)?,
+                row.get::<_, String>(6)?,
+                row.get::<_, String>(7)?,
+            ))
+        })?.collect::<std::result::Result<Vec<_>, _>>()?;
+        rows
+    };
+    let mut packs = Vec::new();
+    for (id, milestone_id, title, goal, required, expected, acceptance, hints) in jobpacks.drain(..) {
+        let todo_ids = {
+            let mut statement = tx.prepare(
+                "SELECT todo_id FROM execution_todos WHERE graph_version=?1 AND jobpack_id=?2 ORDER BY todo_id",
+            )?;
+            let rows = statement.query_map(params![version, id], |row| row.get::<_, String>(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            rows
+        };
+        let depends_on = {
+            let mut statement = tx.prepare(
+                "SELECT depends_on_jobpack_id FROM execution_jobpack_dependencies WHERE graph_version=?1 AND jobpack_id=?2 ORDER BY depends_on_jobpack_id",
+            )?;
+            let rows = statement.query_map(params![version, id], |row| row.get::<_, String>(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            rows
+        };
+        packs.push(JobPackSpec {
+            id,
+            milestone_id,
+            title,
+            goal,
+            todo_ids,
+            depends_on,
+            required_inputs: serde_json::from_str(&required)?,
+            expected_outputs: serde_json::from_str(&expected)?,
+            acceptance: serde_json::from_str(&acceptance)?,
+            verification_hints: serde_json::from_str(&hints)?,
+        });
+    }
+    let todos = {
+        let mut statement = tx.prepare(
+            "SELECT todo_id, jobpack_id, title FROM execution_todos WHERE graph_version=?1 ORDER BY todo_id",
+        )?;
+        let rows = statement.query_map(params![version], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+        })?.collect::<std::result::Result<Vec<_>, _>>()?;
+        rows
+    };
+    let mut tasks = Vec::new();
+    for (id, jobpack_id, title) in todos {
+        let checklist = {
+            let mut statement = tx.prepare(
+                "SELECT item FROM execution_checklist_items WHERE graph_version=?1 AND todo_id=?2 ORDER BY position",
+            )?;
+            let rows = statement.query_map(params![version, id], |row| row.get::<_, String>(0))?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            rows
+        };
+        tasks.push(TodoSpec { id, jobpack_id, title, checklist });
+    }
+    let checkpoints = {
+        let mut statement = tx.prepare(
+            "SELECT milestone_id, boundary, before_jobpack_id, definition_json FROM execution_test_checkpoints WHERE graph_version=?1 ORDER BY checkpoint_id",
+        )?;
+        let rows = statement.query_map(params![version], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?.collect::<std::result::Result<Vec<_>, _>>()?;
+        rows
+    };
+    let mut checks = Vec::new();
+    for (milestone_id, boundary, before, json) in checkpoints {
+        let checkpoint: TestCheckpointSpec = serde_json::from_str(&json)?;
+        let projection = serde_json::to_value(checkpoint.boundary)?;
+        if checkpoint.milestone_id != milestone_id
+            || projection.as_str() != Some(boundary.as_str())
+            || checkpoint.before_jobpack_id != before
+        {
+            bail!("GRAPH_REPAIR_BLOCKED: checkpoint projection differs from stored definition");
+        }
+        checks.push(checkpoint);
+    }
+    let requirements = {
+        let mut statement = tx.prepare(
+            "SELECT definition_json FROM execution_evidence_requirements WHERE graph_version=?1 ORDER BY consumer_jobpack_id, checkpoint_id, output_id",
+        )?;
+        let rows = statement.query_map(params![version], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        rows
+    };
+    let requirements = requirements.into_iter()
+        .map(|json| serde_json::from_str::<EvidenceRequirementSpec>(&json))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(ExecutionGraph {
+        milestones,
+        jobpacks: packs,
+        todos: tasks,
+        checkpoints: checks,
+        evidence_requirements: requirements,
+    })
 }
 
 fn append_event_tx(tx: &Transaction<'_>, kind: &str, payload: &serde_json::Value) -> Result<i64> {
