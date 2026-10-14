@@ -1151,56 +1151,9 @@ fn terminal_done_survives_missing_evidence_at_not_yet_reached_checkpoint() {
         output_id: "ev-j1-verify".into(),
         required: true,
     }];
-    let (_, _, version) = approve_and_register_graph(&registry, execution_graph);
-    registry
-        .acquire_lease(dir.path(), "owner-a", Duration::from_secs(3600))
-        .unwrap();
-
-    let controller = MilestoneController::new(&registry, dir.path(), "owner-a");
-    assert_eq!(
-        controller
-            .resolve_or_activate()
-            .unwrap()
-            .unwrap()
-            .jobpack_id,
-        "JP-B"
-    );
-    let next = phase11_complete_active(
-        &dir,
-        &registry,
-        version,
-        "JP-B",
-        "T-B",
-        "j1-reviewed-source",
-    );
-    // DONE must commit rather than rolling back because J2 evidence is absent.
-    assert!(
-        next.is_none(),
-        "J2 must not activate before observed Tester evidence"
-    );
-    assert_eq!(
-        registry.jobpack_status(version, "JP-B").unwrap().as_deref(),
-        Some("DONE")
-    );
-    assert_eq!(
-        registry.jobpack_status(version, "JP-C").unwrap().as_deref(),
-        Some("PENDING")
-    );
-    // No Tester boundary can be reached: this is an impossible producer/consumer
-    // ordering in the approved graph, not grounds to invent evidence or redo J1.
-    let resumed = Registry::open_at(&dir.path().join("state.db")).unwrap();
-    let decision = resumed.resolve_resume_decision(dir.path(), &[]).unwrap();
-    assert_ne!(decision.action, ResumeAction::ResumeTesterAttempt);
-    let error = controller.resolve_or_activate().unwrap_err();
-    assert!(format!("{error:#}").contains("PLAN_GAP_EVIDENCE_BEFORE_ACTIVATION"));
-    assert_eq!(
-        registry.jobpack_status(version, "JP-B").unwrap().as_deref(),
-        Some("DONE")
-    );
-    assert_eq!(
-        registry.jobpack_status(version, "JP-C").unwrap().as_deref(),
-        Some("PENDING")
-    );
+    // The invalid graph must now be rejected before it can mutate Registry state.
+    let error = execution_graph.validate().unwrap_err().to_string();
+    assert!(error.contains("GRAPH_UNSATISFIABLE_EVIDENCE_ORDER"));
 }
 
 #[test]
@@ -1211,7 +1164,7 @@ fn future_evidence_requirement_does_not_block_independent_eligible_jobpack() {
     execution_graph.checkpoints = vec![TestCheckpointSpec {
         id: "later-milestone-gate".into(),
         milestone_id: "M1".into(),
-        boundary: CheckpointBoundaryKind::MilestoneGate,
+        boundary: CheckpointBoundaryKind::AfterJobpackSet,
         prerequisites: vec![CheckpointPrerequisiteSpec {
             jobpack_id: "JP-B".into(),
             state: PrerequisiteState::Done,
