@@ -773,6 +773,48 @@ mod tests {
     }
 
     #[test]
+    fn reject_same_milestone_gate_required_by_its_own_consumer() {
+        let mut graph = valid_graph();
+        graph.jobpacks[1].milestone_id = "M1".into();
+        graph.jobpacks[1].depends_on.clear();
+        graph.milestones.pop();
+        graph.checkpoints.push(TestCheckpointSpec {
+            id: "CP1".into(),
+            milestone_id: "M1".into(),
+            boundary: CheckpointBoundaryKind::MilestoneGate,
+            prerequisites: vec![CheckpointPrerequisiteSpec {
+                jobpack_id: "JP1".into(),
+                state: PrerequisiteState::Done,
+            }],
+            before_jobpack_id: None,
+            cr_review_boundary: false,
+            evidence_need_ids: vec![],
+            modes: vec![EvidenceMode::Verify],
+            goal: "Verify first pack".into(),
+            criteria: vec!["Observed".into()],
+            required_capabilities: vec![],
+            experiment_dimensions: vec![],
+            evidence_outputs: vec![EvidenceOutputSpec {
+                id: "EV1".into(),
+                mode: EvidenceMode::Verify,
+                description: "Observed output".into(),
+                required: true,
+                evidence_need_id: None,
+            }],
+        });
+        graph.evidence_requirements.push(EvidenceRequirementSpec {
+            consumer_jobpack_id: "JP2".into(),
+            checkpoint_id: "CP1".into(),
+            output_id: "EV1".into(),
+            required: true,
+        });
+        let error = graph.validate().unwrap_err().to_string();
+        assert!(error.contains("GRAPH_UNSATISFIABLE_EVIDENCE_ORDER"), "{error}");
+        graph.checkpoints[0].boundary = CheckpointBoundaryKind::AfterJobpackSet;
+        graph.validate().unwrap();
+    }
+
+    #[test]
     fn checkpoint_validation_supports_multi_jobpack_prerequisites() {
         let mut graph = valid_graph();
         graph.jobpacks[1].milestone_id = "M1".into();
