@@ -1244,11 +1244,20 @@ fn future_evidence_requirement_does_not_block_independent_eligible_jobpack() {
         .unwrap();
     let controller = MilestoneController::new(&registry, dir.path(), "owner-a");
     assert_eq!(
-        controller.resolve_or_activate().unwrap().unwrap().jobpack_id,
+        controller
+            .resolve_or_activate()
+            .unwrap()
+            .unwrap()
+            .jobpack_id,
         "JP-B"
     );
     let next = phase11_complete_active(
-        &dir, &registry, version, "JP-B", "T-B", "j1-unrelated-evidence",
+        &dir,
+        &registry,
+        version,
+        "JP-B",
+        "T-B",
+        "j1-unrelated-evidence",
     )
     .unwrap();
     assert_eq!(next.jobpack_id, "JP-C");
