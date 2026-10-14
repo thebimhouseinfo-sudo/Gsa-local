@@ -14,6 +14,7 @@ use gsa_local::{
         VerificationCommandKind, VerificationEvidence, VerificationProfile,
     },
 };
+use rusqlite::params;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::time::Duration;
@@ -1219,4 +1220,93 @@ fn future_evidence_requirement_does_not_block_independent_eligible_jobpack() {
         registry.jobpack_status(version, "JP-B").unwrap().as_deref(),
         Some("DONE")
     );
+}
+
+#[test]
+fn legacy_registered_stock_qa_graph_repair_preview_is_read_only() {
+    let dir = tempdir().unwrap();
+    let db_path = dir.path().join("state.db");
+    let registry = Registry::open_at(&db_path).unwrap();
+    let mut spec = graph();
+    for milestone in &mut spec.milestones {
+        if milestone.id == "M1" {
+            milestone.id = "m1-reservation-correctness".into();
+        }
+    }
+    for pack in &mut spec.jobpacks {
+        pack.milestone_id = pack.milestone_id.replace("M1", "m1-reservation-correctness");
+        pack.id = pack.id
+            .replace("JP-B", "jp-j1-fefo-atomicity")
+            .replace("JP-C", "jp-j2-idempotency");
+        for dependency in &mut pack.depends_on {
+            *dependency = dependency
+                .replace("JP-B", "jp-j1-fefo-atomicity")
+                .replace("JP-C", "jp-j2-idempotency");
+        }
+    }
+    for todo in &mut spec.todos {
+        todo.jobpack_id = todo.jobpack_id
+            .replace("JP-B", "jp-j1-fefo-atomicity")
+            .replace("JP-C", "jp-j2-idempotency");
+    }
+    spec.checkpoints = vec![TestCheckpointSpec {
+        id: "chk-j1-verify".into(),
+        milestone_id: "m1-reservation-correctness".into(),
+        boundary: CheckpointBoundaryKind::AfterJobpackSet,
+        prerequisites: vec![CheckpointPrerequisiteSpec {
+            jobpack_id: "jp-j1-fefo-atomicity".into(),
+            state: PrerequisiteState::Done,
+        }],
+        before_jobpack_id: None,
+        cr_review_boundary: false,
+        evidence_need_ids: vec![],
+        modes: vec![EvidenceMode::Verify],
+        goal: "Verify J1 ordering".into(),
+        criteria: vec!["Observed J1 verification".into()],
+        required_capabilities: vec![],
+        experiment_dimensions: vec![],
+        evidence_outputs: vec![EvidenceOutputSpec {
+            id: "ev-j1-verify".into(),
+            mode: EvidenceMode::Verify,
+            description: "Observed J1 evidence".into(),
+            required: true,
+            evidence_need_id: None,
+        }],
+    }];
+    spec.evidence_requirements = vec![EvidenceRequirementSpec {
+        consumer_jobpack_id: "jp-j2-idempotency".into(),
+        checkpoint_id: "chk-j1-verify".into(),
+        output_id: "ev-j1-verify".into(),
+        required: true,
+    }];
+    let (_, _, version) = approve_and_register_graph(&registry, spec.clone());
+    let mut legacy = spec.checkpoints[0].clone();
+    legacy.boundary = CheckpointBoundaryKind::MilestoneGate;
+    let conn = rusqlite::Connection::open(&db_path).unwrap();
+    conn.execute(
+        "UPDATE execution_test_checkpoints SET boundary='MILESTONE_GATE', definition_json=?1 WHERE graph_version=?2 AND checkpoint_id='chk-j1-verify'",
+        params![serde_json::to_string(&legacy).unwrap(), version],
+    ).unwrap();
+    let preview = registry.preview_stock_qa_graph_repair().unwrap();
+    assert_eq!(preview.graph_version, version);
+    assert_ne!(preview.before_hash, preview.after_hash);
+    assert!(preview.original_checkpoint_json.contains("MILESTONE_GATE"));
+    assert!(preview.replacement_checkpoint_json.contains("AFTER_JOBPACK_SET"));
+    let preserved: String = conn.query_row(
+        "SELECT boundary FROM execution_test_checkpoints WHERE graph_version=?1 AND checkpoint_id='chk-j1-verify'",
+        params![version],
+        |row| row.get(0),
+    ).unwrap();
+    assert_eq!(preserved, "MILESTONE_GATE");
+    registry.acquire_lease(dir.path(), "owner-a", Duration::from_secs(3600)).unwrap();
+    let error = registry.apply_stock_qa_graph_repair(
+        dir.path(), "owner-a", "unapproved", "unknown", "APPROVE GRAPH REPAIR unapproved",
+    ).unwrap_err();
+    assert!(error.to_string().contains("GRAPH_REPAIR_BLOCKED"));
+    let still_legacy: String = conn.query_row(
+        "SELECT boundary FROM execution_test_checkpoints WHERE graph_version=?1 AND checkpoint_id='chk-j1-verify'",
+        params![version],
+        |row| row.get(0),
+    ).unwrap();
+    assert_eq!(still_legacy, "MILESTONE_GATE");
 }
