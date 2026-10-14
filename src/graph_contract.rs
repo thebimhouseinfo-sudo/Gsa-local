@@ -1,7 +1,5 @@
 use crate::{
-    execution_graph::{
-        CheckpointBoundaryKind, ExecutionGraph, PrerequisiteState,
-    },
+    execution_graph::{CheckpointBoundaryKind, ExecutionGraph, PrerequisiteState},
     plan::PlanArtifact,
 };
 use anyhow::{bail, Context, Result};
@@ -25,20 +23,27 @@ pub struct GraphContractAmendment {
 pub fn effective_graph_hash(graph: &ExecutionGraph) -> Result<String> {
     // Normalized order is independent of database row iteration order.
     let mut canonical = graph.clone();
-    canonical.milestones.sort_by(|a, b| a.order.cmp(&b.order).then(a.id.cmp(&b.id)));
+    canonical
+        .milestones
+        .sort_by(|a, b| a.order.cmp(&b.order).then(a.id.cmp(&b.id)));
     canonical.jobpacks.sort_by(|a, b| a.id.cmp(&b.id));
     canonical.todos.sort_by(|a, b| a.id.cmp(&b.id));
     canonical.checkpoints.sort_by(|a, b| a.id.cmp(&b.id));
     canonical.evidence_requirements.sort_by(|a, b| {
-        (&a.consumer_jobpack_id, &a.checkpoint_id, &a.output_id)
-            .cmp(&(&b.consumer_jobpack_id, &b.checkpoint_id, &b.output_id))
+        (&a.consumer_jobpack_id, &a.checkpoint_id, &a.output_id).cmp(&(
+            &b.consumer_jobpack_id,
+            &b.checkpoint_id,
+            &b.output_id,
+        ))
     });
     for pack in &mut canonical.jobpacks {
         pack.depends_on.sort();
         pack.todo_ids.sort();
     }
     for checkpoint in &mut canonical.checkpoints {
-        checkpoint.prerequisites.sort_by(|a, b| a.jobpack_id.cmp(&b.jobpack_id));
+        checkpoint
+            .prerequisites
+            .sort_by(|a, b| a.jobpack_id.cmp(&b.jobpack_id));
         checkpoint.evidence_outputs.sort_by(|a, b| a.id.cmp(&b.id));
         checkpoint.evidence_need_ids.sort();
     }
