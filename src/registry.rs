@@ -4,7 +4,7 @@ use crate::{
         CheckpointBoundaryKind, EvidenceRequirementSpec, ExecutionGraph, JobPackSpec,
         MilestoneSpec, PrerequisiteState, TestCheckpointSpec, TodoSpec,
     },
-    graph_contract::{effective_graph_hash, stock_qa_timing_amendment, GraphContractAmendment},
+    graph_contract::{amendment_fingerprint, effective_graph_hash, stock_qa_timing_amendment, GraphContractAmendment},
     plan::{PlanArtifact, PlanRevision},
     tester_evidence::{
         AdapterObservationField, ApplicabilityContext, ApplicabilityDecision, EvidenceProvenance,
@@ -1895,6 +1895,219 @@ impl Registry {
         let (amendment, _) =
             stock_qa_timing_amendment(&graph, &plan, graph_version, plan_revision, &plan_hash)?;
         Ok(amendment)
+    }
+
+    /// Persist a role-isolated verdict for the exact immutable proposal.
+    /// The caller must run the two independent review agents before recording PASS.
+    pub fn record_graph_contract_review(
+        &self,
+        actor: ReviewActor,
+        verdict: ReviewVerdict,
+        expected_proposal_hash: &str,
+        findings: &[String],
+    ) -> Result<()> {
+        let proposal = self.preview_stock_qa_graph_repair()?;
+        let actual = amendment_fingerprint(&proposal)?;
+        if actual != expected_proposal_hash {
+            bail!("GRAPH_REPAIR_BLOCKED: review targets a stale proposal");
+        }
+        let verdict_text = if verdict == ReviewVerdict::Pass {
+            "PASS"
+        } else {
+            "FAIL"
+        };
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "INSERT OR IGNORE INTO graph_contract_reviews (graph_version, proposal_hash, role, verdict, findings_json, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                proposal.graph_version,
+                actual,
+                actor.as_str(),
+                verdict_text,
+                serde_json::to_string(findings)?,
+                unix_seconds()?
+            ],
+        )?;
+        let persisted: String = tx.query_row(
+            "SELECT verdict FROM graph_contract_reviews WHERE graph_version=?1 AND proposal_hash=?2 AND role=?3",
+            params![proposal.graph_version, actual, actor.as_str()],
+            |row| row.get(0),
+        )?;
+        if persisted != verdict_text {
+            bail!("GRAPH_REPAIR_BLOCKED: immutable review already has a conflicting verdict");
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Same-graph, one-field transaction. Never called implicitly from Coder.
+    /// Human confirmation is bound to the exact preview hash and both durable
+    /// independent review verdicts. Original plan and code records are untouched.
+    pub fn apply_stock_qa_graph_repair(
+        &self,
+        project_root: &Path,
+        owner: &str,
+        expected_proposal_hash: &str,
+        expected_change_set: &str,
+        human_confirmation: &str,
+    ) -> Result<GraphContractAmendment> {
+        let exact_confirmation = format!("APPROVE GRAPH REPAIR {expected_proposal_hash}");
+        if human_confirmation != exact_confirmation {
+            bail!("GRAPH_REPAIR_BLOCKED: exact Human approval missing");
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        assert_lease_owner_tx(&tx, project_root, owner)?;
+        let (version, plan_revision, plan_hash) = current_graph_binding_tx(&tx)?
+            .context("GRAPH_REPAIR_BLOCKED: no current graph")?;
+
+        // Idempotent replay of an already committed, identical amendment.
+        let previous_amendment: Option<String> = tx.query_row(
+            "SELECT amendment_json FROM graph_contract_versions WHERE graph_version=?1 AND contract_revision=1",
+            params![version],
+            |row| row.get(0),
+        ).optional()?;
+        if let Some(json) = previous_amendment {
+            let recorded: GraphContractAmendment = serde_json::from_str(&json)?;
+            if amendment_fingerprint(&recorded)? != expected_proposal_hash {
+                bail!("GRAPH_REPAIR_BLOCKED: another amendment is already current");
+            }
+            let current = reconstruct_effective_graph_tx(&tx, version)?;
+            if effective_graph_hash(&current)? != recorded.after_hash {
+                bail!("GRAPH_REPAIR_BLOCKED: amended projection drifted");
+            }
+            return Ok(recorded);
+        }
+
+        let plan_json: String = tx.query_row(
+            "SELECT content FROM plan_revisions WHERE revision=?1 AND plan_hash=?2",
+            params![plan_revision, plan_hash],
+            |row| row.get(0),
+        )?;
+        let plan: PlanArtifact = serde_json::from_str(&plan_json)?;
+        let graph = reconstruct_effective_graph_tx(&tx, version)?;
+        let (proposal, candidate) = stock_qa_timing_amendment(
+            &graph, &plan, version, plan_revision, &plan_hash,
+        )?;
+        let actual_proposal_hash = amendment_fingerprint(&proposal)?;
+        if actual_proposal_hash != expected_proposal_hash {
+            bail!("GRAPH_REPAIR_BLOCKED: proposal drifted before commit");
+        }
+        let reviews: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM graph_contract_reviews WHERE graph_version=?1 AND proposal_hash=?2 AND verdict='PASS' AND role IN ('REVIEWER', 'LOCAL_CR')",
+            params![version, expected_proposal_hash],
+            |row| row.get(0),
+        )?;
+        if reviews != 2 {
+            bail!("GRAPH_REPAIR_BLOCKED: two independent role review PASS records required");
+        }
+        let j1: Option<(String, Option<String>)> = tx.query_row(
+            "SELECT status, change_set_id FROM code_workflow_state WHERE graph_version=?1 AND jobpack_id='jp-j1-fefo-atomicity'",
+            params![version],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).optional()?;
+        if !matches!(j1, Some((ref status, Some(ref id))) if status == "REVIEW_PASS" && id == expected_change_set) {
+            bail!("GRAPH_REPAIR_BLOCKED: J1 exact reviewed change set is not current");
+        }
+        assert_code_change_set_current_tx(
+            &tx, project_root, version, "jp-j1-fefo-atomicity", expected_change_set,
+        )?;
+        let j2_status: Option<String> = tx.query_row(
+            "SELECT status FROM execution_jobpacks WHERE graph_version=?1 AND jobpack_id='jp-j2-idempotency'",
+            params![version],
+            |row| row.get(0),
+        ).optional()?;
+        if j2_status.as_deref() != Some("PENDING") {
+            bail!("GRAPH_REPAIR_BLOCKED: J2 is no longer PENDING");
+        }
+        let j2_activation: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM events WHERE kind='JOBPACK_ACTIVE' AND json_extract(payload, '$.graph_version')=?1 AND json_extract(payload, '$.jobpack')='jp-j2-idempotency'",
+            params![version],
+            |row| row.get(0),
+        )?;
+        if j2_activation != 0 {
+            bail!("GRAPH_REPAIR_BLOCKED: historical J2 activation exists");
+        }
+        for table in ["tester_evidence_attempts", "tester_evidence_records", "tester_execution_steps"] {
+            let count: i64 = tx.query_row(
+                &format!("SELECT COUNT(*) FROM {table} WHERE graph_version=?1 AND checkpoint_id='chk-j1-verify'"),
+                params![version],
+                |row| row.get(0),
+            )?;
+            if count != 0 {
+                bail!("GRAPH_REPAIR_BLOCKED: checkpoint already has Tester execution/evidence");
+            }
+        }
+        let old_cr = code_cr_boundary_work_tx(&tx, version)?;
+        let baseline: Option<(String, String)> = tx.query_row(
+            "SELECT effective_hash, snapshot_json FROM graph_contract_versions WHERE graph_version=?1 AND contract_revision=0",
+            params![version],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).optional()?;
+        if let Some((hash, json)) = baseline {
+            let prior: ExecutionGraph = serde_json::from_str(&json)?;
+            if hash != proposal.before_hash || effective_graph_hash(&prior)? != hash {
+                bail!("GRAPH_REPAIR_BLOCKED: stored baseline mismatch");
+            }
+        } else {
+            tx.execute(
+                "INSERT INTO graph_contract_versions (graph_version, contract_revision, effective_hash, snapshot_json, previous_hash, amendment_json, approval_json, created_at) VALUES (?1, 0, ?2, ?3, NULL, NULL, NULL, ?4)",
+                params![version, proposal.before_hash, serde_json::to_string(&graph)?, unix_seconds()?],
+            )?;
+        }
+        let replacement = candidate.checkpoints.iter()
+            .find(|item| item.id == proposal.checkpoint_id)
+            .context("candidate checkpoint not found")?;
+        let updated = tx.execute(
+            "UPDATE execution_test_checkpoints SET boundary='AFTER_JOBPACK_SET', definition_json=?1 WHERE graph_version=?2 AND checkpoint_id=?3 AND boundary='MILESTONE_GATE' AND definition_json=?4",
+            params![proposal.replacement_checkpoint_json, version, proposal.checkpoint_id, proposal.original_checkpoint_json],
+        )?;
+        if updated != 1 {
+            bail!("GRAPH_REPAIR_BLOCKED: checkpoint compare-and-swap failed");
+        }
+        if replacement.boundary != CheckpointBoundaryKind::AfterJobpackSet {
+            bail!("GRAPH_REPAIR_BLOCKED: candidate boundary mismatch");
+        }
+        let effective = reconstruct_effective_graph_tx(&tx, version)?;
+        if effective_graph_hash(&effective)? != proposal.after_hash {
+            bail!("GRAPH_REPAIR_BLOCKED: effective graph projection mismatch");
+        }
+        effective.validate_against_plan(&plan)?;
+        let new_cr = code_cr_boundary_work_tx(&tx, version)?;
+        if old_cr != new_cr {
+            bail!("GRAPH_REPAIR_BLOCKED: terminal CR authority fingerprint changed; targeted independent re-review required");
+        }
+        tx.execute(
+            "INSERT INTO graph_contract_versions (graph_version, contract_revision, effective_hash, snapshot_json, previous_hash, amendment_json, approval_json, created_at) VALUES (?1, 1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                version,
+                proposal.after_hash,
+                serde_json::to_string(&effective)?,
+                proposal.before_hash,
+                serde_json::to_string(&proposal)?,
+                serde_json::json!({
+                    "proposal_hash": expected_proposal_hash,
+                    "human_confirmation": human_confirmation,
+                    "reviewer": "PASS",
+                    "local_cr": "PASS",
+                    "cr_authority_preserved": true,
+                    "change_set": expected_change_set
+                }).to_string(),
+                unix_seconds()?
+            ],
+        )?;
+        append_event_tx(
+            &tx, "GRAPH_CONTRACT_AMENDED",
+            &serde_json::json!({
+                "graph_version": version,
+                "contract_revision": 1,
+                "before_hash": proposal.before_hash,
+                "after_hash": proposal.after_hash,
+                "checkpoint_id": proposal.checkpoint_id,
+                "proposal_hash": expected_proposal_hash
+            }),
+        )?;
+        tx.commit()?;
+        Ok(proposal)
     }
 
     pub fn current_execution_graph_version(&self) -> Result<Option<i64>> {
