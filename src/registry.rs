@@ -5211,6 +5211,15 @@ fn has_unobserved_successor_evidence_tx(
               AND jp.status IN ('PENDING', 'READY')
               AND er.required=1
               AND NOT EXISTS (
+                  SELECT 1 FROM execution_jobpack_dependencies dep_link
+                  JOIN execution_jobpacks dep
+                    ON dep.graph_version=dep_link.graph_version
+                   AND dep.jobpack_id=dep_link.depends_on_jobpack_id
+                  WHERE dep_link.graph_version=jp.graph_version
+                    AND dep_link.jobpack_id=jp.jobpack_id
+                    AND dep.status!='DONE'
+              )
+              AND NOT EXISTS (
                   SELECT 1 FROM tester_evidence_records rec
                   WHERE rec.graph_version=er.graph_version
                     AND rec.checkpoint_id=er.checkpoint_id
