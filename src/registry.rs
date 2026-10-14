@@ -5209,12 +5209,8 @@ fn has_unresolved_reached_tester_checkpoint_tx(
             return Ok(true);
         };
         let fingerprint = target.fingerprint(graph_version, &checkpoint.id)?;
-        let attempt = latest_tester_attempt_for_target_tx(
-            tx,
-            graph_version,
-            &checkpoint.id,
-            &fingerprint,
-        )?;
+        let attempt =
+            latest_tester_attempt_for_target_tx(tx, graph_version, &checkpoint.id, &fingerprint)?;
         if let Some(attempt) = attempt {
             attempt.validate_against_checkpoint(&checkpoint)?;
             validate_tester_target_tx(tx, graph_version, &attempt.target)?;
