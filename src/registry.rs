@@ -5199,43 +5199,41 @@ fn has_unobserved_successor_evidence_tx(
     graph_version: i64,
     milestone_id: &str,
 ) -> Result<bool> {
-    let missing: i64 = tx.query_row(
-        r#"
-        WITH candidate AS (
-            SELECT jp.graph_version, jp.jobpack_id
-            FROM execution_jobpacks jp
+    // Every dependency-ready successor must be considered. A blocked first
+    // candidate must not starve another evidence-ready candidate.
+    let candidates = {
+        let mut statement = tx.prepare(
+            r#"
+            SELECT jp.jobpack_id FROM execution_jobpacks jp
             WHERE jp.graph_version=?1 AND jp.milestone_id=?2
               AND jp.status IN ('PENDING', 'READY')
               AND NOT EXISTS (
-                  SELECT 1 FROM execution_jobpack_dependencies dep_link
+                  SELECT 1 FROM execution_jobpack_dependencies d
                   JOIN execution_jobpacks dep
-                    ON dep.graph_version=dep_link.graph_version
-                   AND dep.jobpack_id=dep_link.depends_on_jobpack_id
-                  WHERE dep_link.graph_version=jp.graph_version
-                    AND dep_link.jobpack_id=jp.jobpack_id
+                    ON dep.graph_version=d.graph_version
+                   AND dep.jobpack_id=d.depends_on_jobpack_id
+                  WHERE d.graph_version=jp.graph_version
+                    AND d.jobpack_id=jp.jobpack_id
                     AND dep.status!='DONE'
               )
-            ORDER BY jp.jobpack_id ASC LIMIT 1
-        )
-        SELECT EXISTS(
-            SELECT 1
-            FROM candidate jp
-            JOIN execution_evidence_requirements er
-              ON er.graph_version=jp.graph_version
-             AND er.consumer_jobpack_id=jp.jobpack_id
-            WHERE er.required=1
-              AND NOT EXISTS (
-                  SELECT 1 FROM tester_evidence_records rec
-                  WHERE rec.graph_version=er.graph_version
-                    AND rec.checkpoint_id=er.checkpoint_id
-                    AND rec.output_id=er.output_id
-              )
-        )
-        "#,
-        params![graph_version, milestone_id],
-        |row| row.get(0),
-    )?;
-    Ok(missing != 0)
+            ORDER BY jp.jobpack_id ASC
+            "#,
+        )?;
+        let rows = statement
+            .query_map(params![graph_version, milestone_id], |row| {
+                row.get::<_, String>(0)
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        rows
+    };
+    let mut missing = false;
+    for candidate in candidates {
+        match resolve_required_tester_evidence_tx(tx, graph_version, &candidate) {
+            Ok(_) => return Ok(false),
+            Err(_) => missing = true,
+        }
+    }
+    Ok(missing)
 }
 
 fn has_unresolved_reached_tester_checkpoint_tx(
