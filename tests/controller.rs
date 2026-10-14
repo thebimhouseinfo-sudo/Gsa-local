@@ -1161,12 +1161,13 @@ fn future_evidence_requirement_does_not_block_independent_eligible_jobpack() {
     let dir = tempdir().unwrap();
     let registry = Registry::open_at(&dir.path().join("state.db")).unwrap();
     let mut execution_graph = graph();
+    execution_graph.jobpacks[0].depends_on.clear();
     execution_graph.checkpoints = vec![TestCheckpointSpec {
         id: "later-milestone-gate".into(),
         milestone_id: "M1".into(),
         boundary: CheckpointBoundaryKind::AfterJobpackSet,
         prerequisites: vec![CheckpointPrerequisiteSpec {
-            jobpack_id: "JP-B".into(),
+            jobpack_id: "JP-C".into(),
             state: PrerequisiteState::Done,
         }],
         before_jobpack_id: None,
