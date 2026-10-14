@@ -4,7 +4,10 @@ use crate::{
         CheckpointBoundaryKind, EvidenceRequirementSpec, ExecutionGraph, JobPackSpec,
         MilestoneSpec, PrerequisiteState, TestCheckpointSpec, TodoSpec,
     },
-    graph_contract::{amendment_fingerprint, effective_graph_hash, stock_qa_timing_amendment, GraphContractAmendment},
+    graph_contract::{
+        amendment_fingerprint, effective_graph_hash, stock_qa_timing_amendment,
+        GraphContractAmendment,
+    },
     plan::{PlanArtifact, PlanRevision},
     tester_evidence::{
         AdapterObservationField, ApplicabilityContext, ApplicabilityDecision, EvidenceProvenance,
@@ -1957,8 +1960,8 @@ impl Registry {
         }
         let tx = self.conn.unchecked_transaction()?;
         assert_lease_owner_tx(&tx, project_root, owner)?;
-        let (version, plan_revision, plan_hash) = current_graph_binding_tx(&tx)?
-            .context("GRAPH_REPAIR_BLOCKED: no current graph")?;
+        let (version, plan_revision, plan_hash) =
+            current_graph_binding_tx(&tx)?.context("GRAPH_REPAIR_BLOCKED: no current graph")?;
 
         // Idempotent replay of an already committed, identical amendment.
         let previous_amendment: Option<String> = tx.query_row(
@@ -1985,9 +1988,8 @@ impl Registry {
         )?;
         let plan: PlanArtifact = serde_json::from_str(&plan_json)?;
         let graph = reconstruct_effective_graph_tx(&tx, version)?;
-        let (proposal, candidate) = stock_qa_timing_amendment(
-            &graph, &plan, version, plan_revision, &plan_hash,
-        )?;
+        let (proposal, candidate) =
+            stock_qa_timing_amendment(&graph, &plan, version, plan_revision, &plan_hash)?;
         let actual_proposal_hash = amendment_fingerprint(&proposal)?;
         if actual_proposal_hash != expected_proposal_hash {
             bail!("GRAPH_REPAIR_BLOCKED: proposal drifted before commit");
@@ -2005,11 +2007,16 @@ impl Registry {
             params![version],
             |row| Ok((row.get(0)?, row.get(1)?)),
         ).optional()?;
-        if !matches!(j1, Some((ref status, Some(ref id))) if status == "REVIEW_PASS" && id == expected_change_set) {
+        if !matches!(j1, Some((ref status, Some(ref id))) if status == "REVIEW_PASS" && id == expected_change_set)
+        {
             bail!("GRAPH_REPAIR_BLOCKED: J1 exact reviewed change set is not current");
         }
         assert_code_change_set_current_tx(
-            &tx, project_root, version, "jp-j1-fefo-atomicity", expected_change_set,
+            &tx,
+            project_root,
+            version,
+            "jp-j1-fefo-atomicity",
+            expected_change_set,
         )?;
         let j2_status: Option<String> = tx.query_row(
             "SELECT status FROM execution_jobpacks WHERE graph_version=?1 AND jobpack_id='jp-j2-idempotency'",
@@ -2027,7 +2034,11 @@ impl Registry {
         if j2_activation != 0 {
             bail!("GRAPH_REPAIR_BLOCKED: historical J2 activation exists");
         }
-        for table in ["tester_evidence_attempts", "tester_evidence_records", "tester_execution_steps"] {
+        for table in [
+            "tester_evidence_attempts",
+            "tester_evidence_records",
+            "tester_execution_steps",
+        ] {
             let count: i64 = tx.query_row(
                 &format!("SELECT COUNT(*) FROM {table} WHERE graph_version=?1 AND checkpoint_id='chk-j1-verify'"),
                 params![version],
@@ -2054,7 +2065,9 @@ impl Registry {
                 params![version, proposal.before_hash, serde_json::to_string(&graph)?, unix_seconds()?],
             )?;
         }
-        let replacement = candidate.checkpoints.iter()
+        let replacement = candidate
+            .checkpoints
+            .iter()
             .find(|item| item.id == proposal.checkpoint_id)
             .context("candidate checkpoint not found")?;
         let updated = tx.execute(
@@ -2096,7 +2109,8 @@ impl Registry {
             ],
         )?;
         append_event_tx(
-            &tx, "GRAPH_CONTRACT_AMENDED",
+            &tx,
+            "GRAPH_CONTRACT_AMENDED",
             &serde_json::json!({
                 "graph_version": version,
                 "contract_revision": 1,
