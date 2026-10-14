@@ -418,7 +418,9 @@ impl ExecutionGraph {
                     }
                 }
                 CheckpointBoundaryKind::BeforeJobpack => {
-                    let before = checkpoint.before_jobpack_id.as_deref().ok_or_else(|| {
+                    let before = checkpoint
+                    .before_jobpack_id
+                    .as_deref().ok_or_else(|| {
                         anyhow::anyhow!(
                             "checkpoint {} BEFORE_JOBPACK requires before_jobpack_id",
                             checkpoint.id
@@ -599,7 +601,6 @@ impl ExecutionGraph {
     }
 }
 
-
 fn validate_temporal_event_order(graph: &ExecutionGraph) -> Result<()> {
     let mut edges: HashMap<String, Vec<String>> = HashMap::new();
     let mut edge = |from: String, to: String| {
@@ -623,10 +624,16 @@ fn validate_temporal_event_order(graph: &ExecutionGraph) -> Result<()> {
     for milestone in &graph.milestones {
         edge(verify(&milestone.id), complete(&milestone.id));
         if milestone.order > 1 {
-            let previous = graph.milestones.iter()
+            let previous = graph
+                .milestones
+                .iter()
                 .find(|item| item.order + 1 == milestone.order)
                 .expect("contiguous milestone orders validated");
-            for pack in graph.jobpacks.iter().filter(|p| p.milestone_id == milestone.id) {
+            for pack in graph
+                .jobpacks
+                .iter()
+                .filter(|p| p.milestone_id == milestone.id)
+            {
                 edge(complete(&previous.id), start(&pack.id));
             }
         }
@@ -655,7 +662,10 @@ fn validate_temporal_event_order(graph: &ExecutionGraph) -> Result<()> {
     }
     for requirement in &graph.evidence_requirements {
         if requirement.required {
-            edge(observed(&requirement.checkpoint_id), start(&requirement.consumer_jobpack_id));
+            edge(
+                observed(&requirement.checkpoint_id),
+                start(&requirement.consumer_jobpack_id),
+            );
         }
     }
 
@@ -893,7 +903,10 @@ mod tests {
             required: true,
         });
         let error = graph.validate().unwrap_err().to_string();
-        assert!(error.contains("GRAPH_UNSATISFIABLE_EVIDENCE_ORDER"), "{error}");
+        assert!(
+            error.contains("GRAPH_UNSATISFIABLE_EVIDENCE_ORDER"),
+            "{error}"
+        );
         graph.checkpoints[0].boundary = CheckpointBoundaryKind::AfterJobpackSet;
         graph.validate().unwrap();
     }
