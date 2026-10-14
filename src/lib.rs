@@ -7,6 +7,7 @@ pub mod cli;
 pub mod config;
 pub mod controller;
 pub mod execution_graph;
+pub mod graph_contract;
 pub mod harness;
 pub mod ollama;
 pub mod plan;
