@@ -51,6 +51,10 @@ pub fn effective_graph_hash(graph: &ExecutionGraph) -> Result<String> {
     Ok(format!("{:x}", Sha256::digest(bytes)))
 }
 
+pub fn amendment_fingerprint(amendment: &GraphContractAmendment) -> Result<String> {
+    Ok(format!("{:x}", Sha256::digest(serde_json::to_vec(amendment)?)))
+}
+
 pub fn stock_qa_timing_amendment(
     graph: &ExecutionGraph,
     plan: &PlanArtifact,
