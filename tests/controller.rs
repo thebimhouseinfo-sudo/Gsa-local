@@ -1,8 +1,9 @@
 use gsa_local::{
     checkpoint::{Checkpoint, RecoveryClassification, ResumeAction},
-    controller::{ActiveWork, MilestoneController},
+    controller::{ActiveWork, MilestoneController, NextWork},
     execution_graph::{
-        CheckpointBoundaryKind, CheckpointPrerequisiteSpec, EvidenceOutputSpec, ExecutionGraph,
+        CheckpointBoundaryKind, CheckpointPrerequisiteSpec, EvidenceOutputSpec,
+        EvidenceRequirementSpec, ExecutionGraph,
         JobPackSpec, MilestoneSpec, PrerequisiteState, TestCheckpointSpec, TodoSpec,
     },
     plan::{EvidenceMode, PlanArtifact},
@@ -1001,4 +1002,89 @@ fn resume_decision_classifies_missing_reviewed_source_as_diverged() {
         RecoveryClassification::SourceDiverged
     );
     assert!(decision.reason.contains("source path unavailable"));
+}
+
+#[test]
+fn terminal_cr_commits_j1_before_required_tester_evidence_unlocks_j2() {
+    // Reproduces the real Stock-QA failure: CR PASS for J1 was followed by
+    // PLAN_GAP while trying to load J2 before the after-J1 Tester ran.
+    let dir = tempdir().unwrap();
+    let registry = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    let mut execution_graph = graph();
+    execution_graph.milestones.retain(|m| m.id == "M1");
+    execution_graph
+        .jobpacks
+        .retain(|pack| pack.id == "JP-B" || pack.id == "JP-C");
+    execution_graph
+        .todos
+        .retain(|todo| todo.jobpack_id == "JP-B" || todo.jobpack_id == "JP-C");
+    let successor = execution_graph
+        .jobpacks
+        .iter_mut()
+        .find(|pack| pack.id == "JP-C")
+        .unwrap();
+    successor.depends_on = vec!["JP-B".into()];
+    execution_graph.checkpoints = vec![TestCheckpointSpec {
+        id: "chk-j1-verify".into(),
+        milestone_id: "M1".into(),
+        boundary: CheckpointBoundaryKind::AfterJobpackSet,
+        prerequisites: vec![CheckpointPrerequisiteSpec {
+            jobpack_id: "JP-B".into(),
+            state: PrerequisiteState::Done,
+        }],
+        before_jobpack_id: None,
+        cr_review_boundary: false,
+        evidence_need_ids: vec![],
+        modes: vec![EvidenceMode::Verify],
+        goal: "Verify J1 after CR PASS before starting J2".into(),
+        criteria: vec!["Observe actual J1 verification evidence".into()],
+        required_capabilities: vec![],
+        experiment_dimensions: vec![],
+        evidence_outputs: vec![EvidenceOutputSpec {
+            id: "ev-j1-verify".into(),
+            mode: EvidenceMode::Verify,
+            description: "Observed J1 verification".into(),
+            required: true,
+            evidence_need_id: None,
+        }],
+    }];
+    execution_graph.evidence_requirements = vec![EvidenceRequirementSpec {
+        consumer_jobpack_id: "JP-C".into(),
+        checkpoint_id: "chk-j1-verify".into(),
+        output_id: "ev-j1-verify".into(),
+        required: true,
+    }];
+    let (_, _, version) = approve_and_register_graph(&registry, execution_graph);
+    registry
+        .acquire_lease(dir.path(), "owner-a", Duration::from_secs(3600))
+        .unwrap();
+
+    let controller = MilestoneController::new(&registry, dir.path(), "owner-a");
+    assert_eq!(
+        controller.resolve_or_activate().unwrap().unwrap().jobpack_id,
+        "JP-B"
+    );
+    let next = phase11_complete_active(
+        &dir, &registry, version, "JP-B", "T-B", "j1-reviewed-source",
+    );
+    // DONE must commit rather than rolling back because J2 evidence is absent.
+    assert!(next.is_none(), "J2 must not activate before observed Tester evidence");
+    assert_eq!(
+        registry.jobpack_status(version, "JP-B").unwrap().as_deref(),
+        Some("DONE")
+    );
+    assert_eq!(
+        registry.jobpack_status(version, "JP-C").unwrap().as_deref(),
+        Some("PENDING")
+    );
+    let resumed = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    let decision = resumed.resolve_resume_decision(dir.path(), &[]).unwrap();
+    assert_eq!(decision.action, ResumeAction::ResumeTesterAttempt);
+    assert_eq!(decision.checkpoint_id.as_deref(), Some("chk-j1-verify"));
+    match controller.resolve_next(&[]).unwrap() {
+        Some(NextWork::Tester(work)) => {
+            assert_eq!(work.checkpoint.id, "chk-j1-verify");
+        }
+        other => panic!("expected Tester before J2, found {other:?}"),
+    }
 }
