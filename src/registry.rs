@@ -1,7 +1,7 @@
 use crate::{
     checkpoint::{Checkpoint, RecoveryClassification, ResumeAction, ResumeDecision},
     execution_graph::{
-        CheckpointBoundaryKind, EvidenceRequirementSpec, ExecutionGraph, JobPackSpec,
+        CheckpointBoundaryKind, EvidenceOutputSpec, EvidenceRequirementSpec, ExecutionGraph, JobPackSpec,
         MilestoneSpec, PrerequisiteState, TestCheckpointSpec, TodoSpec,
     },
     graph_contract::{
@@ -7209,6 +7209,43 @@ fn reconstruct_effective_graph_tx(tx: &Transaction<'_>, version: i64) -> Result<
             || checkpoint.before_jobpack_id != before
         {
             bail!("GRAPH_REPAIR_BLOCKED: checkpoint projection differs from stored definition");
+        }
+        let stored_prerequisites = {
+            let mut statement = tx.prepare(
+                "SELECT jobpack_id, required_state FROM execution_checkpoint_prerequisites WHERE graph_version=?1 AND checkpoint_id=?2 ORDER BY position",
+            )?;
+            let rows = statement.query_map(params![version, checkpoint.id], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?.collect::<std::result::Result<Vec<_>, _>>()?;
+            rows
+        };
+        if checkpoint.prerequisites.len() != stored_prerequisites.len() {
+            bail!("GRAPH_REPAIR_BLOCKED: checkpoint prerequisite projection count drift");
+        }
+        for (spec, (id, state)) in checkpoint.prerequisites.iter().zip(stored_prerequisites.iter()) {
+            if &spec.jobpack_id != id
+                || serde_json::to_value(spec.state)?.as_str() != Some(state.as_str())
+            {
+                bail!("GRAPH_REPAIR_BLOCKED: checkpoint prerequisite projection drift");
+            }
+        }
+        let stored_outputs = {
+            let mut statement = tx.prepare(
+                "SELECT definition_json FROM execution_evidence_outputs WHERE graph_version=?1 AND checkpoint_id=?2 ORDER BY output_id",
+            )?;
+            let rows = statement.query_map(params![version, checkpoint.id], |row| {
+                row.get::<_, String>(0)
+            })?.collect::<std::result::Result<Vec<_>, _>>()?;
+            rows
+        };
+        let mut expected_outputs = checkpoint.evidence_outputs.clone();
+        expected_outputs.sort_by(|a, b| a.id.cmp(&b.id));
+        let actual_outputs = stored_outputs
+            .iter()
+            .map(|json| serde_json::from_str::<EvidenceOutputSpec>(json))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        if actual_outputs != expected_outputs {
+            bail!("GRAPH_REPAIR_BLOCKED: checkpoint evidence output projection drift");
         }
         checks.push(checkpoint);
     }
