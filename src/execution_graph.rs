@@ -597,11 +597,14 @@ impl ExecutionGraph {
         // Milestone VERIFY waits for every Job Pack DONE: a same-milestone
         // consumer cannot demand evidence produced only at that gate.
         for requirement in &self.evidence_requirements {
-            if !requirement.required { continue; }
+            if !requirement.required {
+                continue;
+            }
             let checkpoint = checkpoint_map[requirement.checkpoint_id.as_str()];
             let consumer = jobpacks[requirement.consumer_jobpack_id.as_str()];
             if checkpoint.boundary == CheckpointBoundaryKind::MilestoneGate
-                && checkpoint.milestone_id == consumer.milestone_id {
+                && checkpoint.milestone_id == consumer.milestone_id
+            {
                 bail!(
                     "GRAPH_UNSATISFIABLE_EVIDENCE_ORDER: {}.start -> {}.done -> {}.VERIFY -> {}.OBSERVED -> {}.start",
                     consumer.id, consumer.id, consumer.milestone_id,
