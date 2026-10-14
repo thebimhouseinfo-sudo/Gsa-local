@@ -3,8 +3,8 @@ use gsa_local::{
     controller::{ActiveWork, MilestoneController, NextWork},
     execution_graph::{
         CheckpointBoundaryKind, CheckpointPrerequisiteSpec, EvidenceOutputSpec,
-        EvidenceRequirementSpec, ExecutionGraph,
-        JobPackSpec, MilestoneSpec, PrerequisiteState, TestCheckpointSpec, TodoSpec,
+        EvidenceRequirementSpec, ExecutionGraph, JobPackSpec, MilestoneSpec, PrerequisiteState,
+        TestCheckpointSpec, TodoSpec,
     },
     plan::{EvidenceMode, PlanArtifact},
     registry::{ChecklistClaim, Registry, ReviewActor, ReviewVerdict},
@@ -1061,14 +1061,26 @@ fn terminal_cr_commits_j1_before_required_tester_evidence_unlocks_j2() {
 
     let controller = MilestoneController::new(&registry, dir.path(), "owner-a");
     assert_eq!(
-        controller.resolve_or_activate().unwrap().unwrap().jobpack_id,
+        controller
+            .resolve_or_activate()
+            .unwrap()
+            .unwrap()
+            .jobpack_id,
         "JP-B"
     );
     let next = phase11_complete_active(
-        &dir, &registry, version, "JP-B", "T-B", "j1-reviewed-source",
+        &dir,
+        &registry,
+        version,
+        "JP-B",
+        "T-B",
+        "j1-reviewed-source",
     );
     // DONE must commit rather than rolling back because J2 evidence is absent.
-    assert!(next.is_none(), "J2 must not activate before observed Tester evidence");
+    assert!(
+        next.is_none(),
+        "J2 must not activate before observed Tester evidence"
+    );
     assert_eq!(
         registry.jobpack_status(version, "JP-B").unwrap().as_deref(),
         Some("DONE")
