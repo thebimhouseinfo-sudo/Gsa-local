@@ -5194,9 +5194,10 @@ fn has_unresolved_reached_tester_checkpoint_tx(
         let mut statement = tx.prepare(
             "SELECT definition_json FROM execution_test_checkpoints WHERE graph_version=?1 ORDER BY checkpoint_id",
         )?;
-        statement
+        let rows = statement
             .query_map(params![graph_version], |row| row.get::<_, String>(0))?
-            .collect::<std::result::Result<Vec<_>, _>>()?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        rows
     };
     for json in checkpoints {
         let checkpoint: TestCheckpointSpec = serde_json::from_str(&json)?;
