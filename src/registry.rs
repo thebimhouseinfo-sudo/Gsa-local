@@ -4481,7 +4481,12 @@ impl Registry {
         // BEFORE_JOBPACK Tester checkpoint whose observed outputs are required
         // by the next Job Pack. Commit DONE first; the controller resolves
         // Tester before calling resolve_or_activate_work again.
-        if has_unresolved_reached_tester_checkpoint_tx(&tx, graph_version)? {
+        if has_unresolved_reached_tester_checkpoint_tx(&tx, graph_version)?
+            || has_unobserved_successor_evidence_tx(&tx, graph_version, &work.milestone_id)?
+        {
+            // An evidence-dependent successor is not eligible for activation
+            // until its declared Tester output exists. This check must happen
+            // BEFORE activating it, so the J1 DONE transaction can commit.
             tx.commit()?;
             return Ok(None);
         }
@@ -5186,6 +5191,39 @@ enum TesterBoundaryState {
 // Used only at the transition after a terminal Job Pack CR. It does not
 // fabricate evidence or consume a Tester attempt: it prevents activation of
 // a successor before already-reached Tester gates are resolved.
+// Detect required outputs for eligible successor Job Packs without evaluating
+// them as already-observed evidence. In particular, do not call active_work_tx
+// on J2 before the Tester has produced its output.
+fn has_unobserved_successor_evidence_tx(
+    tx: &Transaction<'_>,
+    graph_version: i64,
+    milestone_id: &str,
+) -> Result<bool> {
+    let missing: i64 = tx.query_row(
+        r#"
+        SELECT EXISTS(
+            SELECT 1
+            FROM execution_jobpacks jp
+            JOIN execution_evidence_requirements er
+              ON er.graph_version=jp.graph_version
+             AND er.consumer_jobpack_id=jp.jobpack_id
+            WHERE jp.graph_version=?1 AND jp.milestone_id=?2
+              AND jp.status IN ('PENDING', 'READY')
+              AND er.required=1
+              AND NOT EXISTS (
+                  SELECT 1 FROM tester_evidence_records rec
+                  WHERE rec.graph_version=er.graph_version
+                    AND rec.checkpoint_id=er.checkpoint_id
+                    AND rec.output_id=er.output_id
+              )
+        )
+        "#,
+        params![graph_version, milestone_id],
+        |row| row.get(0),
+    )?;
+    Ok(missing != 0)
+}
+
 fn has_unresolved_reached_tester_checkpoint_tx(
     tx: &Transaction<'_>,
     graph_version: i64,
@@ -6702,6 +6740,12 @@ fn activate_eligible_jobpack_tx(
     let Some(jobpack_id) = candidate else {
         return Ok(None);
     };
+    if let Err(error) = resolve_required_tester_evidence_tx(tx, graph_version, &jobpack_id) {
+        bail!(
+            "PLAN_GAP_EVIDENCE_BEFORE_ACTIVATION: Job Pack {} cannot activate: {error:#}.              The declared Tester checkpoint must produce observed evidence before this Job Pack;              inspect the checkpoint boundary/prerequisites instead of bypassing it.",
+            jobpack_id
+        );
+    }
     let updated = tx.execute(
         r#"
         UPDATE execution_jobpacks
