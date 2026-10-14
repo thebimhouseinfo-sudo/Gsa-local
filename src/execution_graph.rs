@@ -418,9 +418,7 @@ impl ExecutionGraph {
                     }
                 }
                 CheckpointBoundaryKind::BeforeJobpack => {
-                    let before = checkpoint
-                    .before_jobpack_id
-                    .as_deref().ok_or_else(|| {
+                    let before = checkpoint.before_jobpack_id.as_deref().ok_or_else(|| {
                         anyhow::anyhow!(
                             "checkpoint {} BEFORE_JOBPACK requires before_jobpack_id",
                             checkpoint.id
@@ -650,7 +648,9 @@ fn validate_temporal_event_order(graph: &ExecutionGraph) -> Result<()> {
         match checkpoint.boundary {
             CheckpointBoundaryKind::AfterJobpackSet => {}
             CheckpointBoundaryKind::BeforeJobpack => {
-                let before = checkpoint.before_jobpack_id.as_deref()
+                let before = checkpoint
+                    .before_jobpack_id
+                    .as_deref()
                     .expect("BEFORE_JOBPACK reference validated");
                 edge(output.clone(), start(before));
             }
