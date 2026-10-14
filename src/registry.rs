@@ -5201,15 +5201,11 @@ fn has_unobserved_successor_evidence_tx(
 ) -> Result<bool> {
     let missing: i64 = tx.query_row(
         r#"
-        SELECT EXISTS(
-            SELECT 1
+        WITH candidate AS (
+            SELECT jp.graph_version, jp.jobpack_id
             FROM execution_jobpacks jp
-            JOIN execution_evidence_requirements er
-              ON er.graph_version=jp.graph_version
-             AND er.consumer_jobpack_id=jp.jobpack_id
             WHERE jp.graph_version=?1 AND jp.milestone_id=?2
               AND jp.status IN ('PENDING', 'READY')
-              AND er.required=1
               AND NOT EXISTS (
                   SELECT 1 FROM execution_jobpack_dependencies dep_link
                   JOIN execution_jobpacks dep
@@ -5219,6 +5215,15 @@ fn has_unobserved_successor_evidence_tx(
                     AND dep_link.jobpack_id=jp.jobpack_id
                     AND dep.status!='DONE'
               )
+            ORDER BY jp.jobpack_id ASC LIMIT 1
+        )
+        SELECT EXISTS(
+            SELECT 1
+            FROM candidate jp
+            JOIN execution_evidence_requirements er
+              ON er.graph_version=jp.graph_version
+             AND er.consumer_jobpack_id=jp.jobpack_id
+            WHERE er.required=1
               AND NOT EXISTS (
                   SELECT 1 FROM tester_evidence_records rec
                   WHERE rec.graph_version=er.graph_version
