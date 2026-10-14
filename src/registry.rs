@@ -459,6 +459,30 @@ impl Registry {
                     ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS graph_contract_versions (
+                graph_version INTEGER NOT NULL,
+                contract_revision INTEGER NOT NULL,
+                effective_hash TEXT NOT NULL,
+                snapshot_json TEXT NOT NULL,
+                previous_hash TEXT,
+                amendment_json TEXT,
+                approval_json TEXT,
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY (graph_version, contract_revision),
+                FOREIGN KEY (graph_version)
+                    REFERENCES execution_graph(version)
+            );
+
+            CREATE TABLE IF NOT EXISTS graph_contract_reviews (
+                graph_version INTEGER NOT NULL,
+                proposal_hash TEXT NOT NULL,
+                role TEXT NOT NULL CHECK (role IN ('REVIEWER', 'LOCAL_CR')),
+                verdict TEXT NOT NULL CHECK (verdict IN ('PASS', 'FAIL')),
+                findings_json TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                PRIMARY KEY (graph_version, proposal_hash, role)
+            );
+
             CREATE TABLE IF NOT EXISTS code_workflow_state (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 graph_version INTEGER NOT NULL,
