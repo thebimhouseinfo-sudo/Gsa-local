@@ -7,7 +7,8 @@ use crate::{
     controller::{ActiveWork, MilestoneController, NextWork},
     harness::{AgentId, HarnessRegistry},
     ollama::{ChatMessage, OllamaClient, ToolDefinition},
-    registry::{Registry, TesterCheckpointDisposition},
+    graph_contract::amendment_fingerprint,
+    registry::{Registry, ReviewActor, ReviewVerdict, TesterCheckpointDisposition},
     session::Session,
     tester_execution::{available_tester_capabilities, TesterWorkflow},
     tools::ProjectToolRuntime,
@@ -157,6 +158,105 @@ impl App {
             println!("Work: {} / {}", work.milestone_id, work.jobpack_id);
         }
         println!("Ctrl-D to exit.");
+    }
+
+    async fn run_graph_repair(&mut self) -> Result<()> {
+        let proposal = self.registry.preview_stock_qa_graph_repair()?;
+        let proposal_hash = amendment_fingerprint(&proposal)?;
+        let requirement = self
+            .registry
+            .planning_run_state()?
+            .and_then(|state| state.requirement)
+            .context("GRAPH_REPAIR_BLOCKED: original Human requirement unavailable")?;
+        let approved_plan = self
+            .registry
+            .plan_for_current_execution_graph(proposal.graph_version)?;
+        let code_state = self
+            .registry
+            .code_workflow_state()?
+            .context("GRAPH_REPAIR_BLOCKED: no J1 code workflow evidence")?;
+        if code_state.jobpack_id != "jp-j1-fefo-atomicity" || code_state.status != "REVIEW_PASS" {
+            bail!("GRAPH_REPAIR_BLOCKED: J1 is not the reviewed ACTIVE work");
+        }
+        let change_set = code_state.change_set_id
+            .context("GRAPH_REPAIR_BLOCKED: J1 change set missing")?;
+        println!("GRAPH_REPAIR_PROPOSAL_HASH={proposal_hash}");
+        println!("GRAPH_REPAIR_DIFF checkpoint={} MILESTONE_GATE -> AFTER_JOBPACK_SET", proposal.checkpoint_id);
+        println!("GRAPH_REPAIR_PRESERVES graph_version={} plan_revision={} J1_change_set={}", proposal.graph_version, proposal.plan_revision, change_set);
+        println!("GRAPH_REPAIR_EFFECTIVE_HASH {} -> {}", proposal.before_hash, proposal.after_hash);
+
+        let packet = serde_json::json!({
+            "proposal": proposal,
+            "proposal_hash": proposal_hash,
+            "original_human_requirement": requirement,
+            "approved_plan": approved_plan.artifact,
+            "source_change_set": change_set,
+            "strict_scope": "only checkpoint timing; no J1 source, Tester evidence or approval lineage changes",
+            "review_question": "Does this exact boundary correction preserve the original Human requirement and approved plan, without bypassing Tester or changing other obligations?"
+        }).to_string();
+        let reviewer_model = resolve_model_name(
+            &self.ollama, &self.session, &self.config, AgentId::Reviewer,
+        ).await?;
+        let cr_model = resolve_model_name(
+            &self.ollama, &self.session, &self.config, AgentId::LocalCr,
+        ).await?;
+        if reviewer_model == cr_model {
+            bail!("GRAPH_REPAIR_BLOCKED: Reviewer and Local CR require distinct configured models");
+        }
+        for (agent, model, actor) in [
+            (AgentId::Reviewer, reviewer_model, ReviewActor::Reviewer),
+            (AgentId::LocalCr, cr_model, ReviewActor::LocalCr),
+        ] {
+            println!("GRAPH_REPAIR_REVIEW_START role={} model={}", agent.display_name(), model);
+            let system = format!(
+                "{}\n\nReview the immutable graph topology correction ONLY. Do not invoke tools, change code, or infer missing evidence. Return exactly one JSON object with keys verdict (PASS or FAIL) and findings (array of short strings). Reject if the Human requirement or approved plan contradicts the proposed timing.",
+                self.harnesses.compose(agent)?
+            );
+            let response = self.ollama.chat_stream(
+                &model,
+                &[ChatMessage::system(system), ChatMessage::user(packet.clone())],
+                |_| {},
+            ).await?;
+            let value: serde_json::Value = serde_json::from_str(response.trim())
+                .context("GRAPH_REPAIR_BLOCKED: reviewer failed strict JSON contract")?;
+            let verdict = value.get("verdict").and_then(|v| v.as_str())
+                .context("GRAPH_REPAIR_BLOCKED: missing review verdict")?;
+            let findings = value.get("findings").and_then(|v| v.as_array())
+                .context("GRAPH_REPAIR_BLOCKED: missing review findings array")?
+                .iter()
+                .map(|item| item.as_str().map(str::to_owned)
+                    .context("GRAPH_REPAIR_BLOCKED: review finding is not text"))
+                .collect::<Result<Vec<_>>>()?;
+            let persisted_verdict = match verdict {
+                "PASS" => ReviewVerdict::Pass,
+                "FAIL" => ReviewVerdict::Revise,
+                _ => bail!("GRAPH_REPAIR_BLOCKED: invalid review verdict {verdict}"),
+            };
+            self.registry.record_graph_contract_review(
+                actor, persisted_verdict, &proposal_hash, &findings,
+            )?;
+            println!("GRAPH_REPAIR_REVIEW role={} verdict={}", agent.display_name(), verdict);
+            if verdict != "PASS" {
+                bail!("GRAPH_REPAIR_BLOCKED: independent {} review failed", agent.display_name());
+            }
+        }
+        println!("GRAPH_REPAIR_HUMAN_GATE: original Plan and J1 source remain unchanged.");
+        println!("Required exact approval: APPROVE GRAPH REPAIR {proposal_hash}");
+        let confirmation = prompt("Graph repair approval")?;
+        if confirmation != format!("APPROVE GRAPH REPAIR {proposal_hash}") {
+            println!("GRAPH_REPAIR_SKIPPED: Human approval absent; database contract unchanged.");
+            return Ok(());
+        }
+        let applied = self.registry.apply_stock_qa_graph_repair(
+            &self.project_root,
+            &self.lease_owner,
+            &proposal_hash,
+            &change_set,
+            &confirmation,
+        )?;
+        println!("GRAPH_REPAIR_APPLIED graph_version={} checkpoint={} effective_hash={}", applied.graph_version, applied.checkpoint_id, applied.after_hash);
+        self.active_work = self.resolve_coder_work_after_testers().await?;
+        Ok(())
     }
 
     async fn handle_command(&mut self, command: SlashCommand) -> Result<()> {
@@ -750,6 +850,9 @@ Do not edit Tester-owned artifacts as the product fix. Use the structured repair
     }
 
     async fn dispatch_user_text(&mut self, text: String) -> Result<()> {
+        if text.eq_ignore_ascii_case("GRAPH REPAIR") {
+            return self.run_graph_repair().await;
+        }
         let agent = self.session.active_agent;
 
         if agent == AgentId::Planner {
