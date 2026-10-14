@@ -6725,8 +6725,8 @@ fn activate_eligible_jobpack_tx(
         return Ok(None);
     }
 
-    let candidate: Option<String> = tx
-        .query_row(
+    let candidates: Vec<String> = {
+        let mut statement = tx.prepare(
             r#"
             SELECT jp.jobpack_id
             FROM execution_jobpacks jp
@@ -6744,22 +6744,30 @@ fn activate_eligible_jobpack_tx(
                     AND dep.status!='DONE'
               )
             ORDER BY jp.jobpack_id ASC
-            LIMIT 1
             "#,
             params![graph_version, milestone_id],
-            |row| row.get(0),
-        )
-        .optional()?;
-
-    let Some(jobpack_id) = candidate else {
-        return Ok(None);
+            |row| row.get::<_, String>(0),
+        )?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+        rows
     };
-    if let Err(error) = resolve_required_tester_evidence_tx(tx, graph_version, &jobpack_id) {
-        bail!(
-            "PLAN_GAP_EVIDENCE_BEFORE_ACTIVATION: Job Pack {} cannot activate: {error:#}.              The declared Tester checkpoint must produce observed evidence before this Job Pack;              inspect the checkpoint boundary/prerequisites instead of bypassing it.",
-            jobpack_id
-        );
+    let mut blocked = Vec::new();
+    let mut candidate = None;
+    for jobpack_id in candidates {
+        match resolve_required_tester_evidence_tx(tx, graph_version, &jobpack_id) {
+            Ok(_) => {
+                candidate = Some(jobpack_id);
+                break;
+            }
+            Err(error) => blocked.push(format!("{jobpack_id}: {error:#}")),
+        }
     }
+    let Some(jobpack_id) = candidate else {
+        if blocked.is_empty() {
+            return Ok(None);
+        }
+        bail!("WAIT_FOR_TESTER: no evidence-ready Job Pack; {}", blocked.join("; "));
+    };
     let updated = tx.execute(
         r#"
         UPDATE execution_jobpacks
