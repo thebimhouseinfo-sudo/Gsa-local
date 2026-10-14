@@ -4477,6 +4477,15 @@ impl Registry {
             return Ok(None);
         }
 
+        // A just-completed Job Pack may unlock an AFTER_JOBPACK_SET or
+        // BEFORE_JOBPACK Tester checkpoint whose observed outputs are required
+        // by the next Job Pack. Commit DONE first; the controller resolves
+        // Tester before calling resolve_or_activate_work again.
+        if has_unresolved_reached_tester_checkpoint_tx(&tx, graph_version)? {
+            tx.commit()?;
+            return Ok(None);
+        }
+
         let next = activate_eligible_jobpack_tx(&tx, graph_version, plan_revision, &plan_hash)?
             .context("unfinished Job Packs remain but none is dependency-eligible")?;
         tx.commit()?;
@@ -5172,6 +5181,50 @@ enum TesterBoundaryState {
     NotReached,
     Reached,
     Crossed(String),
+}
+
+// Used only at the transition after a terminal Job Pack CR. It does not
+// fabricate evidence or consume a Tester attempt: it prevents activation of
+// a successor before already-reached Tester gates are resolved.
+fn has_unresolved_reached_tester_checkpoint_tx(
+    tx: &Transaction<'_>,
+    graph_version: i64,
+) -> Result<bool> {
+    let checkpoints = {
+        let mut statement = tx.prepare(
+            "SELECT definition_json FROM execution_test_checkpoints WHERE graph_version=?1 ORDER BY checkpoint_id",
+        )?;
+        statement
+            .query_map(params![graph_version], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+    };
+    for json in checkpoints {
+        let checkpoint: TestCheckpointSpec = serde_json::from_str(&json)?;
+        let target = build_tester_target_tx(tx, graph_version, &checkpoint)?;
+        let boundary = tester_boundary_state_tx(tx, graph_version, &checkpoint, target.is_some())?;
+        if matches!(boundary, TesterBoundaryState::NotReached) {
+            continue;
+        }
+        let Some(target) = target else {
+            return Ok(true);
+        };
+        let fingerprint = target.fingerprint(graph_version, &checkpoint.id)?;
+        let attempt = latest_tester_attempt_for_target_tx(
+            tx,
+            graph_version,
+            &checkpoint.id,
+            &fingerprint,
+        )?;
+        if let Some(attempt) = attempt {
+            attempt.validate_against_checkpoint(&checkpoint)?;
+            validate_tester_target_tx(tx, graph_version, &attempt.target)?;
+            if tester_attempt_satisfied(&attempt) {
+                continue;
+            }
+        }
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 fn tester_boundary_state_tx(
