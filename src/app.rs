@@ -5,9 +5,9 @@ use crate::{
     cli::{self, InputLine, SlashCommand},
     config::AppConfig,
     controller::{ActiveWork, MilestoneController, NextWork},
+    graph_contract::amendment_fingerprint,
     harness::{AgentId, HarnessRegistry},
     ollama::{ChatMessage, OllamaClient, ToolDefinition},
-    graph_contract::amendment_fingerprint,
     registry::{Registry, ReviewActor, ReviewVerdict, TesterCheckpointDisposition},
     session::Session,
     tester_execution::{available_tester_capabilities, TesterWorkflow},
@@ -178,12 +178,22 @@ impl App {
         if code_state.jobpack_id != "jp-j1-fefo-atomicity" || code_state.status != "REVIEW_PASS" {
             bail!("GRAPH_REPAIR_BLOCKED: J1 is not the reviewed ACTIVE work");
         }
-        let change_set = code_state.change_set_id
+        let change_set = code_state
+            .change_set_id
             .context("GRAPH_REPAIR_BLOCKED: J1 change set missing")?;
         println!("GRAPH_REPAIR_PROPOSAL_HASH={proposal_hash}");
-        println!("GRAPH_REPAIR_DIFF checkpoint={} MILESTONE_GATE -> AFTER_JOBPACK_SET", proposal.checkpoint_id);
-        println!("GRAPH_REPAIR_PRESERVES graph_version={} plan_revision={} J1_change_set={}", proposal.graph_version, proposal.plan_revision, change_set);
-        println!("GRAPH_REPAIR_EFFECTIVE_HASH {} -> {}", proposal.before_hash, proposal.after_hash);
+        println!(
+            "GRAPH_REPAIR_DIFF checkpoint={} MILESTONE_GATE -> AFTER_JOBPACK_SET",
+            proposal.checkpoint_id
+        );
+        println!(
+            "GRAPH_REPAIR_PRESERVES graph_version={} plan_revision={} J1_change_set={}",
+            proposal.graph_version, proposal.plan_revision, change_set
+        );
+        println!(
+            "GRAPH_REPAIR_EFFECTIVE_HASH {} -> {}",
+            proposal.before_hash, proposal.after_hash
+        );
 
         let packet = serde_json::json!({
             "proposal": proposal,
@@ -194,12 +204,11 @@ impl App {
             "strict_scope": "only checkpoint timing; no J1 source, Tester evidence or approval lineage changes",
             "review_question": "Does this exact boundary correction preserve the original Human requirement and approved plan, without bypassing Tester or changing other obligations?"
         }).to_string();
-        let reviewer_model = resolve_model_name(
-            &self.ollama, &self.session, &self.config, AgentId::Reviewer,
-        ).await?;
-        let cr_model = resolve_model_name(
-            &self.ollama, &self.session, &self.config, AgentId::LocalCr,
-        ).await?;
+        let reviewer_model =
+            resolve_model_name(&self.ollama, &self.session, &self.config, AgentId::Reviewer)
+                .await?;
+        let cr_model =
+            resolve_model_name(&self.ollama, &self.session, &self.config, AgentId::LocalCr).await?;
         if reviewer_model == cr_model {
             bail!("GRAPH_REPAIR_BLOCKED: Reviewer and Local CR require distinct configured models");
         }
@@ -207,25 +216,42 @@ impl App {
             (AgentId::Reviewer, reviewer_model, ReviewActor::Reviewer),
             (AgentId::LocalCr, cr_model, ReviewActor::LocalCr),
         ] {
-            println!("GRAPH_REPAIR_REVIEW_START role={} model={}", agent.display_name(), model);
+            println!(
+                "GRAPH_REPAIR_REVIEW_START role={} model={}",
+                agent.display_name(),
+                model
+            );
             let system = format!(
                 "{}\n\nReview the immutable graph topology correction ONLY. Do not invoke tools, change code, or infer missing evidence. Return exactly one JSON object with keys verdict (PASS or FAIL) and findings (array of short strings). Reject if the Human requirement or approved plan contradicts the proposed timing.",
                 self.harnesses.compose(agent)?
             );
-            let response = self.ollama.chat_stream(
-                &model,
-                &[ChatMessage::system(system), ChatMessage::user(packet.clone())],
-                |_| {},
-            ).await?;
+            let response = self
+                .ollama
+                .chat_stream(
+                    &model,
+                    &[
+                        ChatMessage::system(system),
+                        ChatMessage::user(packet.clone()),
+                    ],
+                    |_| {},
+                )
+                .await?;
             let value: serde_json::Value = serde_json::from_str(response.trim())
                 .context("GRAPH_REPAIR_BLOCKED: reviewer failed strict JSON contract")?;
-            let verdict = value.get("verdict").and_then(|v| v.as_str())
+            let verdict = value
+                .get("verdict")
+                .and_then(|v| v.as_str())
                 .context("GRAPH_REPAIR_BLOCKED: missing review verdict")?;
-            let findings = value.get("findings").and_then(|v| v.as_array())
+            let findings = value
+                .get("findings")
+                .and_then(|v| v.as_array())
                 .context("GRAPH_REPAIR_BLOCKED: missing review findings array")?
                 .iter()
-                .map(|item| item.as_str().map(str::to_owned)
-                    .context("GRAPH_REPAIR_BLOCKED: review finding is not text"))
+                .map(|item| {
+                    item.as_str()
+                        .map(str::to_owned)
+                        .context("GRAPH_REPAIR_BLOCKED: review finding is not text")
+                })
                 .collect::<Result<Vec<_>>>()?;
             let persisted_verdict = match verdict {
                 "PASS" => ReviewVerdict::Pass,
@@ -233,11 +259,21 @@ impl App {
                 _ => bail!("GRAPH_REPAIR_BLOCKED: invalid review verdict {verdict}"),
             };
             self.registry.record_graph_contract_review(
-                actor, persisted_verdict, &proposal_hash, &findings,
+                actor,
+                persisted_verdict,
+                &proposal_hash,
+                &findings,
             )?;
-            println!("GRAPH_REPAIR_REVIEW role={} verdict={}", agent.display_name(), verdict);
+            println!(
+                "GRAPH_REPAIR_REVIEW role={} verdict={}",
+                agent.display_name(),
+                verdict
+            );
             if verdict != "PASS" {
-                bail!("GRAPH_REPAIR_BLOCKED: independent {} review failed", agent.display_name());
+                bail!(
+                    "GRAPH_REPAIR_BLOCKED: independent {} review failed",
+                    agent.display_name()
+                );
             }
         }
         println!("GRAPH_REPAIR_HUMAN_GATE: original Plan and J1 source remain unchanged.");
@@ -254,7 +290,10 @@ impl App {
             &change_set,
             &confirmation,
         )?;
-        println!("GRAPH_REPAIR_APPLIED graph_version={} checkpoint={} effective_hash={}", applied.graph_version, applied.checkpoint_id, applied.after_hash);
+        println!(
+            "GRAPH_REPAIR_APPLIED graph_version={} checkpoint={} effective_hash={}",
+            applied.graph_version, applied.checkpoint_id, applied.after_hash
+        );
         self.active_work = self.resolve_coder_work_after_testers().await?;
         Ok(())
     }
