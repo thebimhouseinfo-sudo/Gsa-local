@@ -6745,10 +6745,10 @@ fn activate_eligible_jobpack_tx(
               )
             ORDER BY jp.jobpack_id ASC
             "#,
-            params![graph_version, milestone_id],
-            |row| row.get::<_, String>(0),
-        )?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+        )?;
+        let rows = statement
+            .query_map(params![graph_version, milestone_id], |row| row.get::<_, String>(0))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
         rows
     };
     let mut blocked = Vec::new();
