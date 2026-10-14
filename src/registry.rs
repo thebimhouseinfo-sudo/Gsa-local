@@ -1,8 +1,8 @@
 use crate::{
     checkpoint::{Checkpoint, RecoveryClassification, ResumeAction, ResumeDecision},
     execution_graph::{
-        CheckpointBoundaryKind, EvidenceOutputSpec, EvidenceRequirementSpec, ExecutionGraph, JobPackSpec,
-        MilestoneSpec, PrerequisiteState, TestCheckpointSpec, TodoSpec,
+        CheckpointBoundaryKind, EvidenceOutputSpec, EvidenceRequirementSpec, ExecutionGraph,
+        JobPackSpec, MilestoneSpec, PrerequisiteState, TestCheckpointSpec, TodoSpec,
     },
     graph_contract::{
         amendment_fingerprint, effective_graph_hash, stock_qa_timing_amendment,
@@ -7214,15 +7214,21 @@ fn reconstruct_effective_graph_tx(tx: &Transaction<'_>, version: i64) -> Result<
             let mut statement = tx.prepare(
                 "SELECT jobpack_id, required_state FROM execution_checkpoint_prerequisites WHERE graph_version=?1 AND checkpoint_id=?2 ORDER BY position",
             )?;
-            let rows = statement.query_map(params![version, checkpoint.id], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })?.collect::<std::result::Result<Vec<_>, _>>()?;
+            let rows = statement
+                .query_map(params![version, checkpoint.id], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
             rows
         };
         if checkpoint.prerequisites.len() != stored_prerequisites.len() {
             bail!("GRAPH_REPAIR_BLOCKED: checkpoint prerequisite projection count drift");
         }
-        for (spec, (id, state)) in checkpoint.prerequisites.iter().zip(stored_prerequisites.iter()) {
+        for (spec, (id, state)) in checkpoint
+            .prerequisites
+            .iter()
+            .zip(stored_prerequisites.iter())
+        {
             if &spec.jobpack_id != id
                 || serde_json::to_value(spec.state)?.as_str() != Some(state.as_str())
             {
@@ -7233,9 +7239,11 @@ fn reconstruct_effective_graph_tx(tx: &Transaction<'_>, version: i64) -> Result<
             let mut statement = tx.prepare(
                 "SELECT definition_json FROM execution_evidence_outputs WHERE graph_version=?1 AND checkpoint_id=?2 ORDER BY output_id",
             )?;
-            let rows = statement.query_map(params![version, checkpoint.id], |row| {
-                row.get::<_, String>(0)
-            })?.collect::<std::result::Result<Vec<_>, _>>()?;
+            let rows = statement
+                .query_map(params![version, checkpoint.id], |row| {
+                    row.get::<_, String>(0)
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
             rows
         };
         let mut expected_outputs = checkpoint.evidence_outputs.clone();
