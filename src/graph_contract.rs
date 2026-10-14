@@ -95,12 +95,15 @@ pub fn stock_qa_timing_amendment(
         bail!("GRAPH_REPAIR_BLOCKED: J1 Tester output/J2 requirement differs from allowlist");
     }
     let mut candidate = graph.clone();
-    let changed = candidate
-        .checkpoints
-        .iter_mut()
-        .find(|item| item.id == checkpoint.id)
-        .context("checkpoint disappeared")?;
-    changed.boundary = CheckpointBoundaryKind::AfterJobpackSet;
+    let replacement_checkpoint_json = {
+        let changed = candidate
+            .checkpoints
+            .iter_mut()
+            .find(|item| item.id == checkpoint.id)
+            .context("checkpoint disappeared")?;
+        changed.boundary = CheckpointBoundaryKind::AfterJobpackSet;
+        serde_json::to_string(changed)?
+    };
     candidate.validate_against_plan(plan)?;
     let amendment = GraphContractAmendment {
         graph_version,
@@ -110,7 +113,7 @@ pub fn stock_qa_timing_amendment(
         before_hash: effective_graph_hash(graph)?,
         after_hash: effective_graph_hash(&candidate)?,
         original_checkpoint_json: serde_json::to_string(checkpoint)?,
-        replacement_checkpoint_json: serde_json::to_string(changed)?,
+        replacement_checkpoint_json,
     };
     if amendment.before_hash == amendment.after_hash {
         bail!("GRAPH_REPAIR_BLOCKED: no effective contract change");
