@@ -6747,7 +6747,9 @@ fn activate_eligible_jobpack_tx(
             "#,
         )?;
         let rows = statement
-            .query_map(params![graph_version, milestone_id], |row| row.get::<_, String>(0))?
+            .query_map(params![graph_version, milestone_id], |row| {
+                row.get::<_, String>(0)
+            })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         rows
     };
@@ -6766,7 +6768,10 @@ fn activate_eligible_jobpack_tx(
         if blocked.is_empty() {
             return Ok(None);
         }
-        bail!("WAIT_FOR_TESTER: no evidence-ready Job Pack; {}", blocked.join("; "));
+        bail!(
+            "WAIT_FOR_TESTER: no evidence-ready Job Pack; {}",
+            blocked.join("; ")
+        );
     };
     let updated = tx.execute(
         r#"
