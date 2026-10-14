@@ -1100,3 +1100,105 @@ fn terminal_cr_commits_j1_before_required_tester_evidence_unlocks_j2() {
         other => panic!("expected Tester before J2, found {other:?}"),
     }
 }
+
+#[test]
+fn terminal_done_survives_missing_evidence_at_not_yet_reached_checkpoint() {
+    // Negative control: a milestone-gate output cannot become available before
+    // J2 in that same milestone. J1 DONE must still commit instead of rollback.
+    let dir = tempdir().unwrap();
+    let registry = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    let mut execution_graph = graph();
+    execution_graph.milestones.retain(|m| m.id == "M1");
+    execution_graph
+        .jobpacks
+        .retain(|pack| pack.id == "JP-B" || pack.id == "JP-C");
+    execution_graph
+        .todos
+        .retain(|todo| todo.jobpack_id == "JP-B" || todo.jobpack_id == "JP-C");
+    let successor = execution_graph
+        .jobpacks
+        .iter_mut()
+        .find(|pack| pack.id == "JP-C")
+        .unwrap();
+    successor.depends_on = vec!["JP-B".into()];
+    execution_graph.checkpoints = vec![TestCheckpointSpec {
+        id: "chk-j1-verify".into(),
+        milestone_id: "M1".into(),
+        boundary: CheckpointBoundaryKind::MilestoneGate,
+        prerequisites: vec![CheckpointPrerequisiteSpec {
+            jobpack_id: "JP-B".into(),
+            state: PrerequisiteState::Done,
+        }],
+        before_jobpack_id: None,
+        cr_review_boundary: false,
+        evidence_need_ids: vec![],
+        modes: vec![EvidenceMode::Verify],
+        goal: "Verify J1 after CR PASS before starting J2".into(),
+        criteria: vec!["Observe actual J1 verification evidence".into()],
+        required_capabilities: vec![],
+        experiment_dimensions: vec![],
+        evidence_outputs: vec![EvidenceOutputSpec {
+            id: "ev-j1-verify".into(),
+            mode: EvidenceMode::Verify,
+            description: "Observed J1 verification".into(),
+            required: true,
+            evidence_need_id: None,
+        }],
+    }];
+    execution_graph.evidence_requirements = vec![EvidenceRequirementSpec {
+        consumer_jobpack_id: "JP-C".into(),
+        checkpoint_id: "chk-j1-verify".into(),
+        output_id: "ev-j1-verify".into(),
+        required: true,
+    }];
+    let (_, _, version) = approve_and_register_graph(&registry, execution_graph);
+    registry
+        .acquire_lease(dir.path(), "owner-a", Duration::from_secs(3600))
+        .unwrap();
+
+    let controller = MilestoneController::new(&registry, dir.path(), "owner-a");
+    assert_eq!(
+        controller
+            .resolve_or_activate()
+            .unwrap()
+            .unwrap()
+            .jobpack_id,
+        "JP-B"
+    );
+    let next = phase11_complete_active(
+        &dir,
+        &registry,
+        version,
+        "JP-B",
+        "T-B",
+        "j1-reviewed-source",
+    );
+    // DONE must commit rather than rolling back because J2 evidence is absent.
+    assert!(
+        next.is_none(),
+        "J2 must not activate before observed Tester evidence"
+    );
+    assert_eq!(
+        registry.jobpack_status(version, "JP-B").unwrap().as_deref(),
+        Some("DONE")
+    );
+    assert_eq!(
+        registry.jobpack_status(version, "JP-C").unwrap().as_deref(),
+        Some("PENDING")
+    );
+    // No Tester boundary can be reached: this is an impossible producer/consumer
+    // ordering in the approved graph, not grounds to invent evidence or redo J1.
+    let resumed = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    let decision = resumed.resolve_resume_decision(dir.path(), &[]).unwrap();
+    assert_ne!(decision.action, ResumeAction::ResumeTesterAttempt);
+    let error = controller.resolve_or_activate().unwrap_err();
+    assert!(format!("{error:#}").contains("PLAN_GAP_EVIDENCE_BEFORE_ACTIVATION"));
+    assert_eq!(
+        registry.jobpack_status(version, "JP-B").unwrap().as_deref(),
+        Some("DONE")
+    );
+    assert_eq!(
+        registry.jobpack_status(version, "JP-C").unwrap().as_deref(),
+        Some("PENDING")
+    );
+}
