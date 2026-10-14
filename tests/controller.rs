@@ -1202,3 +1202,58 @@ fn terminal_done_survives_missing_evidence_at_not_yet_reached_checkpoint() {
         Some("PENDING")
     );
 }
+
+#[test]
+fn future_evidence_requirement_does_not_block_independent_eligible_jobpack() {
+    let dir = tempdir().unwrap();
+    let registry = Registry::open_at(&dir.path().join("state.db")).unwrap();
+    let mut execution_graph = graph();
+    execution_graph.checkpoints = vec![TestCheckpointSpec {
+        id: "later-milestone-gate".into(),
+        milestone_id: "M1".into(),
+        boundary: CheckpointBoundaryKind::MilestoneGate,
+        prerequisites: vec![CheckpointPrerequisiteSpec {
+            jobpack_id: "JP-B".into(),
+            state: PrerequisiteState::Done,
+        }],
+        before_jobpack_id: None,
+        cr_review_boundary: false,
+        evidence_need_ids: vec![],
+        modes: vec![EvidenceMode::Verify],
+        goal: "Unrelated future evidence".into(),
+        criteria: vec!["Run milestone verification".into()],
+        required_capabilities: vec![],
+        experiment_dimensions: vec![],
+        evidence_outputs: vec![EvidenceOutputSpec {
+            id: "later-output".into(),
+            mode: EvidenceMode::Verify,
+            description: "Later evidence".into(),
+            required: true,
+            evidence_need_id: None,
+        }],
+    }];
+    execution_graph.evidence_requirements = vec![EvidenceRequirementSpec {
+        consumer_jobpack_id: "JP-A".into(),
+        checkpoint_id: "later-milestone-gate".into(),
+        output_id: "later-output".into(),
+        required: true,
+    }];
+    let (_, _, version) = approve_and_register_graph(&registry, execution_graph);
+    registry
+        .acquire_lease(dir.path(), "owner-a", Duration::from_secs(3600))
+        .unwrap();
+    let controller = MilestoneController::new(&registry, dir.path(), "owner-a");
+    assert_eq!(
+        controller.resolve_or_activate().unwrap().unwrap().jobpack_id,
+        "JP-B"
+    );
+    let next = phase11_complete_active(
+        &dir, &registry, version, "JP-B", "T-B", "j1-unrelated-evidence",
+    )
+    .unwrap();
+    assert_eq!(next.jobpack_id, "JP-C");
+    assert_eq!(
+        registry.jobpack_status(version, "JP-B").unwrap().as_deref(),
+        Some("DONE")
+    );
+}
