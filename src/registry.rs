@@ -4,7 +4,7 @@ use crate::{
         CheckpointBoundaryKind, EvidenceRequirementSpec, ExecutionGraph, JobPackSpec,
         MilestoneSpec, PrerequisiteState, TestCheckpointSpec, TodoSpec,
     },
-    graph_contract::{stock_qa_timing_amendment, GraphContractAmendment},
+    graph_contract::{effective_graph_hash, stock_qa_timing_amendment, GraphContractAmendment},
     plan::{PlanArtifact, PlanRevision},
     tester_evidence::{
         AdapterObservationField, ApplicabilityContext, ApplicabilityDecision, EvidenceProvenance,
@@ -1868,6 +1868,14 @@ impl Registry {
                 params![plan_revision],
             )?;
         }
+        // A fresh graph starts with immutable contract revision zero, derived
+        // from its normalized Registry projection rather than row insertion order.
+        let normalized = reconstruct_effective_graph_tx(&tx, version)?;
+        let fingerprint = effective_graph_hash(&normalized)?;
+        tx.execute(
+            "INSERT INTO graph_contract_versions (graph_version, contract_revision, effective_hash, snapshot_json, previous_hash, amendment_json, approval_json, created_at) VALUES (?1, 0, ?2, ?3, NULL, NULL, NULL, ?4)",
+            params![version, fingerprint, serde_json::to_string(&normalized)?, unix_seconds()?],
+        )?;
         tx.commit()?;
         Ok(version)
     }
