@@ -1234,8 +1234,11 @@ fn legacy_registered_stock_qa_graph_repair_preview_is_read_only() {
         }
     }
     for pack in &mut spec.jobpacks {
-        pack.milestone_id = pack.milestone_id.replace("M1", "m1-reservation-correctness");
-        pack.id = pack.id
+        pack.milestone_id = pack
+            .milestone_id
+            .replace("M1", "m1-reservation-correctness");
+        pack.id = pack
+            .id
             .replace("JP-B", "jp-j1-fefo-atomicity")
             .replace("JP-C", "jp-j2-idempotency");
         for dependency in &mut pack.depends_on {
@@ -1245,7 +1248,8 @@ fn legacy_registered_stock_qa_graph_repair_preview_is_read_only() {
         }
     }
     for todo in &mut spec.todos {
-        todo.jobpack_id = todo.jobpack_id
+        todo.jobpack_id = todo
+            .jobpack_id
             .replace("JP-B", "jp-j1-fefo-atomicity")
             .replace("JP-C", "jp-j2-idempotency");
     }
@@ -1291,17 +1295,27 @@ fn legacy_registered_stock_qa_graph_repair_preview_is_read_only() {
     assert_eq!(preview.graph_version, version);
     assert_ne!(preview.before_hash, preview.after_hash);
     assert!(preview.original_checkpoint_json.contains("MILESTONE_GATE"));
-    assert!(preview.replacement_checkpoint_json.contains("AFTER_JOBPACK_SET"));
+    assert!(preview
+        .replacement_checkpoint_json
+        .contains("AFTER_JOBPACK_SET"));
     let preserved: String = conn.query_row(
         "SELECT boundary FROM execution_test_checkpoints WHERE graph_version=?1 AND checkpoint_id='chk-j1-verify'",
         params![version],
         |row| row.get(0),
     ).unwrap();
     assert_eq!(preserved, "MILESTONE_GATE");
-    registry.acquire_lease(dir.path(), "owner-a", Duration::from_secs(3600)).unwrap();
-    let error = registry.apply_stock_qa_graph_repair(
-        dir.path(), "owner-a", "unapproved", "unknown", "APPROVE GRAPH REPAIR unapproved",
-    ).unwrap_err();
+    registry
+        .acquire_lease(dir.path(), "owner-a", Duration::from_secs(3600))
+        .unwrap();
+    let error = registry
+        .apply_stock_qa_graph_repair(
+            dir.path(),
+            "owner-a",
+            "unapproved",
+            "unknown",
+            "APPROVE GRAPH REPAIR unapproved",
+        )
+        .unwrap_err();
     assert!(error.to_string().contains("GRAPH_REPAIR_BLOCKED"));
     let still_legacy: String = conn.query_row(
         "SELECT boundary FROM execution_test_checkpoints WHERE graph_version=?1 AND checkpoint_id='chk-j1-verify'",
