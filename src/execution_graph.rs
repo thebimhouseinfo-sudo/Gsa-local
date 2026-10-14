@@ -594,26 +594,110 @@ impl ExecutionGraph {
         }
 
         validate_dependency_map_cycles(&augmented_dependencies)?;
-        // Milestone VERIFY waits for every Job Pack DONE: a same-milestone
-        // consumer cannot demand evidence produced only at that gate.
-        for requirement in &self.evidence_requirements {
-            if !requirement.required {
-                continue;
-            }
-            let checkpoint = checkpoint_map[requirement.checkpoint_id.as_str()];
-            let consumer = jobpacks[requirement.consumer_jobpack_id.as_str()];
-            if checkpoint.boundary == CheckpointBoundaryKind::MilestoneGate
-                && checkpoint.milestone_id == consumer.milestone_id
-            {
-                bail!(
-                    "GRAPH_UNSATISFIABLE_EVIDENCE_ORDER: {}.start -> {}.done -> {}.VERIFY -> {}.OBSERVED -> {}.start",
-                    consumer.id, consumer.id, consumer.milestone_id,
-                    checkpoint.id, consumer.id
-                );
-            }
-        }
+        validate_temporal_event_order(self)?;
         Ok(())
     }
+}
+
+
+fn validate_temporal_event_order(graph: &ExecutionGraph) -> Result<()> {
+    let mut edges: HashMap<String, Vec<String>> = HashMap::new();
+    let mut edge = |from: String, to: String| {
+        edges.entry(from).or_default().push(to);
+    };
+    let start = |id: &str| format!("{id}.start");
+    let reviewed = |id: &str| format!("{id}.review_pass");
+    let done = |id: &str| format!("{id}.done");
+    let observed = |id: &str| format!("{id}.OBSERVED");
+    let verify = |id: &str| format!("{id}.VERIFY");
+    let complete = |id: &str| format!("{id}.COMPLETE");
+
+    for pack in &graph.jobpacks {
+        edge(start(&pack.id), reviewed(&pack.id));
+        edge(reviewed(&pack.id), done(&pack.id));
+        edge(done(&pack.id), verify(&pack.milestone_id));
+        for predecessor in &pack.depends_on {
+            edge(done(predecessor), start(&pack.id));
+        }
+    }
+    for milestone in &graph.milestones {
+        edge(verify(&milestone.id), complete(&milestone.id));
+        if milestone.order > 1 {
+            let previous = graph.milestones.iter()
+                .find(|item| item.order + 1 == milestone.order)
+                .expect("contiguous milestone orders validated");
+            for pack in graph.jobpacks.iter().filter(|p| p.milestone_id == milestone.id) {
+                edge(complete(&previous.id), start(&pack.id));
+            }
+        }
+    }
+    for checkpoint in &graph.checkpoints {
+        let output = observed(&checkpoint.id);
+        for prerequisite in &checkpoint.prerequisites {
+            let event = match prerequisite.state {
+                PrerequisiteState::ReviewPass => reviewed(&prerequisite.jobpack_id),
+                PrerequisiteState::Done => done(&prerequisite.jobpack_id),
+            };
+            edge(event, output.clone());
+        }
+        match checkpoint.boundary {
+            CheckpointBoundaryKind::AfterJobpackSet => {}
+            CheckpointBoundaryKind::BeforeJobpack => {
+                let before = checkpoint.before_jobpack_id.as_deref()
+                    .expect("BEFORE_JOBPACK reference validated");
+                edge(output.clone(), start(before));
+            }
+            CheckpointBoundaryKind::MilestoneGate => {
+                edge(verify(&checkpoint.milestone_id), output.clone());
+                edge(output.clone(), complete(&checkpoint.milestone_id));
+            }
+        }
+    }
+    for requirement in &graph.evidence_requirements {
+        if requirement.required {
+            edge(observed(&requirement.checkpoint_id), start(&requirement.consumer_jobpack_id));
+        }
+    }
+
+    fn visit(
+        node: &str,
+        edges: &HashMap<String, Vec<String>>,
+        state: &mut HashMap<String, u8>,
+        stack: &mut Vec<String>,
+    ) -> Result<()> {
+        match state.get(node).copied().unwrap_or_default() {
+            2 => return Ok(()),
+            1 => {
+                let at = stack.iter().position(|value| value == node).unwrap_or(0);
+                let mut cycle = stack[at..].to_vec();
+                cycle.push(node.to_string());
+                bail!("GRAPH_UNSATISFIABLE_EVIDENCE_ORDER: {}", cycle.join(" -> "));
+            }
+            _ => {}
+        }
+        state.insert(node.to_string(), 1);
+        stack.push(node.to_string());
+        let mut successors = edges.get(node).cloned().unwrap_or_default();
+        successors.sort();
+        successors.dedup();
+        for successor in successors {
+            visit(&successor, edges, state, stack)?;
+        }
+        stack.pop();
+        state.insert(node.to_string(), 2);
+        Ok(())
+    }
+
+    let mut state = HashMap::new();
+    let mut stack = Vec::new();
+    let mut nodes = edges.keys().cloned().collect::<Vec<_>>();
+    nodes.extend(edges.values().flatten().cloned());
+    nodes.sort();
+    nodes.dedup();
+    for node in nodes {
+        visit(&node, &edges, &mut state, &mut stack)?;
+    }
+    Ok(())
 }
 
 fn validate_nonempty_unique<'a>(
