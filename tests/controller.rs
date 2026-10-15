@@ -1411,6 +1411,15 @@ fn legacy_registered_stock_qa_graph_repair_preview_is_read_only() {
         registry.pending_graph_repair_hash().unwrap().as_deref(),
         Some(fingerprint.as_str())
     );
+    // A crash after staging retains the exact proposal, not an implicit approval.
+    let after_stage_restart = Registry::open_at(&db_path).unwrap();
+    assert_eq!(
+        after_stage_restart.pending_graph_repair_hash().unwrap().as_deref(),
+        Some(fingerprint.as_str())
+    );
+    after_stage_restart
+        .stage_stock_qa_graph_repair(dir.path(), "owner-a", &fingerprint)
+        .unwrap();
     registry
         .record_graph_contract_review(
             ReviewActor::Reviewer,
@@ -1422,6 +1431,25 @@ fn legacy_registered_stock_qa_graph_repair_preview_is_read_only() {
             "response-hash-1",
         )
         .unwrap();
+    // A restart after REVIEWER PASS must preserve just one role PASS, and
+    // must not apply the amendment or fabricate a Local CR verdict.
+    let after_first_review_restart = Registry::open_at(&db_path).unwrap();
+    assert_eq!(
+        after_first_review_restart.pending_graph_repair_hash().unwrap().as_deref(),
+        Some(fingerprint.as_str())
+    );
+    let review_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM graph_contract_reviews WHERE graph_version=?1 AND proposal_hash=?2 AND verdict='PASS'",
+        params![version, fingerprint],
+        |row| row.get(0),
+    ).unwrap();
+    assert_eq!(review_count, 1);
+    let boundary_before_approval: String = conn.query_row(
+        "SELECT boundary FROM execution_test_checkpoints WHERE graph_version=?1 AND checkpoint_id='chk-j1-verify'",
+        params![version],
+        |row| row.get(0),
+    ).unwrap();
+    assert_eq!(boundary_before_approval, "MILESTONE_GATE");
     registry
         .record_graph_contract_review(
             ReviewActor::LocalCr,
