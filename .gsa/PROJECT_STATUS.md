@@ -134,3 +134,13 @@ Updated: 2026-10-13 (Asia/Ho_Chi_Minh)
 - **NOT CLAIMED:** independent post-implementation code CR, real Mac Human acceptance, real Tester `OBSERVED` output, J2 completion, external Stock-QA oracle. S4 remains HUMAN_TEST_REQUIRED after code review. See `S4_STOCK_QA_HUMAN_GATE.md`.
 - **Safety:** Real `~/Projects/GSA-Stock-QA/.gsa/state/gsa.db` and project code were not mutated through these GitHub code changes; no manual SQLite repair, no J1 Coder replay, no graph re-registration.
 - Continue from latest `main` and exact CI; do not regard historical status entries above as more recent authority.
+
+## Side Plan post-code CR finding repairs — 2026-10-15
+
+- Human authorized corrections to CR-01/CR-02/CR-03 on canonical `main`.
+- Exact source checkpoint: `main@50965b0a1ed6305f07ddb247622995467dd042fc`. GitHub Actions [38677067587](https://github.com/thebimhouseinfo-sudo/Gsa-local/actions/runs/38677067587) **SUCCESS**.
+- CR-01: `graph_contract_reviews` now binds role verdict to nonempty model ID, per-invocation review run ID and response digest; cross-role model/run collisions fail closed, immutable readback requires exact equality, and CLI uses a fresh invocation ID from process/time for each actual response.
+- CR-02: graph amendment requires a present terminal J1 `CodeCrBoundaryWork` and matching existing Local CR PASS at the exact source/change-set/fingerprint. `None == None` is no longer accepted.
+- CR-03: restart between `GRAPH_REPAIR_REQUIRED` cursor and Reviewer PASS, and between Reviewer PASS and Local CR, persists the exact proposal; CLI reuses only an exact stored role PASS for the configured model, with no automatic graph mutation.
+- Synthetic controller regressions include wrong lease, missing terminal Code CR, independent review provenance and restart/replay; CI succeeded. **This is source/test PASS only**, not a durable independent post-repair CR verdict.
+- **Remaining gate:** independent post-repair CR review, then Human S4 on the real Mac Stock-QA project. Do not change Stock-QA SQLite, replay J1 Coder, invent Tester evidence, or claim S4 PASS before actual acceptance.
