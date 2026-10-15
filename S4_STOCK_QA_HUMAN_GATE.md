@@ -34,3 +34,10 @@
 - Original approved PlanArtifact or Human requirement contradicts timing change: do not approve; requires separately reviewed replan.
 - Existing Tester attempt/output, missing exact J1 source, J2 already started, wrong lease/workspace, projection mismatch, changed CR authority fingerprint or missing role review: `GRAPH_REPAIR_BLOCKED`, no partial write.
 - A new CI SUCCESS alone is **not** proof of real Mac acceptance. Do not mark S4 PASS without recorded Human evidence.
+
+
+## Latest real Mac S4 finding — 2026-10-15
+
+**BLOCKED at Reviewer format validation; NOT S4 PASS.** The exact graph proposal `05ac70c4988c0171491b8b2a2606cdf34e6ad38a39ab2d5ed91756eac239431d` remained staged. Real Reviewer `qwen38t:latest` began, then exited with `GRAPH_REPAIR_BLOCKED: reviewer failed strict JSON contract: expected value at line 1 column 1`. This is a format parsing error, not a FAIL verdict. Local CR `gemma4:31b-mlx`, Human approval, amendment, Tester OBSERVED and J2 ACTIVE have not occurred.
+
+Both agent models are correctly configured at `~/Library/Application Support/gsa/config.toml`; `GSA_WORKFLOW_MODEL` is unset. Fix the CLI reviewer structured-response contract and bounded error recovery; CI and independent CR before resuming real Mac test. Preserve the existing graph cursor and J1 evidence. See `.gsa/PROJECT_STATUS.md` current handoff for full technical instructions.
