@@ -476,6 +476,15 @@ impl Registry {
                     REFERENCES execution_graph(version)
             );
 
+            CREATE TABLE IF NOT EXISTS graph_repair_cursor (
+                graph_version INTEGER PRIMARY KEY,
+                proposal_hash TEXT NOT NULL,
+                stage TEXT NOT NULL CHECK (stage IN ('GRAPH_REPAIR_REQUIRED', 'APPLIED')),
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                FOREIGN KEY (graph_version) REFERENCES execution_graph(version)
+            );
+
             CREATE TABLE IF NOT EXISTS graph_contract_reviews (
                 graph_version INTEGER NOT NULL,
                 proposal_hash TEXT NOT NULL,
@@ -1902,6 +1911,52 @@ impl Registry {
 
     /// Persist a role-isolated verdict for the exact immutable proposal.
     /// The caller must run the two independent review agents before recording PASS.
+    /// Durable proposal cursor. Repeated attempts with the same hash are
+    /// idempotent; changes to the exact intended repair fail closed.
+    pub fn stage_stock_qa_graph_repair(
+        &self,
+        project_root: &Path,
+        owner: &str,
+        expected_proposal_hash: &str,
+    ) -> Result<()> {
+        let proposal = self.preview_stock_qa_graph_repair()?;
+        if amendment_fingerprint(&proposal)? != expected_proposal_hash {
+            bail!("GRAPH_REPAIR_BLOCKED: proposed repair fingerprint changed");
+        }
+        let tx = self.conn.unchecked_transaction()?;
+        assert_lease_owner_tx(&tx, project_root, owner)?;
+        let binding = current_graph_binding_tx(&tx)?
+            .context("GRAPH_REPAIR_BLOCKED: no CURRENT graph")?;
+        if binding.0 != proposal.graph_version
+            || binding.1 != proposal.plan_revision
+            || binding.2 != proposal.plan_hash
+        {
+            bail!("GRAPH_REPAIR_BLOCKED: staged graph/plan binding drifted");
+        }
+        tx.execute(
+            "INSERT OR IGNORE INTO graph_repair_cursor (graph_version, proposal_hash, stage, created_at, updated_at) VALUES (?1, ?2, 'GRAPH_REPAIR_REQUIRED', ?3, ?3)",
+            params![proposal.graph_version, expected_proposal_hash, unix_seconds()?],
+        )?;
+        let existing: (String, String) = tx.query_row(
+            "SELECT proposal_hash, stage FROM graph_repair_cursor WHERE graph_version=?1",
+            params![proposal.graph_version],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        if existing.0 != expected_proposal_hash || existing.1 != "GRAPH_REPAIR_REQUIRED" {
+            bail!("GRAPH_REPAIR_BLOCKED: conflicting or completed durable repair cursor");
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn pending_graph_repair_hash(&self) -> Result<Option<String>> {
+        self.conn.query_row(
+            "SELECT cursor.proposal_hash FROM graph_repair_cursor cursor JOIN execution_graph graph ON graph.version=cursor.graph_version WHERE graph.status='CURRENT' AND cursor.stage='GRAPH_REPAIR_REQUIRED'",
+            [],
+            |row| row.get(0),
+        ).optional().map_err(Into::into)
+    }
+
     pub fn record_graph_contract_review(
         &self,
         actor: ReviewActor,
@@ -1993,6 +2048,14 @@ impl Registry {
         let actual_proposal_hash = amendment_fingerprint(&proposal)?;
         if actual_proposal_hash != expected_proposal_hash {
             bail!("GRAPH_REPAIR_BLOCKED: proposal drifted before commit");
+        }
+        let cursor_hash: Option<String> = tx.query_row(
+            "SELECT proposal_hash FROM graph_repair_cursor WHERE graph_version=?1 AND stage='GRAPH_REPAIR_REQUIRED'",
+            params![version],
+            |row| row.get(0),
+        ).optional()?;
+        if cursor_hash.as_deref() != Some(expected_proposal_hash) {
+            bail!("GRAPH_REPAIR_BLOCKED: exact durable repair cursor is missing");
         }
         let reviews: i64 = tx.query_row(
             "SELECT COUNT(*) FROM graph_contract_reviews WHERE graph_version=?1 AND proposal_hash=?2 AND verdict='PASS' AND role IN ('REVIEWER', 'LOCAL_CR')",
@@ -2108,6 +2171,13 @@ impl Registry {
                 unix_seconds()?
             ],
         )?;
+        let cursor_updated = tx.execute(
+            "UPDATE graph_repair_cursor SET stage='APPLIED', updated_at=?1 WHERE graph_version=?2 AND proposal_hash=?3 AND stage='GRAPH_REPAIR_REQUIRED'",
+            params![unix_seconds()?, version, expected_proposal_hash],
+        )?;
+        if cursor_updated != 1 {
+            bail!("GRAPH_REPAIR_BLOCKED: repair cursor changed before commit");
+        }
         append_event_tx(
             &tx,
             "GRAPH_CONTRACT_AMENDED",
