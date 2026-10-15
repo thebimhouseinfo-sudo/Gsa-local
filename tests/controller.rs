@@ -1467,6 +1467,20 @@ fn legacy_registered_stock_qa_graph_repair_preview_is_read_only() {
             "response-hash-2",
         )
         .unwrap();
+    // A forged review-ready state without the exact terminal J1 Code CR
+    // must fail closed; restoring the original CR permits the normal path.
+    conn.execute(
+        "DELETE FROM code_cr_reviews WHERE graph_version=?1 AND jobpack_id='jp-j1-fefo-atomicity'",
+        params![version],
+    ).unwrap();
+    let approval = format!("APPROVE GRAPH REPAIR {fingerprint}");
+    let missing_code_cr = registry.apply_stock_qa_graph_repair(
+        dir.path(), "owner-a", &fingerprint, change_set, &approval,
+    );
+    assert!(missing_code_cr.unwrap_err().to_string().contains("GRAPH_REPAIR_BLOCKED"));
+    registry.record_code_cr_review(
+        dir.path(), "owner-a", &cr_before.key, ReviewVerdict::Pass, &[],
+    ).unwrap();
     let approved = format!("APPROVE GRAPH REPAIR {fingerprint}");
     let applied = registry
         .apply_stock_qa_graph_repair(dir.path(), "owner-a", &fingerprint, change_set, &approved)
