@@ -19,6 +19,7 @@ use crate::{
     },
 };
 use anyhow::{bail, Context, Result};
+use sha2::Digest;
 use std::{
     collections::HashMap,
     io::{self, Write},
@@ -267,11 +268,16 @@ impl App {
                 "FAIL" => ReviewVerdict::Revise,
                 _ => bail!("GRAPH_REPAIR_BLOCKED: invalid review verdict {verdict}"),
             };
+            let run_id = format!("graph-repair-{}-{}", proposal_hash, agent.key());
+            let response_hash = format!("{:x}", sha2::Sha256::digest(response.as_bytes()));
             self.registry.record_graph_contract_review(
                 actor,
                 persisted_verdict,
                 &proposal_hash,
                 &findings,
+                &model,
+                &run_id,
+                &response_hash,
             )?;
             println!(
                 "GRAPH_REPAIR_REVIEW role={} verdict={}",
