@@ -1925,8 +1925,8 @@ impl Registry {
         }
         let tx = self.conn.unchecked_transaction()?;
         assert_lease_owner_tx(&tx, project_root, owner)?;
-        let binding = current_graph_binding_tx(&tx)?
-            .context("GRAPH_REPAIR_BLOCKED: no CURRENT graph")?;
+        let binding =
+            current_graph_binding_tx(&tx)?.context("GRAPH_REPAIR_BLOCKED: no CURRENT graph")?;
         if binding.0 != proposal.graph_version
             || binding.1 != proposal.plan_revision
             || binding.2 != proposal.plan_hash
