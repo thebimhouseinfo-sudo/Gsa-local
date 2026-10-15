@@ -260,9 +260,15 @@ impl App {
                     "findings": { "type": "array", "items": { "type": "string" } }
                 }
             });
-            let mut conversation = vec![ChatMessage::system(system), ChatMessage::user(packet.clone())];
+            let mut conversation = vec![
+                ChatMessage::system(system),
+                ChatMessage::user(packet.clone()),
+            ];
             let (response, verdict, findings) = loop {
-                let response = self.ollama.chat_stream_json(&model, &conversation, &schema, |_| {}).await?;
+                let response = self
+                    .ollama
+                    .chat_stream_json(&model, &conversation, &schema, |_| {})
+                    .await?;
                 match parse_graph_repair_review(&response) {
                     Ok((verdict, findings)) => break (response, verdict, findings),
                     Err(error) if conversation.len() == 2 => {
@@ -278,7 +284,11 @@ impl App {
                     ),
                 }
             };
-            let persisted_verdict = if verdict == "PASS" { ReviewVerdict::Pass } else { ReviewVerdict::Revise };
+            let persisted_verdict = if verdict == "PASS" {
+                ReviewVerdict::Pass
+            } else {
+                ReviewVerdict::Revise
+            };
             let run_nonce = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_nanos();
@@ -1116,16 +1126,27 @@ fn planning_start_tool() -> ToolDefinition {
 }
 
 fn parse_graph_repair_review(response: &str) -> Result<(String, Vec<String>)> {
-    let value: serde_json::Value = serde_json::from_str(response.trim())
-        .context("invalid JSON object")?;
+    let value: serde_json::Value =
+        serde_json::from_str(response.trim()).context("invalid JSON object")?;
     let object = value.as_object().context("expected JSON object")?;
     if object.len() != 2 || !object.contains_key("verdict") || !object.contains_key("findings") {
         bail!("expected exactly verdict and findings keys");
     }
-    let verdict = object["verdict"].as_str().context("verdict must be a string")?;
-    if verdict != "PASS" && verdict != "FAIL" { bail!("verdict must be PASS or FAIL"); }
-    let findings = object["findings"].as_array().context("findings must be an array")?
-        .iter().map(|v| v.as_str().map(str::to_owned).context("findings must be strings"))
+    let verdict = object["verdict"]
+        .as_str()
+        .context("verdict must be a string")?;
+    if verdict != "PASS" && verdict != "FAIL" {
+        bail!("verdict must be PASS or FAIL");
+    }
+    let findings = object["findings"]
+        .as_array()
+        .context("findings must be an array")?
+        .iter()
+        .map(|v| {
+            v.as_str()
+                .map(str::to_owned)
+                .context("findings must be strings")
+        })
         .collect::<Result<Vec<_>>>()?;
     Ok((verdict.to_owned(), findings))
 }
@@ -1228,13 +1249,34 @@ mod graph_repair_response_contract_tests {
     use super::parse_graph_repair_review;
     #[test]
     fn strict_pass_and_fail() {
-        assert_eq!(parse_graph_repair_review(r#"{"verdict":"PASS","findings":[]}"#).unwrap().0, "PASS");
-        assert_eq!(parse_graph_repair_review(r#"{"verdict":"FAIL","findings":["unsafe timing"]}"#).unwrap().1, vec!["unsafe timing"]);
+        assert_eq!(
+            parse_graph_repair_review(r#"{"verdict":"PASS","findings":[]}"#)
+                .unwrap()
+                .0,
+            "PASS"
+        );
+        assert_eq!(
+            parse_graph_repair_review(r#"{"verdict":"FAIL","findings":["unsafe timing"]}"#)
+                .unwrap()
+                .1,
+            vec!["unsafe timing"]
+        );
     }
     #[test]
     fn malformed_never_passes() {
-        for sample in ["", "PASS", "```json\\n{}\\n```", "{}", r#"{"verdict":"YES","findings":[]}"#, r#"{"verdict":"PASS","findings":"ok"}"#, r#"{"verdict":"PASS","findings":[],"extra":1}"#] {
-            assert!(parse_graph_repair_review(sample).is_err(), "unexpected acceptance of {sample:?}");
+        for sample in [
+            "",
+            "PASS",
+            "```json\\n{}\\n```",
+            "{}",
+            r#"{"verdict":"YES","findings":[]}"#,
+            r#"{"verdict":"PASS","findings":"ok"}"#,
+            r#"{"verdict":"PASS","findings":[],"extra":1}"#,
+        ] {
+            assert!(
+                parse_graph_repair_review(sample).is_err(),
+                "unexpected acceptance of {sample:?}"
+            );
         }
     }
 }
