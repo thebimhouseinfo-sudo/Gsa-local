@@ -1307,6 +1307,22 @@ fn legacy_registered_stock_qa_graph_repair_preview_is_read_only() {
     registry
         .acquire_lease(dir.path(), "owner-a", Duration::from_secs(3600))
         .unwrap();
+    // Approval text alone cannot substitute for independent REVIEWER/LOCAL_CR PASS.
+    let exact_hash = gsa_local::graph_contract::amendment_fingerprint(&preview).unwrap();
+    let unreviewed = registry.apply_stock_qa_graph_repair(
+        dir.path(),
+        "owner-a",
+        &exact_hash,
+        "unchanged-source",
+        &format!("APPROVE GRAPH REPAIR {exact_hash}"),
+    );
+    assert!(unreviewed.unwrap_err().to_string().contains("GRAPH_REPAIR_BLOCKED"));
+    let amendments: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM graph_contract_versions WHERE graph_version=?1 AND contract_revision>0",
+        params![version],
+        |row| row.get(0),
+    ).unwrap();
+    assert_eq!(amendments, 0);
     let error = registry
         .apply_stock_qa_graph_repair(
             dir.path(),
