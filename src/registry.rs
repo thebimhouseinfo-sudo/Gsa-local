@@ -2014,13 +2014,15 @@ impl Registry {
             params![proposal.graph_version, actual, actor.as_str()],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
         )?;
-        if persisted != (
-            verdict_text.to_string(),
-            serde_json::to_string(findings)?,
-            model_id.to_string(),
-            run_id.to_string(),
-            response_hash.to_string(),
-        ) {
+        if persisted
+            != (
+                verdict_text.to_string(),
+                serde_json::to_string(findings)?,
+                model_id.to_string(),
+                run_id.to_string(),
+                response_hash.to_string(),
+            )
+        {
             bail!("GRAPH_REPAIR_BLOCKED: immutable review provenance changed");
         }
         tx.commit()?;
