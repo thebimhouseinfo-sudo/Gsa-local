@@ -1444,6 +1444,14 @@ fn legacy_registered_stock_qa_graph_repair_preview_is_read_only() {
             .as_deref(),
         Some(fingerprint.as_str())
     );
+    let recovered_review = after_first_review_restart
+        .graph_contract_review(version, &fingerprint, ReviewActor::Reviewer)
+        .unwrap().unwrap();
+    assert_eq!(recovered_review.model_id, "model-reviewer");
+    assert_eq!(recovered_review.run_id, "review-run-1");
+    assert!(after_first_review_restart
+        .graph_contract_review(version, &fingerprint, ReviewActor::LocalCr)
+        .unwrap().is_none());
     let review_count: i64 = conn.query_row(
         "SELECT COUNT(*) FROM graph_contract_reviews WHERE graph_version=?1 AND proposal_hash=?2 AND verdict='PASS'",
         params![version, fingerprint],
