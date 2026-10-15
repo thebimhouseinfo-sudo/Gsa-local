@@ -266,22 +266,38 @@ impl OllamaClient {
     where
         F: FnMut(&str),
     {
-        self.chat_stream_with_format(model, messages, tools, num_ctx, None, &mut on_token).await
+        self.chat_stream_with_format(model, messages, tools, num_ctx, None, &mut on_token)
+            .await
     }
 
     pub async fn chat_stream_json<F>(
-        &self, model: &str, messages: &[ChatMessage], schema: &Value, on_token: F,
+        &self,
+        model: &str,
+        messages: &[ChatMessage],
+        schema: &Value,
+        on_token: F,
     ) -> Result<String>
-    where F: FnMut(&str),
+    where
+        F: FnMut(&str),
     {
-        Ok(self.chat_stream_with_format(model, messages, &[], self.num_ctx, Some(schema), on_token).await?.message.content)
+        Ok(self
+            .chat_stream_with_format(model, messages, &[], self.num_ctx, Some(schema), on_token)
+            .await?
+            .message
+            .content)
     }
 
     async fn chat_stream_with_format<F>(
-        &self, model: &str, messages: &[ChatMessage], tools: &[ToolDefinition],
-        num_ctx: usize, format: Option<&Value>, mut on_token: F,
+        &self,
+        model: &str,
+        messages: &[ChatMessage],
+        tools: &[ToolDefinition],
+        num_ctx: usize,
+        format: Option<&Value>,
+        mut on_token: F,
     ) -> Result<OllamaChatResponse>
-    where F: FnMut(&str),
+    where
+        F: FnMut(&str),
     {
         if num_ctx == 0 {
             bail!("Ollama num_ctx must be greater than zero");
@@ -297,7 +313,9 @@ impl OllamaClient {
         if !tools.is_empty() {
             body["tools"] = serde_json::to_value(tools)?;
         }
-        if let Some(format) = format { body["format"] = format.clone(); }
+        if let Some(format) = format {
+            body["format"] = format.clone();
+        }
 
         let response = tokio::time::timeout(
             OLLAMA_RESPONSE_IDLE_TIMEOUT,
