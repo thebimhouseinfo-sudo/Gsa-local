@@ -1231,7 +1231,10 @@ impl Registry {
                 revision,
                 hash,
                 verdict.as_str(),
-                serde_json::to_string(findings)?, model_id, run_id, response_hash,
+                serde_json::to_string(findings)?,
+                model_id,
+                run_id,
+                response_hash,
                 unix_seconds()?
             ],
         )?;
@@ -1970,7 +1973,10 @@ impl Registry {
         run_id: &str,
         response_hash: &str,
     ) -> Result<()> {
-        if [model_id, run_id, response_hash].iter().any(|value| value.trim().is_empty()) {
+        if [model_id, run_id, response_hash]
+            .iter()
+            .any(|value| value.trim().is_empty())
+        {
             bail!("GRAPH_REPAIR_BLOCKED: review execution provenance required");
         }
         let proposal = self.preview_stock_qa_graph_repair()?;
@@ -1989,7 +1995,9 @@ impl Registry {
             params![proposal.graph_version, actual, actor.as_str(), model_id, run_id],
             |row| row.get(0),
         )?;
-        if duplicate != 0 { bail!("GRAPH_REPAIR_BLOCKED: independent review provenance collision"); }
+        if duplicate != 0 {
+            bail!("GRAPH_REPAIR_BLOCKED: independent review provenance collision");
+        }
         tx.execute(
             "INSERT OR IGNORE INTO graph_contract_reviews (graph_version, proposal_hash, role, verdict, findings_json, model_id, run_id, response_hash, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
@@ -2136,7 +2144,8 @@ impl Registry {
         }
         let old_cr = code_cr_boundary_work_tx(&tx, version)?
             .context("GRAPH_REPAIR_BLOCKED: J1 terminal CR boundary missing")?;
-        if !old_cr.terminal || old_cr.key.jobpack_id != "jp-j1-fefo-atomicity"
+        if !old_cr.terminal
+            || old_cr.key.jobpack_id != "jp-j1-fefo-atomicity"
             || old_cr.key.change_set_id != expected_change_set
             || !matches!(old_cr.existing_review.as_ref(), Some(review) if review.verdict == "PASS" && review.key == old_cr.key)
         {
