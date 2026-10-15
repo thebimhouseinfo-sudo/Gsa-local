@@ -3993,3 +3993,11 @@ A caller can receive a plausible successful Tester terminal Run record without s
 A dedicated GSA workflow-contract review should assess the existing V2_STABLE and NEXT completion paths, compare how Reviewer/Tester Verification is persisted and consumed, and enforce *the intended evidence requirements at the appropriate declared boundary*. Any change must preserve compatibility with legitimate historical completed Runs and must not introduce fake retroactive target binding. Test both a missing-verification negative case and a true exact-target positive case. Record the observed rejection/acceptance and ensure no second terminalization after a blocked attempt.
 
 **LLC records only.** Do not treat this lesson as authorization to weaken UAR-2B gates, rebind immutable target revisions, or silently promote stale Tester Runs.
+
+
+## 2026-10-15 — S4 graph-repair independent Reviewer JSON format failure (open)
+
+- **Observed on real Mac Stock-QA:** graph repair preview produced proposal `05ac70c4988c0171491b8b2a2606cdf34e6ad38a39ab2d5ed91756eac239431d` and Reviewer `qwen38t:latest` started, but `src/app.rs::run_graph_repair` rejected the raw answer with `expected value at line 1 column 1`. This is a transport/format integration failure, **not** a Reviewer verdict. Raw model content was not recorded; do not diagnose it as empty, prose, or fenced Markdown without evidence.
+- **Workflow gap:** strict JSON expectation was only prompt-instructed, not schema-constrained in Ollama request; there was no bounded correction and no safe format-specific error recovery. Never synthesize Reviewer/Local CR PASS or bypass Human approval to work around it.
+- **Source remediation candidate:** add Ollama schema-constrained JSON responses for independent graph contract reviews; exact strict structural and semantic validation, at most one format-only repair, no review persistence until valid independent verdict. Regression fixtures include valid PASS/FAIL, empty/prose/fenced/malformed/extra keys.
+- **Resolution gate:** exact-main CI, independent code CR, focused real Mac Ollama Reviewer and Local CR, then Human approval and unchanged-proposal SQLite readback. **OPEN until real S4 evidence arrives.** Preserve J1 source/change set, staged graph cursor, prior evidence and Stock-QA database.
