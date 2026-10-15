@@ -1,9 +1,13 @@
 # Side Plan — Execution Graph Evidence Order & In-Place Recovery (GSA Local)
 
-> **STATUS:** SIDE PLAN / PLANNER RL AFTER SOURCE REVIEW **PASS** / **INDEPENDENT CR RECHECK REQUIRED (AFTER RL UPDATE)** / **AWAITING HUMAN APPROVAL FOR IMPLEMENTATION**.
+> **STATUS:** HUMAN IMPLEMENTATION APPROVED / S1–S3 SOURCE IMPLEMENTED / EXACT CI PASS at `main@bae91592` / INDEPENDENT CODE CR & REAL MAC S4 ACCEPTANCE PENDING.
 > **Source of truth:** GitHub `main`; this document is not a replacement for `IMPLEMENTATION_PLAN.md`, `DETAIL_EXECUTION_PLAN.md`, or the active UAR work.
 > **Origin:** isolated real Mac test `~/Projects/GSA-Stock-QA`, 2026-10-14. **No product/source/SQLite mutation is authorized by this document.**
 > **Scope:** fix the GSA Local workflow, not FEFO/atomicity/idempotency business logic.
+
+## Implementation checkpoint — 2026-10-15
+
+Human approved implementation in this conversation. Changes are on canonical `main`, and GitHub Actions [38672948912](https://github.com/thebimhouseinfo-sudo/Gsa-local/actions/runs/38672948912) completed SUCCESS at exact `bae91592d626be91e200cb81d72c8926857e098c`. S1 temporal validator and scheduler, S2 append-only same-version repair/cursor/approval guards, and S3 J1 DONE/J2 PENDING transition regressions are implemented and tested on synthetic SQLite fixtures. This does **not** prove Stock-QA real Mac acceptance, independent Code CR, observed Tester output, real J2 execution or external oracle success. The safe Human test instructions live in [S4_STOCK_QA_HUMAN_GATE.md](S4_STOCK_QA_HUMAN_GATE.md). Original Stock-QA SQLite has not been changed by this work.
 
 ## GOAL — giữ workflow đúng và tiếp tục từ bằng chứng thật
 
