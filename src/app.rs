@@ -226,6 +226,20 @@ impl App {
             (AgentId::Reviewer, reviewer_model, ReviewActor::Reviewer),
             (AgentId::LocalCr, cr_model, ReviewActor::LocalCr),
         ] {
+            if let Some(saved) = self.registry.graph_contract_review(
+                proposal.graph_version,
+                &proposal_hash,
+                actor,
+            )? {
+                if saved.verdict != "PASS" || saved.model_id != model {
+                    bail!("GRAPH_REPAIR_BLOCKED: saved review verdict/model differs from current role");
+                }
+                println!(
+                    "GRAPH_REPAIR_REVIEW_RESUMED role={} model={} run={}",
+                    agent.display_name(), model, saved.run_id
+                );
+                continue;
+            }
             println!(
                 "GRAPH_REPAIR_REVIEW_START role={} model={}",
                 agent.display_name(),
@@ -268,7 +282,10 @@ impl App {
                 "FAIL" => ReviewVerdict::Revise,
                 _ => bail!("GRAPH_REPAIR_BLOCKED: invalid review verdict {verdict}"),
             };
-            let run_id = format!("graph-repair-{}-{}", proposal_hash, agent.key());
+            let run_nonce = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos();
+            let run_id = format!("graph-repair-{}-{}-{}-{}", proposal_hash, agent.key(), std::process::id(), run_nonce);
             let response_hash = format!("{:x}", sha2::Sha256::digest(response.as_bytes()));
             self.registry.record_graph_contract_review(
                 actor,
