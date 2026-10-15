@@ -1404,9 +1404,9 @@ fn legacy_registered_stock_qa_graph_repair_preview_is_read_only() {
         )
         .unwrap();
     let fingerprint = gsa_local::graph_contract::amendment_fingerprint(&preview).unwrap();
-    registry.stage_stock_qa_graph_repair(
-        dir.path(), "owner-a", &fingerprint,
-    ).unwrap();
+    registry
+        .stage_stock_qa_graph_repair(dir.path(), "owner-a", &fingerprint)
+        .unwrap();
     assert_eq!(
         registry.pending_graph_repair_hash().unwrap().as_deref(),
         Some(fingerprint.as_str())
