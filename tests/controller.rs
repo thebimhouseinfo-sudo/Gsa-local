@@ -1513,11 +1513,17 @@ fn legacy_registered_stock_qa_graph_repair_preview_is_read_only() {
     let next = controller.mark_active_jobpack_done().unwrap();
     assert!(next.is_none());
     assert_eq!(
-        registry.jobpack_status(version, "jp-j1-fefo-atomicity").unwrap().as_deref(),
+        registry
+            .jobpack_status(version, "jp-j1-fefo-atomicity")
+            .unwrap()
+            .as_deref(),
         Some("DONE")
     );
     assert_eq!(
-        registry.jobpack_status(version, "jp-j2-idempotency").unwrap().as_deref(),
+        registry
+            .jobpack_status(version, "jp-j2-idempotency")
+            .unwrap()
+            .as_deref(),
         Some("PENDING")
     );
 }
