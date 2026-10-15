@@ -1414,7 +1414,10 @@ fn legacy_registered_stock_qa_graph_repair_preview_is_read_only() {
     // A crash after staging retains the exact proposal, not an implicit approval.
     let after_stage_restart = Registry::open_at(&db_path).unwrap();
     assert_eq!(
-        after_stage_restart.pending_graph_repair_hash().unwrap().as_deref(),
+        after_stage_restart
+            .pending_graph_repair_hash()
+            .unwrap()
+            .as_deref(),
         Some(fingerprint.as_str())
     );
     after_stage_restart
@@ -1435,7 +1438,10 @@ fn legacy_registered_stock_qa_graph_repair_preview_is_read_only() {
     // must not apply the amendment or fabricate a Local CR verdict.
     let after_first_review_restart = Registry::open_at(&db_path).unwrap();
     assert_eq!(
-        after_first_review_restart.pending_graph_repair_hash().unwrap().as_deref(),
+        after_first_review_restart
+            .pending_graph_repair_hash()
+            .unwrap()
+            .as_deref(),
         Some(fingerprint.as_str())
     );
     let review_count: i64 = conn.query_row(
