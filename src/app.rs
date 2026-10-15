@@ -251,39 +251,34 @@ impl App {
                 "{}\n\nReview the immutable graph topology correction ONLY. Do not invoke tools, change code, or infer missing evidence. Return exactly one JSON object with keys verdict (PASS or FAIL) and findings (array of short strings). Reject if the Human requirement or approved plan contradicts the proposed timing.",
                 self.harnesses.compose(agent)?
             );
-            let response = self
-                .ollama
-                .chat_stream(
-                    &model,
-                    &[
-                        ChatMessage::system(system),
-                        ChatMessage::user(packet.clone()),
-                    ],
-                    |_| {},
-                )
-                .await?;
-            let value: serde_json::Value = serde_json::from_str(response.trim())
-                .context("GRAPH_REPAIR_BLOCKED: reviewer failed strict JSON contract")?;
-            let verdict = value
-                .get("verdict")
-                .and_then(|v| v.as_str())
-                .context("GRAPH_REPAIR_BLOCKED: missing review verdict")?;
-            let findings = value
-                .get("findings")
-                .and_then(|v| v.as_array())
-                .context("GRAPH_REPAIR_BLOCKED: missing review findings array")?
-                .iter()
-                .map(|item| {
-                    item.as_str()
-                        .map(str::to_owned)
-                        .context("GRAPH_REPAIR_BLOCKED: review finding is not text")
-                })
-                .collect::<Result<Vec<_>>>()?;
-            let persisted_verdict = match verdict {
-                "PASS" => ReviewVerdict::Pass,
-                "FAIL" => ReviewVerdict::Revise,
-                _ => bail!("GRAPH_REPAIR_BLOCKED: invalid review verdict {verdict}"),
+            let schema = serde_json::json!({
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["verdict", "findings"],
+                "properties": {
+                    "verdict": { "type": "string", "enum": ["PASS", "FAIL"] },
+                    "findings": { "type": "array", "items": { "type": "string" } }
+                }
+            });
+            let mut conversation = vec![ChatMessage::system(system), ChatMessage::user(packet.clone())];
+            let (response, verdict, findings) = loop {
+                let response = self.ollama.chat_stream_json(&model, &conversation, &schema, |_| {}).await?;
+                match parse_graph_repair_review(&response) {
+                    Ok((verdict, findings)) => break (response, verdict, findings),
+                    Err(error) if conversation.len() == 2 => {
+                        // One format-only retry. Never interpret invalid content as PASS.
+                        conversation.push(ChatMessage::assistant(response));
+                        conversation.push(ChatMessage::user(format!(
+                            "Your previous response failed strict schema validation ({error}). Return only the specified JSON object; do not change your independent review judgment."
+                        )));
+                    }
+                    Err(error) => bail!(
+                        "GRAPH_REPAIR_BLOCKED: role={} invalid structured response after one correction: {} (no review persisted)",
+                        agent.display_name(), error
+                    ),
+                }
             };
+            let persisted_verdict = if verdict == "PASS" { ReviewVerdict::Pass } else { ReviewVerdict::Revise };
             let run_nonce = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_nanos();
@@ -1120,6 +1115,21 @@ fn planning_start_tool() -> ToolDefinition {
     )
 }
 
+fn parse_graph_repair_review(response: &str) -> Result<(String, Vec<String>)> {
+    let value: serde_json::Value = serde_json::from_str(response.trim())
+        .context("invalid JSON object")?;
+    let object = value.as_object().context("expected JSON object")?;
+    if object.len() != 2 || !object.contains_key("verdict") || !object.contains_key("findings") {
+        bail!("expected exactly verdict and findings keys");
+    }
+    let verdict = object["verdict"].as_str().context("verdict must be a string")?;
+    if verdict != "PASS" && verdict != "FAIL" { bail!("verdict must be PASS or FAIL"); }
+    let findings = object["findings"].as_array().context("findings must be an array")?
+        .iter().map(|v| v.as_str().map(str::to_owned).context("findings must be strings"))
+        .collect::<Result<Vec<_>>>()?;
+    Ok((verdict.to_owned(), findings))
+}
+
 fn prompt(label: &str) -> Result<String> {
     print!("{label}: ");
     io::stdout().flush()?;
@@ -1210,5 +1220,21 @@ mod planner_routing_tests {
         assert!(!is_explicit_planning_workflow_request(
             "Do not create an implementation plan; just discuss options."
         ));
+    }
+}
+
+#[cfg(test)]
+mod graph_repair_response_contract_tests {
+    use super::parse_graph_repair_review;
+    #[test]
+    fn strict_pass_and_fail() {
+        assert_eq!(parse_graph_repair_review(r#"{"verdict":"PASS","findings":[]}"#).unwrap().0, "PASS");
+        assert_eq!(parse_graph_repair_review(r#"{"verdict":"FAIL","findings":["unsafe timing"]}"#).unwrap().1, vec!["unsafe timing"]);
+    }
+    #[test]
+    fn malformed_never_passes() {
+        for sample in ["", "PASS", "```json\\n{}\\n```", "{}", r#"{"verdict":"YES","findings":[]}"#, r#"{"verdict":"PASS","findings":"ok"}"#, r#"{"verdict":"PASS","findings":[],"extra":1}"#] {
+            assert!(parse_graph_repair_review(sample).is_err(), "unexpected acceptance of {sample:?}");
+        }
     }
 }
