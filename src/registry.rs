@@ -49,6 +49,15 @@ pub struct CodeCrReviewRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphContractReviewRecord {
+    pub verdict: String,
+    pub findings: Vec<String>,
+    pub model_id: String,
+    pub run_id: String,
+    pub response_hash: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CodeCrTesterEvidenceRef {
     pub checkpoint_id: String,
     pub attempt_id: String,
@@ -1958,6 +1967,35 @@ impl Registry {
             [],
             |row| row.get(0),
         ).optional().map_err(Into::into)
+    }
+
+    /// Read back the immutable review for restart continuity. This does not
+    /// create or adopt any verdict; only records from the exact proposal count.
+    pub fn graph_contract_review(
+        &self,
+        graph_version: i64,
+        proposal_hash: &str,
+        actor: ReviewActor,
+    ) -> Result<Option<GraphContractReviewRecord>> {
+        let row: Option<(String, String, String, String, String)> = self.conn.query_row(
+            "SELECT verdict, findings_json, model_id, run_id, response_hash FROM graph_contract_reviews WHERE graph_version=?1 AND proposal_hash=?2 AND role=?3",
+            params![graph_version, proposal_hash, actor.as_str()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+        ).optional()?;
+        row.map(|(verdict, findings_json, model_id, run_id, response_hash)| {
+            if [model_id.as_str(), run_id.as_str(), response_hash.as_str()]
+                .iter().any(|field| field.trim().is_empty())
+            {
+                bail!("GRAPH_REPAIR_BLOCKED: prior review provenance incomplete");
+            }
+            Ok(GraphContractReviewRecord {
+                verdict,
+                findings: serde_json::from_str(&findings_json)?,
+                model_id,
+                run_id,
+                response_hash,
+            })
+        }).transpose()
     }
 
     pub fn record_graph_contract_review(
