@@ -1232,9 +1232,6 @@ impl Registry {
                 hash,
                 verdict.as_str(),
                 serde_json::to_string(findings)?,
-                model_id,
-                run_id,
-                response_hash,
                 unix_seconds()?
             ],
         )?;
