@@ -1339,4 +1339,70 @@ fn legacy_registered_stock_qa_graph_repair_preview_is_read_only() {
         |row| row.get(0),
     ).unwrap();
     assert_eq!(still_legacy, "MILESTONE_GATE");
+
+    // Emulate a genuinely pre-amendment graph v1 (no contract revision table rows).
+    // The original source, review and verification records are created normally.
+    conn.execute(
+        "DELETE FROM graph_contract_versions WHERE graph_version=?1",
+        params![version],
+    ).unwrap();
+    let controller = MilestoneController::new(&registry, dir.path(), "owner-a");
+    let work = controller.resolve_or_activate().unwrap().unwrap();
+    assert_eq!(work.jobpack_id, "jp-j1-fefo-atomicity");
+    let change_set = "j1-test-exact-source";
+    registry.begin_code_workflow(
+        dir.path(), "owner-a", version, "jp-j1-fefo-atomicity",
+    ).unwrap();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::write(dir.path().join("src/controller.rs"), change_set).unwrap();
+    let after_sha256 = Sha256::digest(change_set.as_bytes())
+        .iter().map(|byte| format!("{byte:02x}")).collect::<String>();
+    registry.record_code_checkpoint(
+        dir.path(), "owner-a", version, "jp-j1-fefo-atomicity", change_set,
+        "J1 done", &[ChecklistClaim { todo_id: "T-B".into(), position: 1 }],
+        &["done".into()],
+        &json!([{"path":"src/controller.rs","before_sha256":"before","after_sha256":after_sha256}]),
+        1, 0,
+    ).unwrap();
+    registry.record_code_review(
+        dir.path(), "owner-a", version, "jp-j1-fefo-atomicity",
+        change_set, ReviewVerdict::Pass, &[], 1, 1,
+    ).unwrap();
+    registry.record_verification_evidence(
+        dir.path(), "owner-a", version, "jp-j1-fefo-atomicity",
+        change_set, &phase11_verification(),
+    ).unwrap();
+    let cr_before = registry.resolve_code_cr_boundary().unwrap().unwrap();
+    registry.record_code_cr_review(
+        dir.path(), "owner-a", &cr_before.key, ReviewVerdict::Pass, &[],
+    ).unwrap();
+    let fingerprint = gsa_local::graph_contract::amendment_fingerprint(&preview).unwrap();
+    registry.record_graph_contract_review(
+        ReviewActor::Reviewer, ReviewVerdict::Pass, &fingerprint, &[],
+    ).unwrap();
+    registry.record_graph_contract_review(
+        ReviewActor::LocalCr, ReviewVerdict::Pass, &fingerprint, &[],
+    ).unwrap();
+    let approved = format!("APPROVE GRAPH REPAIR {fingerprint}");
+    let applied = registry.apply_stock_qa_graph_repair(
+        dir.path(), "owner-a", &fingerprint, change_set, &approved,
+    ).unwrap();
+    assert_eq!(applied.after_hash, preview.after_hash);
+    assert_eq!(registry.code_workflow_state().unwrap().unwrap().change_set_id.as_deref(),
+        Some(change_set));
+    assert_eq!(registry.jobpack_status(version, "jp-j1-fefo-atomicity").unwrap().as_deref(),
+        Some("ACTIVE"));
+    assert_eq!(registry.jobpack_status(version, "jp-j2-idempotency").unwrap().as_deref(),
+        Some("PENDING"));
+    let after = registry.resolve_code_cr_boundary().unwrap().unwrap();
+    assert_eq!(cr_before.key, after.key);
+    let applied_again = registry.apply_stock_qa_graph_repair(
+        dir.path(), "owner-a", &fingerprint, change_set, &approved,
+    ).unwrap();
+    assert_eq!(applied, applied_again);
+    let rows: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM graph_contract_versions WHERE graph_version=?1 AND contract_revision=1",
+        params![version], |row| row.get(0),
+    ).unwrap();
+    assert_eq!(rows, 1);
 }
