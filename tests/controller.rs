@@ -1423,7 +1423,15 @@ fn legacy_registered_stock_qa_graph_repair_preview_is_read_only() {
         )
         .unwrap();
     registry
-        .record_graph_contract_review(ReviewActor::LocalCr, ReviewVerdict::Pass, &fingerprint, &[], "model-cr", "review-run-2", "response-hash-2")
+        .record_graph_contract_review(
+            ReviewActor::LocalCr,
+            ReviewVerdict::Pass,
+            &fingerprint,
+            &[],
+            "model-cr",
+            "review-run-2",
+            "response-hash-2",
+        )
         .unwrap();
     let approved = format!("APPROVE GRAPH REPAIR {fingerprint}");
     let applied = registry
