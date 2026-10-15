@@ -1982,20 +1982,24 @@ impl Registry {
             params![graph_version, proposal_hash, actor.as_str()],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
         ).optional()?;
-        row.map(|(verdict, findings_json, model_id, run_id, response_hash)| {
-            if [model_id.as_str(), run_id.as_str(), response_hash.as_str()]
-                .iter().any(|field| field.trim().is_empty())
-            {
-                bail!("GRAPH_REPAIR_BLOCKED: prior review provenance incomplete");
-            }
-            Ok(GraphContractReviewRecord {
-                verdict,
-                findings: serde_json::from_str(&findings_json)?,
-                model_id,
-                run_id,
-                response_hash,
-            })
-        }).transpose()
+        row.map(
+            |(verdict, findings_json, model_id, run_id, response_hash)| {
+                if [model_id.as_str(), run_id.as_str(), response_hash.as_str()]
+                    .iter()
+                    .any(|field| field.trim().is_empty())
+                {
+                    bail!("GRAPH_REPAIR_BLOCKED: prior review provenance incomplete");
+                }
+                Ok(GraphContractReviewRecord {
+                    verdict,
+                    findings: serde_json::from_str(&findings_json)?,
+                    model_id,
+                    run_id,
+                    response_hash,
+                })
+            },
+        )
+        .transpose()
     }
 
     pub fn record_graph_contract_review(
