@@ -491,6 +491,9 @@ impl Registry {
                 role TEXT NOT NULL CHECK (role IN ('REVIEWER', 'LOCAL_CR')),
                 verdict TEXT NOT NULL CHECK (verdict IN ('PASS', 'FAIL')),
                 findings_json TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                run_id TEXT NOT NULL,
+                response_hash TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
                 PRIMARY KEY (graph_version, proposal_hash, role)
             );
@@ -1228,7 +1231,7 @@ impl Registry {
                 revision,
                 hash,
                 verdict.as_str(),
-                serde_json::to_string(findings)?,
+                serde_json::to_string(findings)?, model_id, run_id, response_hash,
                 unix_seconds()?
             ],
         )?;
@@ -1963,7 +1966,13 @@ impl Registry {
         verdict: ReviewVerdict,
         expected_proposal_hash: &str,
         findings: &[String],
+        model_id: &str,
+        run_id: &str,
+        response_hash: &str,
     ) -> Result<()> {
+        if [model_id, run_id, response_hash].iter().any(|value| value.trim().is_empty()) {
+            bail!("GRAPH_REPAIR_BLOCKED: review execution provenance required");
+        }
         let proposal = self.preview_stock_qa_graph_repair()?;
         let actual = amendment_fingerprint(&proposal)?;
         if actual != expected_proposal_hash {
@@ -1975,8 +1984,14 @@ impl Registry {
             "FAIL"
         };
         let tx = self.conn.unchecked_transaction()?;
+        let duplicate: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM graph_contract_reviews WHERE graph_version=?1 AND proposal_hash=?2 AND role!=?3 AND (model_id=?4 OR run_id=?5)",
+            params![proposal.graph_version, actual, actor.as_str(), model_id, run_id],
+            |row| row.get(0),
+        )?;
+        if duplicate != 0 { bail!("GRAPH_REPAIR_BLOCKED: independent review provenance collision"); }
         tx.execute(
-            "INSERT OR IGNORE INTO graph_contract_reviews (graph_version, proposal_hash, role, verdict, findings_json, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT OR IGNORE INTO graph_contract_reviews (graph_version, proposal_hash, role, verdict, findings_json, model_id, run_id, response_hash, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 proposal.graph_version,
                 actual,
@@ -2065,6 +2080,14 @@ impl Registry {
         if reviews != 2 {
             bail!("GRAPH_REPAIR_BLOCKED: two independent role review PASS records required");
         }
+        let provenance: (i64, i64) = tx.query_row(
+            "SELECT COUNT(DISTINCT model_id), COUNT(DISTINCT run_id) FROM graph_contract_reviews WHERE graph_version=?1 AND proposal_hash=?2 AND verdict='PASS'",
+            params![version, expected_proposal_hash],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        if provenance != (2, 2) {
+            bail!("GRAPH_REPAIR_BLOCKED: independent review model/run provenance missing");
+        }
         let j1: Option<(String, Option<String>)> = tx.query_row(
             "SELECT status, change_set_id FROM code_workflow_state WHERE graph_version=?1 AND jobpack_id='jp-j1-fefo-atomicity'",
             params![version],
@@ -2111,7 +2134,14 @@ impl Registry {
                 bail!("GRAPH_REPAIR_BLOCKED: checkpoint already has Tester execution/evidence");
             }
         }
-        let old_cr = code_cr_boundary_work_tx(&tx, version)?;
+        let old_cr = code_cr_boundary_work_tx(&tx, version)?
+            .context("GRAPH_REPAIR_BLOCKED: J1 terminal CR boundary missing")?;
+        if !old_cr.terminal || old_cr.key.jobpack_id != "jp-j1-fefo-atomicity"
+            || old_cr.key.change_set_id != expected_change_set
+            || !matches!(old_cr.existing_review.as_ref(), Some(review) if review.verdict == "PASS" && review.key == old_cr.key)
+        {
+            bail!("GRAPH_REPAIR_BLOCKED: exact J1 terminal Local CR PASS required");
+        }
         let baseline: Option<(String, String)> = tx.query_row(
             "SELECT effective_hash, snapshot_json FROM graph_contract_versions WHERE graph_version=?1 AND contract_revision=0",
             params![version],
@@ -2148,7 +2178,8 @@ impl Registry {
             bail!("GRAPH_REPAIR_BLOCKED: effective graph projection mismatch");
         }
         effective.validate_against_plan(&plan)?;
-        let new_cr = code_cr_boundary_work_tx(&tx, version)?;
+        let new_cr = code_cr_boundary_work_tx(&tx, version)?
+            .context("GRAPH_REPAIR_BLOCKED: amended J1 terminal CR boundary missing")?;
         if old_cr != new_cr {
             bail!("GRAPH_REPAIR_BLOCKED: terminal CR authority fingerprint changed; targeted independent re-review required");
         }
