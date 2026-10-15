@@ -87,6 +87,10 @@ impl App {
             "Resume: {:?} -> {:?} ({})",
             startup_resume.classification, startup_resume.action, startup_resume.reason
         );
+        if let Some(proposal_hash) = self.registry.pending_graph_repair_hash()? {
+            println!("GRAPH_REPAIR_REQUIRED proposal_hash={proposal_hash}");
+            println!("Enter GRAPH REPAIR to continue the exact reviewed proposal; no automatic mutation.");
+        }
         if let Some(planning) = self.registry.planning_run_state()? {
             if matches!(
                 planning.stage.as_str(),
@@ -195,6 +199,11 @@ impl App {
             proposal.before_hash, proposal.after_hash
         );
 
+        self.registry.stage_stock_qa_graph_repair(
+            &self.project_root,
+            &self.lease_owner,
+            &proposal_hash,
+        )?;
         let packet = serde_json::json!({
             "proposal": proposal,
             "proposal_hash": proposal_hash,
