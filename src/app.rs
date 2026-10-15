@@ -236,7 +236,9 @@ impl App {
                 }
                 println!(
                     "GRAPH_REPAIR_REVIEW_RESUMED role={} model={} run={}",
-                    agent.display_name(), model, saved.run_id
+                    agent.display_name(),
+                    model,
+                    saved.run_id
                 );
                 continue;
             }
@@ -285,7 +287,13 @@ impl App {
             let run_nonce = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)?
                 .as_nanos();
-            let run_id = format!("graph-repair-{}-{}-{}-{}", proposal_hash, agent.key(), std::process::id(), run_nonce);
+            let run_id = format!(
+                "graph-repair-{}-{}-{}-{}",
+                proposal_hash,
+                agent.key(),
+                std::process::id(),
+                run_nonce
+            );
             let response_hash = format!("{:x}", sha2::Sha256::digest(response.as_bytes()));
             self.registry.record_graph_contract_review(
                 actor,
