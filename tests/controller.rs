@@ -1454,19 +1454,28 @@ fn legacy_registered_stock_qa_graph_repair_preview_is_read_only() {
         params![version], |row| row.get(0),
     ).unwrap();
     assert_eq!(rows, 1);
-    let event_count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM events WHERE kind='GRAPH_CONTRACT_AMENDED'",
-        [],
-        |row| row.get(0),
-    ).unwrap();
+    let event_count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM events WHERE kind='GRAPH_CONTRACT_AMENDED'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
     assert_eq!(event_count, 1);
     // Lease fencing survives even an exact already-applied replay.
     let wrong_owner = registry.apply_stock_qa_graph_repair(
-        dir.path(), "other-owner", &fingerprint, change_set, &approved,
+        dir.path(),
+        "other-owner",
+        &fingerprint,
+        change_set,
+        &approved,
     );
     assert!(wrong_owner.is_err());
     let wrong_proposal = registry.apply_stock_qa_graph_repair(
-        dir.path(), "owner-a", "outdated-proposal", change_set,
+        dir.path(),
+        "owner-a",
+        "outdated-proposal",
+        change_set,
         "APPROVE GRAPH REPAIR outdated-proposal",
     );
     assert!(wrong_proposal.is_err());
