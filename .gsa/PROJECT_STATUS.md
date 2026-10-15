@@ -123,3 +123,14 @@ Updated: 2026-10-13 (Asia/Ho_Chi_Minh)
 - A live GSA process in the same QA directory can hold the exclusive lease. Check exact process/cwd before graceful termination, never force-delete lease/DB.
 - Avoid generating many unmerged branches. Commit accepted work to main, keep exact CI provenance and report blockers honestly.
 - Human acceptance was for UAR-3 stage/handoff, **not** full product delivery; no fresh Tester evidence for UAR-4 exists yet.
+
+## Stock-QA Side Plan implementation checkpoint — 2026-10-15
+
+- Human approved implementation of `SIDE_PLAN_EXECUTION_GRAPH_EVIDENCE_ORDER_RECOVERY.md`.
+- Canonical `main@bae91592d626be91e200cb81d72c8926857e098c` GitHub Actions [38672948912](https://github.com/thebimhouseinfo-sudo/Gsa-local/actions/runs/38672948912) **SUCCESS**.
+- S1 source: temporal checkpoint event-cycle validator, deterministic evidence-ready JobPack scheduling, negative/positive cycle tests.
+- S2 source: canonical graph hash, graph contract revision ledger, read-only preview, `GRAPH_REPAIR_REQUIRED` durable cursor, role-specific review evidence, exact Human approval and execution-lease-owned compare-and-swap amendment; original graph version and source/verification/CR rows remain bound. Synthetic legacy apply/replay, wrong lease, stale proposal and restart regressions added.
+- S3 source: regression confirms J1 can terminalize DONE after an amendment while J2 remains PENDING without required Tester output; no fabricated OBSERVED.
+- **NOT CLAIMED:** independent post-implementation code CR, real Mac Human acceptance, real Tester `OBSERVED` output, J2 completion, external Stock-QA oracle. S4 remains HUMAN_TEST_REQUIRED after code review. See `S4_STOCK_QA_HUMAN_GATE.md`.
+- **Safety:** Real `~/Projects/GSA-Stock-QA/.gsa/state/gsa.db` and project code were not mutated through these GitHub code changes; no manual SQLite repair, no J1 Coder replay, no graph re-registration.
+- Continue from latest `main` and exact CI; do not regard historical status entries above as more recent authority.
