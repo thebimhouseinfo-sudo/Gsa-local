@@ -7274,7 +7274,7 @@ fn reconstruct_effective_graph_tx(tx: &Transaction<'_>, version: i64) -> Result<
             .collect::<std::result::Result<Vec<_>, _>>()?;
         rows
     };
-    let mut requirements = Vec::new();
+    let mut checked_requirements: Vec<EvidenceRequirementSpec> = Vec::new();
     for (consumer, checkpoint, output, required, json) in requirements {
         let item: EvidenceRequirementSpec = serde_json::from_str(&json)?;
         if item.consumer_jobpack_id != consumer
@@ -7284,14 +7284,14 @@ fn reconstruct_effective_graph_tx(tx: &Transaction<'_>, version: i64) -> Result<
         {
             bail!("GRAPH_REPAIR_BLOCKED: evidence requirement projection drift");
         }
-        requirements.push(item);
+        checked_requirements.push(item);
     }
     Ok(ExecutionGraph {
         milestones,
         jobpacks: packs,
         todos: tasks,
         checkpoints: checks,
-        evidence_requirements: requirements,
+        evidence_requirements: checked_requirements,
     })
 }
 
