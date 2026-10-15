@@ -1404,6 +1404,13 @@ fn legacy_registered_stock_qa_graph_repair_preview_is_read_only() {
         )
         .unwrap();
     let fingerprint = gsa_local::graph_contract::amendment_fingerprint(&preview).unwrap();
+    registry.stage_stock_qa_graph_repair(
+        dir.path(), "owner-a", &fingerprint,
+    ).unwrap();
+    assert_eq!(
+        registry.pending_graph_repair_hash().unwrap().as_deref(),
+        Some(fingerprint.as_str())
+    );
     registry
         .record_graph_contract_review(
             ReviewActor::Reviewer,
@@ -1449,6 +1456,7 @@ fn legacy_registered_stock_qa_graph_repair_preview_is_read_only() {
         .apply_stock_qa_graph_repair(dir.path(), "owner-a", &fingerprint, change_set, &approved)
         .unwrap();
     assert_eq!(applied, applied_again);
+    assert!(registry.pending_graph_repair_hash().unwrap().is_none());
     let rows: i64 = conn.query_row(
         "SELECT COUNT(*) FROM graph_contract_versions WHERE graph_version=?1 AND contract_revision=1",
         params![version], |row| row.get(0),
