@@ -2003,6 +2003,9 @@ impl Registry {
                 actor.as_str(),
                 verdict_text,
                 serde_json::to_string(findings)?,
+                model_id,
+                run_id,
+                response_hash,
                 unix_seconds()?
             ],
         )?;
