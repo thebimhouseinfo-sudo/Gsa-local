@@ -1481,9 +1481,17 @@ fn legacy_registered_stock_qa_graph_repair_preview_is_read_only() {
     assert!(wrong_proposal.is_err());
     // Reopening SQLite must not replay the mutation or lose the old J1 gate.
     let resumed = Registry::open_at(&db_path).unwrap();
-    assert_eq!(resumed.current_execution_graph_version().unwrap(), Some(version));
     assert_eq!(
-        resumed.code_workflow_state().unwrap().unwrap().change_set_id.as_deref(),
+        resumed.current_execution_graph_version().unwrap(),
+        Some(version)
+    );
+    assert_eq!(
+        resumed
+            .code_workflow_state()
+            .unwrap()
+            .unwrap()
+            .change_set_id
+            .as_deref(),
         Some(change_set)
     );
     let saved_boundary: String = conn.query_row(
@@ -1492,10 +1500,12 @@ fn legacy_registered_stock_qa_graph_repair_preview_is_read_only() {
         |row| row.get(0),
     ).unwrap();
     assert_eq!(saved_boundary, "AFTER_JOBPACK_SET");
-    let replay_events: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM events WHERE kind='GRAPH_CONTRACT_AMENDED'",
-        [],
-        |row| row.get(0),
-    ).unwrap();
+    let replay_events: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM events WHERE kind='GRAPH_CONTRACT_AMENDED'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
     assert_eq!(replay_events, 1);
 }
