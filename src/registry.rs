@@ -7259,17 +7259,33 @@ fn reconstruct_effective_graph_tx(tx: &Transaction<'_>, version: i64) -> Result<
     }
     let requirements = {
         let mut statement = tx.prepare(
-            "SELECT definition_json FROM execution_evidence_requirements WHERE graph_version=?1 ORDER BY consumer_jobpack_id, checkpoint_id, output_id",
+            "SELECT consumer_jobpack_id, checkpoint_id, output_id, required, definition_json FROM execution_evidence_requirements WHERE graph_version=?1 ORDER BY consumer_jobpack_id, checkpoint_id, output_id",
         )?;
         let rows = statement
-            .query_map(params![version], |row| row.get::<_, String>(0))?
+            .query_map(params![version], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         rows
     };
-    let requirements = requirements
-        .into_iter()
-        .map(|json| serde_json::from_str::<EvidenceRequirementSpec>(&json))
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut requirements = Vec::new();
+    for (consumer, checkpoint, output, required, json) in requirements {
+        let item: EvidenceRequirementSpec = serde_json::from_str(&json)?;
+        if item.consumer_jobpack_id != consumer
+            || item.checkpoint_id != checkpoint
+            || item.output_id != output
+            || item.required != (required != 0)
+        {
+            bail!("GRAPH_REPAIR_BLOCKED: evidence requirement projection drift");
+        }
+        requirements.push(item);
+    }
     Ok(ExecutionGraph {
         milestones,
         jobpacks: packs,
