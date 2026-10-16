@@ -139,6 +139,13 @@ fn setup() -> (tempfile::TempDir, Registry, i64, i64) {
 }
 
 fn setup_with_graph(execution_graph: ExecutionGraph) -> (tempfile::TempDir, Registry, i64, i64) {
+    setup_with_graph_and_source(execution_graph, None)
+}
+
+fn setup_with_graph_and_source(
+    execution_graph: ExecutionGraph,
+    fixture_source: Option<&str>,
+) -> (tempfile::TempDir, Registry, i64, i64) {
     let dir = tempdir().unwrap();
     let registry = Registry::open(dir.path()).unwrap();
     registry.begin_plan_workflow().unwrap();
@@ -178,6 +185,30 @@ fn setup_with_graph(execution_graph: ExecutionGraph) -> (tempfile::TempDir, Regi
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
+    let mut journal = vec![json!({
+        "path":"src/session.rs", "before_sha256":"before", "after_sha256":session_sha,
+    })];
+    if let Some(source) = fixture_source {
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname=\"tester-done-target-fixture\"\nversion=\"0.1.0\"\nedition=\"2021\"\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("src/lib.rs"), source).unwrap();
+        assert!(std::process::Command::new("cargo")
+            .args(["generate-lockfile", "--offline"])
+            .current_dir(dir.path())
+            .status()
+            .unwrap()
+            .success());
+        for path in ["Cargo.toml", "Cargo.lock", "src/lib.rs"] {
+            let digest = format!(
+                "{:x}",
+                Sha256::digest(std::fs::read(dir.path().join(path)).unwrap())
+            );
+            journal.push(json!({"path":path,"before_sha256":null,"after_sha256":digest}));
+        }
+    }
     registry
         .record_code_checkpoint(
             dir.path(),
@@ -191,11 +222,7 @@ fn setup_with_graph(execution_graph: ExecutionGraph) -> (tempfile::TempDir, Regi
                 position: 1,
             }],
             &["target ready".into()],
-            &json!([{
-                "path":"src/session.rs",
-                "before_sha256":"before",
-                "after_sha256":session_sha
-            }]),
+            &json!(journal),
             1,
             0,
         )
@@ -281,6 +308,154 @@ fn workspace_artifact(
         )
         .unwrap();
     serde_json::from_value(result["artifact"].clone()).unwrap()
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn project_verification_observes_done_target_without_rewriting_code_verification() {
+    check_project_verification_observation(PrerequisiteState::Done, false);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn project_verification_active_target_keeps_original_code_verification() {
+    check_project_verification_observation(PrerequisiteState::ReviewPass, false);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn project_verification_done_target_preserves_real_product_failure() {
+    check_project_verification_observation(PrerequisiteState::Done, true);
+}
+
+#[cfg(target_os = "macos")]
+fn check_project_verification_observation(state: PrerequisiteState, failing_product: bool) {
+    let mut spec = graph();
+    spec.checkpoints[0].prerequisites[0].state = state;
+    // Establish all executable source/config and its journal before code review.
+    let source = if failing_product {
+        "#[test]\nfn actual_product_behavior() { panic!(\"negative-product-control\"); }\n"
+    } else {
+        "#[test]\nfn actual_product_behavior() { assert_eq!(2 + 2, 4); }\n"
+    };
+    let (dir, registry, version, original_run_id) = setup_with_graph_and_source(spec, Some(source));
+    if state == PrerequisiteState::Done {
+        let cr = registry.resolve_code_cr_boundary().unwrap().unwrap();
+        registry
+            .record_code_cr_review(dir.path(), "owner-a", &cr.key, ReviewVerdict::Pass, &[])
+            .unwrap();
+        assert!(MilestoneController::new(&registry, dir.path(), "owner-a")
+            .mark_active_jobpack_done()
+            .unwrap()
+            .is_none());
+    }
+    let due = registry
+        .resolve_tester_checkpoint(&["RUNTIME_PROBE".into()])
+        .unwrap()
+        .unwrap();
+    let target = due.target.unwrap();
+    let before = target.fingerprint(version, "CP1").unwrap();
+    let attempt_id = due.next_attempt_id.unwrap();
+    let project_root = dir.path().canonicalize().unwrap();
+    let mut execution = TesterExecutionRuntime::new(
+        &registry,
+        &project_root,
+        "owner-a",
+        version,
+        "CP1",
+        &attempt_id,
+        target,
+    )
+    .unwrap();
+    let request = json!({"adapter":"PROJECT_VERIFICATION", "jobpack_id":"JP1", "change_set_id":"change-1", "step_id":"observe-done-target", "replay_safety":"OBSERVE_ONLY"});
+    let observed = execution.execute(&request).unwrap();
+    if std::env::var("GSA_VERIFICATION_SANDBOX").as_deref() == Ok("1") {
+        // When the repository itself is verified inside GSA, macOS refuses
+        // a second sandbox-exec. Exercise that fail-closed path, not a bypass.
+        assert_eq!(observed["status"], "FAILED");
+        assert!(observed["stderr"]
+            .as_str()
+            .unwrap()
+            .contains("sandbox_apply"));
+    } else {
+        assert_eq!(
+            observed["status"],
+            if failing_product {
+                "FAILED"
+            } else {
+                "COMPLETED"
+            },
+            "{observed}"
+        );
+        assert!(observed["stdout"]
+            .as_str()
+            .unwrap()
+            .contains("actual_product_behavior"));
+        if failing_product {
+            assert!(observed["stdout"]
+                .as_str()
+                .unwrap()
+                .contains("negative-product-control"));
+        }
+    }
+    assert!(!observed["evidence_refs"].as_array().unwrap().is_empty());
+    assert_eq!(
+        registry
+            .latest_verification_run_id(version, "JP1", "change-1")
+            .unwrap(),
+        Some(original_run_id)
+    );
+    assert_eq!(
+        registry
+            .resolve_tester_checkpoint(&["RUNTIME_PROBE".into()])
+            .unwrap()
+            .unwrap()
+            .target
+            .unwrap()
+            .fingerprint(version, "CP1")
+            .unwrap(),
+        before
+    );
+    assert_eq!(execution.execute(&request).unwrap(), observed);
+    let mut stale = request;
+    stale["step_id"] = json!("wrong-change-set");
+    stale["change_set_id"] = json!("foreign-change");
+    assert_eq!(execution.execute(&stale).unwrap()["status"], "BLOCKED");
+    assert_eq!(
+        registry.current_active_work().unwrap().is_none(),
+        state == PrerequisiteState::Done
+    );
+    std::fs::write(dir.path().join("src/session.rs"), "unreviewed source drift").unwrap();
+    let drifted = json!({"adapter":"PROJECT_VERIFICATION", "jobpack_id":"JP1", "change_set_id":"change-1", "step_id":"drifted-source", "replay_safety":"OBSERVE_ONLY"});
+    let drifted_observation = execution.execute(&drifted).unwrap();
+    assert_eq!(drifted_observation["status"], "BLOCKED");
+    assert!(drifted_observation["blocked_reason"]
+        .as_str()
+        .unwrap()
+        .contains("source target is not current"));
+    assert_eq!(drifted_observation["stdout"], "");
+    std::fs::write(dir.path().join("src/session.rs"), "after").unwrap();
+    // Repairing the environment cannot silently replace a saved blocked step.
+    assert_eq!(execution.execute(&drifted).unwrap(), drifted_observation);
+    if state == PrerequisiteState::Done && !failing_product {
+        let mut explicit_retry = drifted;
+        explicit_retry["step_id"] = json!("explicit-observation-after-environment-repair");
+        let retried = execution.execute(&explicit_retry).unwrap();
+        assert_eq!(
+            retried["status"],
+            if std::env::var("GSA_VERIFICATION_SANDBOX").as_deref() == Ok("1") {
+                "FAILED"
+            } else {
+                "COMPLETED"
+            }
+        );
+        assert_eq!(
+            registry
+                .latest_verification_run_id(version, "JP1", "change-1")
+                .unwrap(),
+            Some(original_run_id)
+        );
+    }
 }
 
 fn attempt(

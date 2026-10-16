@@ -12,7 +12,7 @@ use crate::{
     tester_evidence::{
         AdapterObservationField, ExperimentContext, ReplaySafety, TesterAttemptEvidence,
         TesterClassification, TesterEvidenceOutputRecord, TesterEvidenceRef, TesterModeResult,
-        TesterTargetBinding, VerificationObservationField,
+        TesterTargetBinding,
     },
     tester_workspace::TesterWorkspaceRuntime,
     tools::ProjectToolRuntime,
@@ -604,88 +604,72 @@ impl<'a> TesterExecutionRuntime<'a> {
             bail!("PROJECT_VERIFICATION target is not part of the Tester target binding");
         }
 
-        let result =
+        self.registry.assert_tester_source_current(
+            self.project_root,
+            self.lease_owner,
+            self.graph_version,
+            jobpack_id,
+            change_set_id,
+        )?;
+
+        // This is a Tester-owned observation, not a new Coder verification verdict.
+        // The checkpoint target is validated/fenced by prepare_tester_execution_step,
+        // including DONE prerequisites; existing code review/CR lineage stays immutable.
+        let evidence =
             VerificationController::new(self.registry, self.project_root, self.lease_owner)
-                .verify(self.graph_version, jobpack_id, change_set_id, &[])?;
-        let run_id = self
-            .registry
-            .latest_verification_run_id(self.graph_version, jobpack_id, change_set_id)?
-            .context("project verification did not persist a verification run")?;
-        let evidence = self
-            .registry
-            .verification_run_evidence(run_id)?
-            .context("project verification run evidence is missing")?;
-
-        let mut evidence_refs = Vec::new();
-        for command in &evidence.commands {
-            if !command.stdout.is_empty() {
-                evidence_refs.push(TesterEvidenceRef::VerificationObservation {
-                    run_id,
-                    command_id: command.command_id.clone(),
-                    field: VerificationObservationField::Stdout,
-                    observed: crate::tester_evidence::ObservedValue::Text(command.stdout.clone()),
-                });
-            }
-            if !command.stderr.is_empty() {
-                evidence_refs.push(TesterEvidenceRef::VerificationObservation {
-                    run_id,
-                    command_id: command.command_id.clone(),
-                    field: VerificationObservationField::Stderr,
-                    observed: crate::tester_evidence::ObservedValue::Text(command.stderr.clone()),
-                });
-            }
-            if let Some(code) = command.exit_code {
-                evidence_refs.push(TesterEvidenceRef::VerificationObservation {
-                    run_id,
-                    command_id: command.command_id.clone(),
-                    field: VerificationObservationField::ExitCode,
-                    observed: crate::tester_evidence::ObservedValue::Integer(i64::from(code)),
-                });
-            }
-        }
-
-        let (status, blocked_reason) = match result {
-            VerificationResult::TestPass => (TesterExecutionStatus::Completed, None),
-            VerificationResult::Fail => (TesterExecutionStatus::Failed, None),
-            VerificationResult::Blocked => (
-                TesterExecutionStatus::Blocked,
-                Some("deterministic project verification is blocked".into()),
+                .observe(&[])?;
+        self.registry.assert_tester_source_current(
+            self.project_root,
+            self.lease_owner,
+            self.graph_version,
+            jobpack_id,
+            change_set_id,
+        )?;
+        let result = evidence.derived_result();
+        let blocked_reason = match result {
+            VerificationResult::Blocked | VerificationResult::NotApplicable => Some(
+                evidence
+                    .commands
+                    .iter()
+                    .find_map(|c| c.blocked_reason.clone())
+                    .or(evidence.profile.reason.clone())
+                    .unwrap_or_else(|| {
+                        "deterministic project verification is blocked or not applicable".into()
+                    }),
             ),
-            VerificationResult::NotApplicable => (
-                TesterExecutionStatus::Blocked,
-                Some("deterministic project verification is not applicable".into()),
-            ),
+            _ => None,
         };
-
-        Ok(TesterExecutionObservation {
-            execution_id: request.fence_key(
-                self.graph_version,
-                &self.checkpoint_id,
-                &self.attempt_id,
-                &self
-                    .target
-                    .fingerprint(self.graph_version, &self.checkpoint_id)?,
-            )?,
-            step_id: request.step_id.clone(),
-            adapter_id: request.adapter.adapter_id().into(),
-            replay_safety: request.replay_safety,
-            fence_key: request.fence_key(
-                self.graph_version,
-                &self.checkpoint_id,
-                &self.attempt_id,
-                &self
-                    .target
-                    .fingerprint(self.graph_version, &self.checkpoint_id)?,
-            )?,
-            status,
-            exit_code: None,
+        let exit_code = evidence
+            .commands
+            .iter()
+            .find(|command| command.exit_code != Some(0))
+            .or_else(|| evidence.commands.last())
+            .and_then(|command| command.exit_code);
+        let process = ProcessObservation {
+            exit_code,
             duration_ms: evidence.commands.iter().map(|item| item.duration_ms).sum(),
             timed_out: evidence.commands.iter().any(|item| item.timed_out),
             blocked_reason,
-            stdout: String::new(),
-            stderr: String::new(),
-            evidence_refs,
-        })
+            stdout: serde_json::to_string(&evidence)?,
+            stderr: evidence
+                .commands
+                .iter()
+                .map(|item| item.stderr.as_str())
+                .collect::<Vec<_>>()
+                .join("\n"),
+        };
+        Ok(TesterExecutionObservation::from_process(
+            request.fence_key(
+                self.graph_version,
+                &self.checkpoint_id,
+                &self.attempt_id,
+                &self
+                    .target
+                    .fingerprint(self.graph_version, &self.checkpoint_id)?,
+            )?,
+            request,
+            process,
+        ))
     }
 }
 
@@ -967,7 +951,7 @@ fn invalid_report_feedback(error: &anyhow::Error) -> ChatMessage {
 fn tester_execute_tool() -> ToolDefinition {
     ToolDefinition::function(
         "tester_execute",
-        "Execute one bounded Tester step through a fixed adapter. Shell commands and arbitrary executables are not accepted.",
+        "Execute one bounded Tester step through a fixed adapter. PROJECT_VERIFICATION runs real checks on an exact declared prerequisite, including DONE targets, and stores Tester-owned observations without changing Coder verification/CR authority. Completed step IDs return their saved observation; after resolving an environmental block, an explicit new observation needs a new logical step ID. Shell commands and arbitrary executables are not accepted.",
         json!({
             "type":"object",
             "required":["step_id","replay_safety","adapter"],

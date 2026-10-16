@@ -2684,6 +2684,36 @@ impl Registry {
             .map_err(Into::into)
     }
 
+    /// Check the source paths captured by the persisted change-set journal.
+    /// Legacy checkpoints do not contain a historical whole-project inventory.
+    pub(crate) fn assert_tester_source_current(
+        &self,
+        project_root: &Path,
+        owner: &str,
+        graph_version: i64,
+        jobpack_id: &str,
+        change_set_id: &str,
+    ) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        assert_lease_owner_tx(&tx, project_root, owner)?;
+        let binding = current_graph_binding_tx(&tx)?.context("Tester requires CURRENT graph")?;
+        if binding.0 != graph_version {
+            bail!("Tester source graph binding is stale");
+        }
+        let (classification, reason) = reconcile_code_change_set_source_tx(
+            &tx,
+            project_root,
+            graph_version,
+            jobpack_id,
+            change_set_id,
+        )?;
+        if classification != RecoveryClassification::DurableExact {
+            bail!("Tester source target is not current: {reason}");
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn persisted_code_checkpoint(
         &self,
         graph_version: i64,

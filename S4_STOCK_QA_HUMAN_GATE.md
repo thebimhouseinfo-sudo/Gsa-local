@@ -1,6 +1,6 @@
 # Stock-QA S4 — Human Mac Acceptance Gate
 
-> **Status (2026-10-16):** IN PROGRESS. Read-only real DB inspection found both independent graph-review PASS records for the retained proposal; Human approval and amendment are still pending. Execute only after exact-main CI SUCCESS and independent code review. This document is not an approval to mutate Stock-QA data.
+> **Status (2026-10-16):** IN PROGRESS. Human approved the exact retained proposal; supported CLI amendment and J1 DONE succeeded. Tester then recorded a real PROJECT_VERIFICATION adapter block on DONE targets. The adapter repair requires exact-source CI and live continuation; J2 remains PENDING. Do not repeat graph repair or J1 coding.
 >
 > **Goal:** repair only the unreachable `chk-j1-verify` boundary on the retained real Stock-QA graph, keep J1 source/review/verification/Local CR unchanged, and prove `J1 DONE -> Tester OBSERVED -> J2 ACTIVE`.
 
@@ -49,3 +49,12 @@ The actual retained SQLite DB is newer than the preceding transcript: integrity 
 The cursor is still `GRAPH_REPAIR_REQUIRED`, `graph_contract_versions` has no rows, and `chk-j1-verify` remains `MILESTONE_GATE`. J1 is ACTIVE/REVIEW_PASS on the original change set; J2 is PENDING. No amendment or S4 completion is established. The lease names PID 42190; process inspection found no such running PID. Never delete its row manually.
 
 Local source hardening additionally rejects duplicate review keys and any format correction that changes or cannot preserve the original identifiable verdict. Unknown/ambiguous original judgments fail closed after the bounded correction. Local macOS CI: 259 tests passed, one real-model probe explicitly ignored, 260 discovered. This is not exact-main GitHub CI or Human S4 acceptance. Review the source checkpoint and exact proposal before entering approval through GSA's supported CLI.
+
+## Approved amendment and subsequent adapter block — 2026-10-16
+
+- Human supplied the exact proposal-bound approval in this chat. At source `61acc79` (exact CI `38837023761` SUCCESS), the supported real Mac CLI reused the two stored independent review records, applied the unchanged proposal, emitted J1 `CODE_CR_PASS` / `JOBPACK_DONE`, then `TEST_CHECKPOINT_DUE attempt=attempt-0001`.
+- SQLite readback: graph 1 unchanged; contract revisions 0/1 retained; exactly one `GRAPH_CONTRACT_AMENDED` event (sequence 11), followed by J1 DONE (12) and Tester DUE (13). J1 source hashes and code checkpoint/review/verification/CR tables match the consistent pre-apply backup.
+- Real Tester step `chk-j1-verify-step-01-cargo-check` called PROJECT_VERIFICATION with the exact J1 change set and persisted BLOCKED: `current execution graph has no ACTIVE Job Pack`. There is no Tester report/PASS/OBSERVED. The adapter incorrectly used the Coder verification-persistence API. J2 is still PENDING; this is not a J1 product defect.
+- Source repair separates deterministic command observation from Coder verification persistence. Tester records real command outputs in its own immutable fenced execution observation. Before/after source checks use the existing persisted change-set journal; they do not pretend legacy records contain a full historical project inventory. The real QA inventory is additionally checked against the pre-apply backup.
+- Preserve the existing blocked step. After exact-source CI/review, restart the ordinary runtime; an explicit new logical observation step can run the repaired adapter, while reusing the old ID must return its historical BLOCKED result. Do not reset the attempt/DB or re-run graph repair. Keep S4 incomplete until actual Tester OBSERVED, J2 completion, normal restart and external oracle evidence.
+- Durable pre-apply backup and saved transcript/block snapshot: `~/Projects/GSA-Stock-QA/.gsa/backups/s4-approved-20261016T020302Z`. Detailed execution ledger: `.gsa/S4_EXECUTION_2026-10-16.md`.

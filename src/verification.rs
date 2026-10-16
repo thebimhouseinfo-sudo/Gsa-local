@@ -198,6 +198,20 @@ impl<'a> VerificationController<'a> {
         change_set_id: &str,
         changed_paths: &[String],
     ) -> Result<VerificationResult> {
+        let evidence = self.observe(changed_paths)?;
+        self.registry.record_verification_evidence(
+            self.project_root,
+            self.lease_owner,
+            graph_version,
+            jobpack_id,
+            change_set_id,
+            &evidence,
+        )
+    }
+
+    /// Execute the discovered commands without changing code-workflow authority.
+    /// Tester persists this evidence in its own fenced execution observation.
+    pub(crate) fn observe(&self, changed_paths: &[String]) -> Result<VerificationEvidence> {
         let profile = discover_profile(self.project_root)?;
         let mut evidence = VerificationEvidence {
             profile: profile.clone(),
@@ -255,14 +269,7 @@ impl<'a> VerificationController<'a> {
             }
         }
 
-        self.registry.record_verification_evidence(
-            self.project_root,
-            self.lease_owner,
-            graph_version,
-            jobpack_id,
-            change_set_id,
-            &evidence,
-        )
+        Ok(evidence)
     }
 }
 
