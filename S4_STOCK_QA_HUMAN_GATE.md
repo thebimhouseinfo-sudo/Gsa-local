@@ -1,6 +1,6 @@
 # Stock-QA S4 — Human Mac Acceptance Gate
 
-> **Status:** PREPARED, NOT EXECUTED. Execute only after exact-main CI SUCCESS and independent code review of S1–S3. This document is not an approval to mutate Stock-QA data.
+> **Status (2026-10-16):** IN PROGRESS. Read-only real DB inspection found both independent graph-review PASS records for the retained proposal; Human approval and amendment are still pending. Execute only after exact-main CI SUCCESS and independent code review. This document is not an approval to mutate Stock-QA data.
 >
 > **Goal:** repair only the unreachable `chk-j1-verify` boundary on the retained real Stock-QA graph, keep J1 source/review/verification/Local CR unchanged, and prove `J1 DONE -> Tester OBSERVED -> J2 ACTIVE`.
 
@@ -41,3 +41,11 @@
 **BLOCKED at Reviewer format validation; NOT S4 PASS.** The exact graph proposal `05ac70c4988c0171491b8b2a2606cdf34e6ad38a39ab2d5ed91756eac239431d` remained staged. Real Reviewer `qwen38t:latest` began, then exited with `GRAPH_REPAIR_BLOCKED: reviewer failed strict JSON contract: expected value at line 1 column 1`. This is a format parsing error, not a FAIL verdict. Local CR `gemma4:31b-mlx`, Human approval, amendment, Tester OBSERVED and J2 ACTIVE have not occurred.
 
 Both agent models are correctly configured at `~/Library/Application Support/gsa/config.toml`; `GSA_WORKFLOW_MODEL` is unset. Fix the CLI reviewer structured-response contract and bounded error recovery; CI and independent CR before resuming real Mac test. Preserve the existing graph cursor and J1 evidence. See `.gsa/PROJECT_STATUS.md` current handoff for full technical instructions.
+
+## Read-only reconciliation — 2026-10-16
+
+The actual retained SQLite DB is newer than the preceding transcript: integrity is `ok`, graph 1 is CURRENT, and proposal `05ac70c4988c0171491b8b2a2606cdf34e6ad38a39ab2d5ed91756eac239431d` has persisted Reviewer PASS (`qwen38t:latest`, run suffix `reviewer-42190-1792071625380392000`) and Local CR PASS (`gemma4:31b-mlx`, run suffix `local_cr-42190-1792073294036069000`). These are DB observations, not fresh model invocations or proof of which source commit executed them.
+
+The cursor is still `GRAPH_REPAIR_REQUIRED`, `graph_contract_versions` has no rows, and `chk-j1-verify` remains `MILESTONE_GATE`. J1 is ACTIVE/REVIEW_PASS on the original change set; J2 is PENDING. No amendment or S4 completion is established. The lease names PID 42190; process inspection found no such running PID. Never delete its row manually.
+
+Local source hardening additionally rejects duplicate review keys and any format correction that changes or cannot preserve the original identifiable verdict. Unknown/ambiguous original judgments fail closed after the bounded correction. Local macOS CI: 259 tests passed, one real-model probe explicitly ignored, 260 discovered. This is not exact-main GitHub CI or Human S4 acceptance. Review the source checkpoint and exact proposal before entering approval through GSA's supported CLI.

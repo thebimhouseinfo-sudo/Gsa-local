@@ -251,39 +251,14 @@ impl App {
                 "{}\n\nReview the immutable graph topology correction ONLY. Do not invoke tools, change code, or infer missing evidence. Return exactly one JSON object with keys verdict (PASS or FAIL) and findings (array of short strings). Reject if the Human requirement or approved plan contradicts the proposed timing.",
                 self.harnesses.compose(agent)?
             );
-            let schema = serde_json::json!({
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["verdict", "findings"],
-                "properties": {
-                    "verdict": { "type": "string", "enum": ["PASS", "FAIL"] },
-                    "findings": { "type": "array", "items": { "type": "string" } }
-                }
-            });
-            let mut conversation = vec![
-                ChatMessage::system(system),
-                ChatMessage::user(packet.clone()),
-            ];
-            let (response, verdict, findings) = loop {
-                let response = self
-                    .ollama
-                    .chat_stream_json(&model, &conversation, &schema, |_| {})
-                    .await?;
-                match parse_graph_repair_review(&response) {
-                    Ok((verdict, findings)) => break (response, verdict, findings),
-                    Err(error) if conversation.len() == 2 => {
-                        // One format-only retry. Never interpret invalid content as PASS.
-                        conversation.push(ChatMessage::assistant(response));
-                        conversation.push(ChatMessage::user(format!(
-                            "Your previous response failed strict schema validation ({error}). Return only the specified JSON object; do not change your independent review judgment."
-                        )));
-                    }
-                    Err(error) => bail!(
-                        "GRAPH_REPAIR_BLOCKED: role={} invalid structured response after one correction: {} (no review persisted)",
-                        agent.display_name(), error
-                    ),
-                }
-            };
+            let (response, verdict, findings) = request_graph_repair_review(
+                &self.ollama,
+                &model,
+                agent.display_name(),
+                system,
+                &packet,
+            )
+            .await?;
             let persisted_verdict = if verdict == "PASS" {
                 ReviewVerdict::Pass
             } else {
@@ -1125,30 +1100,93 @@ fn planning_start_tool() -> ToolDefinition {
     )
 }
 
-fn parse_graph_repair_review(response: &str) -> Result<(String, Vec<String>)> {
-    let value: serde_json::Value =
-        serde_json::from_str(response.trim()).context("invalid JSON object")?;
-    let object = value.as_object().context("expected JSON object")?;
-    if object.len() != 2 || !object.contains_key("verdict") || !object.contains_key("findings") {
-        bail!("expected exactly verdict and findings keys");
+async fn request_graph_repair_review(
+    ollama: &OllamaClient,
+    model: &str,
+    role: &str,
+    system: String,
+    packet: &str,
+) -> Result<(String, String, Vec<String>)> {
+    let schema = serde_json::json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["verdict", "findings"],
+        "properties": {
+            "verdict": { "type": "string", "enum": ["PASS", "FAIL"] },
+            "findings": { "type": "array", "items": { "type": "string" } }
+        }
+    });
+    let mut conversation = vec![ChatMessage::system(system), ChatMessage::user(packet)];
+    let mut original_verdict = None;
+    loop {
+        let response = ollama
+            .chat_stream_json(model, &conversation, &schema, |_| {})
+            .await?;
+        match parse_graph_repair_review(&response) {
+            Ok((verdict, findings)) => {
+                if conversation.len() > 2 && original_verdict.as_deref() != Some(verdict.as_str()) {
+                    bail!("GRAPH_REPAIR_BLOCKED: role={role} format correction changed or could not preserve the original verdict (no review persisted)");
+                }
+                return Ok((response, verdict, findings));
+            }
+            Err(error) if conversation.len() == 2 => {
+                original_verdict = graph_review_correction_verdict(&response);
+                println!("GRAPH_REPAIR_REVIEW_FORMAT_CORRECTION role={role} attempt=1/1");
+                // One format-only retry. Judgment must remain independently identifiable.
+                conversation.push(ChatMessage::assistant(response));
+                conversation.push(ChatMessage::user(format!(
+                    "Your previous response failed strict schema validation ({error}). Return only the specified JSON object; do not change your independent review judgment."
+                )));
+            }
+            Err(error) => bail!(
+                "GRAPH_REPAIR_BLOCKED: role={} invalid structured response after one correction: {} (no review persisted)",
+                role, error
+            ),
+        }
     }
-    let verdict = object["verdict"]
-        .as_str()
-        .context("verdict must be a string")?;
-    if verdict != "PASS" && verdict != "FAIL" {
+}
+
+fn graph_review_correction_verdict(response: &str) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct Judgment {
+        verdict: String,
+        // Including findings rejects duplicate known fields even in a non-strict object.
+        #[serde(default, rename = "findings")]
+        _findings: serde_json::Value,
+    }
+    let trimmed = response.trim();
+    let content = trimmed
+        .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```"))
+        .and_then(|s| s.strip_suffix("```"))
+        .map(str::trim)
+        .unwrap_or(trimmed);
+    let verdict = match content {
+        "PASS" | "FAIL" => content.to_owned(),
+        _ if content.starts_with('{') => serde_json::from_str::<Judgment>(content).ok()?.verdict,
+        _ => return None,
+    };
+    matches!(verdict.as_str(), "PASS" | "FAIL").then_some(verdict)
+}
+
+fn parse_graph_repair_review(response: &str) -> Result<(String, Vec<String>)> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ReviewResponse {
+        verdict: String,
+        findings: Vec<String>,
+    }
+    // Serde structs also accept positional sequences; require the object wire contract.
+    if !response.trim().starts_with('{') {
+        bail!("expected JSON object");
+    }
+    // Typed deserialization rejects duplicate fields, unlike serde_json::Value.
+    let review: ReviewResponse =
+        serde_json::from_str(response.trim()).context("invalid review JSON contract")?;
+    if review.verdict != "PASS" && review.verdict != "FAIL" {
         bail!("verdict must be PASS or FAIL");
     }
-    let findings = object["findings"]
-        .as_array()
-        .context("findings must be an array")?
-        .iter()
-        .map(|v| {
-            v.as_str()
-                .map(str::to_owned)
-                .context("findings must be strings")
-        })
-        .collect::<Result<Vec<_>>>()?;
-    Ok((verdict.to_owned(), findings))
+    Ok((review.verdict, review.findings))
 }
 
 fn prompt(label: &str) -> Result<String> {
@@ -1246,7 +1284,219 @@ mod planner_routing_tests {
 
 #[cfg(test)]
 mod graph_repair_response_contract_tests {
-    use super::parse_graph_repair_review;
+    use super::{parse_graph_repair_review, request_graph_repair_review};
+    use crate::ollama::OllamaClient;
+    use serde_json::{json, Value};
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+        thread,
+        time::{Duration, Instant},
+    };
+
+    // Only the external model is replaced: requests use the real HTTP/NDJSON client.
+    fn model_server(responses: Vec<&str>) -> (OllamaClient, thread::JoinHandle<Vec<Value>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let responses: Vec<String> = responses.into_iter().map(str::to_owned).collect();
+        let handle = thread::spawn(move || {
+            let mut requests = Vec::new();
+            for response in responses {
+                let deadline = Instant::now() + Duration::from_secs(10);
+                let mut stream = loop {
+                    match listener.accept() {
+                        Ok((stream, _)) => break stream,
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            assert!(Instant::now() < deadline, "model request never arrived");
+                            thread::sleep(Duration::from_millis(5));
+                        }
+                        Err(e) => panic!("accept: {e}"),
+                    }
+                };
+                // macOS can inherit O_NONBLOCK from the listening socket.
+                stream.set_nonblocking(false).unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(10)))
+                    .unwrap();
+                let mut bytes = Vec::new();
+                let header_end = loop {
+                    let mut byte = [0];
+                    stream.read_exact(&mut byte).unwrap();
+                    bytes.push(byte[0]);
+                    if bytes.ends_with(b"\r\n\r\n") {
+                        break bytes.len();
+                    }
+                };
+                let headers = String::from_utf8(bytes.clone()).unwrap();
+                let length: usize = headers
+                    .lines()
+                    .find_map(|line| {
+                        let (key, value) = line.split_once(':')?;
+                        key.eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse().unwrap())
+                    })
+                    .unwrap();
+                bytes.resize(header_end + length, 0);
+                stream.read_exact(&mut bytes[header_end..]).unwrap();
+                requests.push(serde_json::from_slice(&bytes[header_end..]).unwrap());
+                let body = format!(
+                    "{}\n",
+                    json!({
+                        "message": {"role": "assistant", "content": response}, "done": true
+                    })
+                );
+                write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/x-ndjson\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body).unwrap();
+            }
+            requests
+        });
+        (OllamaClient::new(url), handle)
+    }
+
+    #[tokio::test]
+    async fn format_correction_cannot_reverse_existing_fail() {
+        let (client, server) = model_server(vec![
+            r#"{"verdict":"FAIL","findings":["contradicts plan"],"extra":1}"#,
+            r#"{"verdict":"PASS","findings":[]}"#,
+        ]);
+        let result = request_graph_repair_review(
+            &client,
+            "reviewer",
+            "Reviewer",
+            "review".into(),
+            "immutable proposal",
+        )
+        .await;
+        assert_eq!(server.join().unwrap().len(), 2);
+        assert!(
+            result.is_err(),
+            "format repair must not turn a FAIL into a PASS"
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_review_exhausts_one_correction_with_sanitized_error() {
+        let (client, server) = model_server(vec!["private response text", "private response text"]);
+        let error = request_graph_repair_review(
+            &client,
+            "reviewer",
+            "Reviewer",
+            "review".into(),
+            "immutable proposal",
+        )
+        .await
+        .unwrap_err();
+        let requests = server.join().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(error.to_string().contains("after one correction"));
+        assert!(!error.to_string().contains("private response text"));
+        for request in &requests {
+            assert_eq!(request["model"], "reviewer");
+            assert_eq!(request["format"]["additionalProperties"], false);
+            assert_eq!(
+                request["format"]["required"],
+                json!(["verdict", "findings"])
+            );
+            assert_eq!(
+                request["format"]["properties"]["verdict"]["enum"],
+                json!(["PASS", "FAIL"])
+            );
+            assert!(request.get("tools").is_none());
+            assert_eq!(request["messages"][1]["content"], "immutable proposal");
+        }
+        assert_eq!(requests[0]["messages"].as_array().unwrap().len(), 2);
+        assert_eq!(requests[1]["messages"].as_array().unwrap().len(), 4);
+    }
+
+    #[tokio::test]
+    async fn valid_fail_returns_without_retry_and_roles_start_fresh() {
+        let (client, server) = model_server(vec![
+            r#"{"verdict":"FAIL","findings":["unsafe timing"]}"#,
+            r#"{"verdict":"PASS","findings":[]}"#,
+        ]);
+        let first = request_graph_repair_review(
+            &client,
+            "reviewer",
+            "Reviewer",
+            "Reviewer rules".into(),
+            "proposal",
+        )
+        .await
+        .unwrap();
+        assert_eq!(first.1, "FAIL");
+        assert_eq!(first.2, vec!["unsafe timing"]);
+        let second =
+            request_graph_repair_review(&client, "cr", "Local CR", "CR rules".into(), "proposal")
+                .await
+                .unwrap();
+        assert_eq!(second.1, "PASS");
+        let requests = server.join().unwrap();
+        assert_eq!(requests[0]["model"], "reviewer");
+        assert_eq!(requests[1]["model"], "cr");
+        for request in requests {
+            assert_eq!(request["messages"].as_array().unwrap().len(), 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn fenced_fail_can_be_corrected_without_changing_judgment() {
+        let (client, server) = model_server(vec![
+            "```json\n{\"verdict\":\"FAIL\",\"findings\":[\"unsafe timing\"]}\n```",
+            r#"{"verdict":"FAIL","findings":["unsafe timing"]}"#,
+        ]);
+        let result = request_graph_repair_review(
+            &client,
+            "reviewer",
+            "Reviewer",
+            "review".into(),
+            "proposal",
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.1, "FAIL");
+        assert_eq!(server.join().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn ambiguous_or_fenced_fail_cannot_be_corrected_to_pass() {
+        for first in [
+            "unstructured review without an identifiable judgment",
+            r#"["PASS",[]]"#,
+            r#"{"verdict":"FAIL","verdict":"PASS","findings":[]}"#,
+            "```json\n{\"verdict\":\"FAIL\",\"findings\":[\"unsafe\"]}\n```",
+        ] {
+            let (client, server) = model_server(vec![first, r#"{"verdict":"PASS","findings":[]}"#]);
+            let result = request_graph_repair_review(
+                &client,
+                "reviewer",
+                "Reviewer",
+                "review".into(),
+                "proposal",
+            )
+            .await;
+            assert!(result.is_err(), "unsafe acceptance of {first}");
+            assert_eq!(server.join().unwrap().len(), 2);
+        }
+    }
+
+    #[tokio::test]
+    async fn identifiable_pass_survives_format_only_correction() {
+        let (client, server) = model_server(vec![
+            r#"{"verdict":"PASS","findings":[],"extra":1}"#,
+            r#"{"verdict":"PASS","findings":[]}"#,
+        ]);
+        let result = request_graph_repair_review(
+            &client,
+            "reviewer",
+            "Reviewer",
+            "review".into(),
+            "proposal",
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.1, "PASS");
+        assert_eq!(server.join().unwrap().len(), 2);
+    }
     #[test]
     fn strict_pass_and_fail() {
         assert_eq!(
@@ -1269,6 +1519,7 @@ mod graph_repair_response_contract_tests {
             "PASS",
             "```json\\n{}\\n```",
             "{}",
+            r#"["PASS",[]]"#,
             r#"{"verdict":"YES","findings":[]}"#,
             r#"{"verdict":"PASS","findings":"ok"}"#,
             r#"{"verdict":"PASS","findings":[],"extra":1}"#,
@@ -1277,6 +1528,16 @@ mod graph_repair_response_contract_tests {
                 parse_graph_repair_review(sample).is_err(),
                 "unexpected acceptance of {sample:?}"
             );
+        }
+    }
+
+    #[test]
+    fn duplicate_review_fields_are_rejected() {
+        for sample in [
+            r#"{"verdict":"FAIL","verdict":"PASS","findings":[]}"#,
+            r#"{"verdict":"PASS","findings":["unsafe"],"findings":[]}"#,
+        ] {
+            assert!(parse_graph_repair_review(sample).is_err());
         }
     }
 }
