@@ -28,3 +28,23 @@ Root cause: PROJECT_VERIFICATION invoked `VerificationController::verify`, which
 Regression reproduced the actual no-ACTIVE block before repair. Native Mac tests cover DONE and ACTIVE targets, a real failing Rust test, cached execution reuse, stable target fingerprint/original verification ID, foreign change set and source drift. Full CI and independent source review are in progress. No Tester OBSERVED, J2 ACTIVE, final oracle PASS or S4 completion is claimed.
 
 macOS `pmset -g assertions` confirmed `caffeinate` holds PreventUserIdleSystemSleep on behalf of the real GSA PID 53136. This verifies the assertion during this run, not closed-lid/forced-sleep behavior.
+
+## Adapter repair publication and real resume
+
+- Published source repair: `main@cea959eef104f24b98696c5830f5a17e1dd658fa`, exact macOS GitHub CI [38842793338](https://github.com/thebimhouseinfo-sudo/Gsa-local/actions/runs/38842793338) SUCCESS. Local native suite: 262 passed, one existing external-model probe ignored, 263 discovered. Release build succeeded. Local and remote source trees match.
+- Independent review checked statuses, persisted adapter refs and code-verification identity. Ruling: retain the existing mutation-journal source authority for old checkpoints; do not fabricate a retrospective full-source inventory or rebind J1. Full-inventory persistence remains separate hardening. Cost/limitation: old records cannot themselves detect edits outside their captured journal paths. For this actual acceptance, an independent full source/config inventory comparison established all 8 QA files still equal the pre-apply backup immediately before resume. New positive regression fixtures establish and journal their executable source/config before checkpointing.
+- Additional regression proves restoring source does not replace a saved BLOCKED step; an explicit new logical step can observe the restored environment while retaining the original observation and Coder verification ID.
+- Restarted the supported exact-main CLI in the same Stock-QA cwd. Actual startup: `DurableExact -> ResumeTesterAttempt (resume persisted Tester stage EXECUTION_COMPLETED)`. No graph-repair prompt/replay or J1 coding. Chose Coder and requested the ordinary checkpoint → J2 flow; runtime emitted `TEST_CHECKPOINT_DUE checkpoint=chk-j1-verify attempt=attempt-0001`.
+- Current live transcript: `/private/tmp/gsa-s4-tester-fixed-20261016.log`. Tester is running; no new result is claimed yet.
+
+## Actual repaired adapter execution
+
+The real model scheduled new logical step `chk-j1-verify-retest-01-cargo-check` on the same exact J1 target/attempt. Execution `ab232677217bd0ab528e169089798fdd30888ba203d8c24835eaff9f56001562` is COMPLETED, exit 0. It genuinely ran `cargo check` and `cargo test`, both exit 0; output names all 8 J1 integration cases (FEFO, tie-break, insufficient-stock atomic rollback, validation and matching SKU) and 3 original smoke tests, all passing. The original BLOCKED step remains unchanged.
+
+Read-only comparison against the pre-apply DB again confirms J1 checkpoint/review/verification/CR tables remain byte-for-byte equal as rows. J1 DONE, J2 PENDING; Tester has not yet persisted its final report/output. This is real execution evidence, not yet checkpoint OBSERVED/closure. The backup directory contains `after-tester-execution.db` and `tester-observed-commands.json` preserving this intermediate state.
+
+## Report-stage diagnosis
+
+The resumed model loop ran over 17 minutes without persisting a report. Ollama server logs showed successive completed API requests, but the CLI exposed neither its current model round nor report-correction reason. No root cause for report rejection is established from that alone. After checking zero PREPARED/unresolved executions and zero reports, the agent interrupted its own pending model process; both saved observations remain immutable and J2 remains PENDING.
+
+Added diagnostic-only console lines before each Tester model invocation and on bounded report correction, exposing the existing validation error without printing raw report payloads or changing retry/gate semantics. Local full CI and release build passed; 263 tests discovered, one external-model probe intentionally ignored. Saved `before-report-diagnostics.db` and `s4-tester-fixed-before-diagnostics.log` in the same backup directory. Continue from the persisted completed execution; do not rerun J1/graph or fabricate a report.

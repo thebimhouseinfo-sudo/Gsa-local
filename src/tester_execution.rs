@@ -797,6 +797,14 @@ impl<'a> TesterWorkflow<'a> {
         definitions.push(tester_report_tool());
 
         for round in 0..MAX_TESTER_TOOL_ROUNDS {
+            println!(
+                "TESTER_MODEL_ROUND checkpoint={} attempt={} model={} round={}/{}",
+                checkpoint.id,
+                attempt_id,
+                model,
+                round + 1,
+                MAX_TESTER_TOOL_ROUNDS
+            );
             let response = self
                 .ollama
                 .chat_stream_with_tools(&model, &messages, &definitions, |_| {})
@@ -815,6 +823,7 @@ impl<'a> TesterWorkflow<'a> {
                     validate_report_call_shape(calls.iter().map(|call| call.function.name.as_str()))
                 {
                     if should_retry_invalid_report(round) {
+                        eprintln!("TESTER_REPORT_CORRECTION checkpoint={} attempt={} round={} reason={error:#}", checkpoint.id, attempt_id, round + 1);
                         messages.push(invalid_report_feedback(&error));
                         continue;
                     }
@@ -853,6 +862,7 @@ impl<'a> TesterWorkflow<'a> {
                 match report_result {
                     Ok(attempt) => return Ok(attempt),
                     Err(error) if should_retry_invalid_report(round) => {
+                        eprintln!("TESTER_REPORT_CORRECTION checkpoint={} attempt={} round={} reason={error:#}", checkpoint.id, attempt_id, round + 1);
                         messages.push(invalid_report_feedback(&error));
                         continue;
                     }
