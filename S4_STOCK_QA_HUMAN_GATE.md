@@ -1,6 +1,6 @@
 # Stock-QA S4 — Human Mac Acceptance Gate
 
-> **Status (2026-10-16):** IN PROGRESS. Human approved the exact retained proposal; supported CLI amendment and J1 DONE succeeded. Tester then recorded a real PROJECT_VERIFICATION adapter block on DONE targets. The adapter repair requires exact-source CI and live continuation; J2 remains PENDING. Do not repeat graph repair or J1 coding.
+> **Status (2026-10-16):** IN PROGRESS. Exact Human-approved amendment and J1 DONE succeeded. The repaired Tester adapter subsequently completed real cargo check/test (11 tests passed), preserving J1 evidence. Final Tester report is still blocked on DTO/semantic requirements; report-guidance repair requires exact-source CI and real resume. J2 remains PENDING. Do not repeat graph repair, its approval or J1 coding.
 >
 > **Goal:** repair only the unreachable `chk-j1-verify` boundary on the retained real Stock-QA graph, keep J1 source/review/verification/Local CR unchanged, and prove `J1 DONE -> Tester OBSERVED -> J2 ACTIVE`.
 

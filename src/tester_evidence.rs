@@ -41,6 +41,9 @@ pub enum TesterModeOutcome {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TesterModeResult {
     pub mode: EvidenceMode,
+    /// VERIFY uses PASS, FAIL, BLOCKED or NEEDS_HUMAN. MEASURE and PROBE use
+    /// COMPLETE, BLOCKED or NEEDS_HUMAN; a successful measurement uses COMPLETE,
+    /// never PASS. Keep the mode declared by the checkpoint.
     pub outcome: TesterModeOutcome,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
@@ -64,10 +67,13 @@ impl TesterModeResult {
             ),
         };
         if !valid {
+            let allowed = match self.mode {
+                EvidenceMode::Verify => "PASS, FAIL, BLOCKED, NEEDS_HUMAN",
+                EvidenceMode::Measure | EvidenceMode::Probe => "COMPLETE, BLOCKED, NEEDS_HUMAN",
+            };
             bail!(
-                "Tester outcome {:?} is invalid for mode {:?}",
-                self.outcome,
-                self.mode
+                "Tester outcome {:?} is invalid for mode {:?}; keep the declared mode and use one of: {}",
+                self.outcome, self.mode, allowed
             );
         }
         if matches!(
@@ -267,7 +273,11 @@ impl ExperimentObservation {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ExperimentSample {
+    /// Positive sample number starting at 1, never 0.
+    #[schemars(range(min = 1))]
     pub sample_index: u32,
+    /// Exactly one nonempty value for every name in experiment.dimensions.
+    /// Use an empty object when dimensions is empty; never invent fingerprints.
     pub variables: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub boundary_event: Option<String>,
@@ -279,6 +289,9 @@ pub struct ExperimentSample {
     pub runtime_identity: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capability_fingerprint: Option<String>,
+    /// At least one runtime-backed observation. Prefer a compact observed
+    /// scalar that answers the checkpoint (for example a real exit code),
+    /// rather than repeating entire stdout payloads in multiple fields.
     pub observations: Vec<ExperimentObservation>,
 }
 
@@ -331,7 +344,10 @@ impl ExperimentSample {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ExperimentContext {
+    /// Actual controlled dimensions; every sample.variables must cover exactly
+    /// these names. Empty is allowed if the checkpoint declares no dimensions.
     pub dimensions: Vec<String>,
+    /// At least one sample with sample_index >= 1 and runtime-backed observations.
     pub samples: Vec<ExperimentSample>,
 }
 
@@ -620,6 +636,8 @@ pub struct TesterEvidenceOutputRecord {
     pub mode: EvidenceMode,
     pub provenance: EvidenceProvenance,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// For OBSERVED provenance, copy an exact runtime ObservedValue also present
+    /// in evidence_refs. A prose summary is not the original observed value.
     pub value: Option<ObservedValue>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub unit: Option<String>,
@@ -723,7 +741,7 @@ impl TesterAttemptEvidence {
                 && result.outcome == TesterModeOutcome::Complete
         });
         if needs_experiment && self.experiment.is_none() {
-            bail!("completed MEASURE/PROBE requires ExperimentContext");
+            bail!("completed MEASURE/PROBE requires the top-level 'experiment' object with 'dimensions' and nonempty 'samples'; each sample needs sample_index >= 1, variables covering all dimensions, and runtime-backed observations");
         }
         if let Some(experiment) = &self.experiment {
             experiment.validate()?;

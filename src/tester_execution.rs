@@ -674,11 +674,14 @@ impl<'a> TesterExecutionRuntime<'a> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct TesterReportSubmission {
     pub mode_results: Vec<TesterModeResult>,
     #[serde(default)]
     pub classifications: Vec<TesterClassification>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Required when a MEASURE or PROBE mode has outcome COMPLETE. Use this
+    /// exact top-level key: experiment. Include dimensions and nonempty samples.
     pub experiment: Option<ExperimentContext>,
     #[serde(default)]
     pub outputs: Vec<TesterEvidenceOutputRecord>,
@@ -1190,6 +1193,22 @@ mod tests {
             limitations: vec![],
         };
         assert!(validate_report_execution_coverage(&blocked, false, true).is_ok());
+    }
+
+    #[test]
+    fn report_rejects_unknown_experiment_field_instead_of_silently_dropping_it() {
+        let invalid = json!({
+            "mode_results": [{"mode":"MEASURE", "outcome":"COMPLETE"}],
+            "experiment_context": {"dimensions":[], "samples":[]}
+        });
+        assert!(serde_json::from_value::<TesterReportSubmission>(invalid).is_err());
+    }
+
+    #[test]
+    fn generated_experiment_schema_excludes_zero_sample_index() {
+        let schema =
+            crate::terminal_schema::model_schema::<crate::tester_evidence::ExperimentSample>();
+        assert_eq!(schema["properties"]["sample_index"]["minimum"], json!(1.0));
     }
 
     #[test]
